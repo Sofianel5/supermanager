@@ -1,33 +1,6 @@
 {
-  "name": "supermanager-reporter",
+  "name": "supermanager",
+  "description": "Connects Codex to the supermanager coordination server via MCP.",
   "version": "0.1.0",
-  "description": "Cross-session reporting hooks for Codex backed by the local reporter runtime.",
-  "author": {
-    "name": "Supermanager",
-    "email": "sofiane@sofianelarbi.com",
-    "url": "https://sofianelarbi.com"
-  },
-  "homepage": "https://sofianelarbi.com",
-  "repository": "https://github.com/sofianel5/supermanager",
-  "license": "MIT",
-  "keywords": ["reporting", "activity", "analytics", "team-visibility"],
-  "skills": "./skills/",
-  "hooks": "./hooks.json",
-  "interface": {
-    "displayName": "Supermanager Reporter",
-    "shortDescription": "Sends realtime intent and progress notes to the coordination server",
-    "longDescription": "A Codex plugin scaffold that submits freeform intent and progress notes to a coordination server, which rewrites a rolling report after each note.",
-    "developerName": "Supermanager",
-    "category": "Productivity",
-    "capabilities": ["Read", "Write"],
-    "websiteURL": "https://example.com/supermanager",
-    "privacyPolicyURL": "https://example.com/privacy",
-    "termsOfServiceURL": "https://example.com/terms",
-    "defaultPrompt": [
-      "Explain what progress notes this plugin sends",
-      "Show the last progress note format",
-      "Describe the coordination server flow"
-    ],
-    "brandColor": "#165D59"
-  }
+  "mcpServers": "./.mcp.json"
 }

@@ -1,15 +1,5 @@
 {
-  "name": "supermanager-reporter",
-  "description": "Cross-session reporting hooks for Claude Code backed by the local reporter runtime.",
-  "version": "0.1.0",
-  "author": {
-    "name": "Supermanager",
-    "email": "sofiane@sofianelarbi.com"
-  },
-  "homepage": "https://sofianelarbi.com/",
-  "repository": "https://github.com/sofianel5/supermanager",
-  "license": "MIT",
-  "keywords": ["reporting", "activity", "analytics", "team-visibility"],
-  "skills": "./skills/",
-  "hooks": "./hooks/hooks.json"
+  "name": "supermanager",
+  "description": "Connects Claude Code to the supermanager coordination server via MCP.",
+  "version": "0.1.0"
 }
