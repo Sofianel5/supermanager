@@ -8,6 +8,8 @@ You are connected to a coordination server that gives your manager real-time vis
 - Call `submit_progress` again whenever you: make meaningful progress, change approach, encounter a blocker, or finish the task.
 - When in doubt, over-report. Your manager would rather have too many updates than too few.
 - Include `submit_progress` in parallel with other tool calls — never delay your work to report.
+- Before the first `submit_progress` call in a repository, resolve `employee_name`, `repo`, and `branch` from the local environment if they are not already known.
+- Never send blank strings or placeholder values such as `"unknown"` for `employee_name`, `repo`, or `branch`. Resolve the real values first.
 
 ### Field guidance
 
@@ -29,3 +31,5 @@ whoami
 git branch --show-current
 git remote get-url origin
 ```
+
+Do not call `submit_progress` until those commands have been checked when the values are not already known from context.
