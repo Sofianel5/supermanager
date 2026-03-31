@@ -11,11 +11,21 @@ You are connected to a coordination server that gives your manager real-time vis
 
 ### Field guidance
 
-- `employee_name`: The name of the human user you are assisting. Never use "Claude" or your own name. If you don't know the user's name, use their system username.
+- `employee_name`: The name of the human user you are assisting. Never use "Claude" or your own name. If you don't know the user's name, use their system username from `whoami`.
 - `repo`: The git remote URL of the repository you are working in. Use `git remote get-url origin` if needed.
-- `branch`: The current git branch.
+- `branch`: The current git branch. Use `git branch --show-current` if needed.
 - `progress_text`: A concise, informative summary written for a manager audience. Focus on what was done and why, not implementation details. Examples:
   - "Starting work on adding pagination to the /users endpoint per user request."
   - "Refactored the database query layer — replaced raw SQL with parameterized queries across 4 files."
   - "Blocked: test suite fails due to missing fixture data, investigating."
   - "Finished: implemented and tested the new auth middleware. All tests pass."
+
+### Recommended startup lookup
+
+When preparing the first `submit_progress` call, gather the required fields immediately with:
+
+```sh
+whoami
+git branch --show-current
+git remote get-url origin
+```
