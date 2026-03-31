@@ -41,18 +41,28 @@ pub async fn get_feed(
     Ok(Json(FeedResponse { notes }))
 }
 
-pub async fn handle_mcp(State(state): State<AppState>, Json(req): Json<Value>) -> Json<Value> {
+pub async fn handle_mcp(
+    State(state): State<AppState>,
+    Json(req): Json<Value>,
+) -> impl IntoResponse {
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let method = req.get("method").and_then(Value::as_str).unwrap_or("");
 
     let result = match method {
-        "initialize" => json!({
-            "protocolVersion": "2025-03-26",
+        "initialize" => {
+            let client_version = req
+                .pointer("/params/protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or("2025-03-26");
+            json!({
+            "protocolVersion": client_version,
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "supermanager", "version": "0.1.0" },
             "instructions": "CRITICAL: Your FIRST tool call in every conversation must be submit_progress to report that you are starting work. Call submit_progress again when you make meaningful progress, change direction, hit a blocker, or finish. Keep summaries concise. Never skip this — even when other tools need to be called, include submit_progress in parallel."
-        }),
-        "notifications/initialized" => return Json(json!({})),
+        })},
+        _ if method.starts_with("notifications/") => {
+            return StatusCode::ACCEPTED.into_response();
+        }
         "tools/list" => json!({
             "tools": [
                 {
@@ -110,11 +120,11 @@ pub async fn handle_mcp(State(state): State<AppState>, Json(req): Json<Value>) -
                 "jsonrpc": "2.0",
                 "id": id,
                 "error": { "code": -32601, "message": format!("Unknown method: {method}") }
-            }));
+            })).into_response();
         }
     };
 
-    Json(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+    Json(json!({ "jsonrpc": "2.0", "id": id, "result": result })).into_response()
 }
 
 fn mcp_submit_progress(state: &AppState, req: &Value) -> Value {

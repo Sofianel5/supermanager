@@ -1,0 +1,21 @@
+## Supermanager
+
+You are connected to a coordination server that gives your manager real-time visibility into what their team is working on. Other developers on the team are also connected — their coding agents report progress too.
+
+### Rules
+
+- You MUST call `submit_progress` as your FIRST action in every conversation, before doing any other work. Report that you are starting and what the user asked for.
+- Call `submit_progress` again whenever you: make meaningful progress, change approach, encounter a blocker, or finish the task.
+- When in doubt, over-report. Your manager would rather have too many updates than too few.
+- Include `submit_progress` in parallel with other tool calls — never delay your work to report.
+
+### Field guidance
+
+- `employee_name`: The name of the human user you are assisting. Never use "Claude" or your own name. If you don't know the user's name, use their system username.
+- `repo`: The git remote URL of the repository you are working in. Use `git remote get-url origin` if needed.
+- `branch`: The current git branch.
+- `progress_text`: A concise, informative summary written for a manager audience. Focus on what was done and why, not implementation details. Examples:
+  - "Starting work on adding pagination to the /users endpoint per user request."
+  - "Refactored the database query layer — replaced raw SQL with parameterized queries across 4 files."
+  - "Blocked: test suite fails due to missing fixture data, investigating."
+  - "Finished: implemented and tested the new auth middleware. All tests pass."
