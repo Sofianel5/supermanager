@@ -762,19 +762,29 @@ if command -v claude >/dev/null 2>&1; then
   claude mcp add --scope project --transport http supermanager "{mcp_url}"
   echo "        MCP configured in $(pwd)/.mcp.json"
 else
-  # Write .mcp.json directly if claude CLI not available
-  echo "        Claude CLI not found — writing .mcp.json directly."
-  cat > .mcp.json <<MCPJSON
-{{
-  "mcpServers": {{
-    "supermanager": {{
-      "type": "http",
-      "url": "{mcp_url}"
-    }}
-  }}
+  # Merge into .mcp.json without clobbering other servers
+  echo "        Claude CLI not found — updating .mcp.json directly."
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import json, os
+path = '.mcp.json'
+cfg = {{}}
+if os.path.exists(path):
+    with open(path) as f:
+        cfg = json.load(f)
+cfg.setdefault('mcpServers', {{}})['supermanager'] = {{
+    'type': 'http',
+    'url': '{mcp_url}'
 }}
-MCPJSON
-  echo "        Created .mcp.json in $(pwd)"
+with open(path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+"
+    echo "        Updated .mcp.json in $(pwd)"
+  else
+    echo "        ERROR: Neither claude CLI nor python3 found. Cannot configure MCP."
+    echo "        Please install Claude Code or python3 and re-run."
+    exit 1
+  fi
 fi
 echo ""
 
@@ -803,17 +813,25 @@ fi
 
 # ── Configure Codex (project-scoped) ────────────────────────
 echo "  [2/4] Configuring Codex..."
-cat > .codex-mcp.json <<CODEXJSON
-{{
-  "mcpServers": {{
-    "supermanager": {{
-      "type": "http",
-      "url": "{mcp_url}"
-    }}
-  }}
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c "
+import json, os
+path = '.codex-mcp.json'
+cfg = {{}}
+if os.path.exists(path):
+    with open(path) as f:
+        cfg = json.load(f)
+cfg.setdefault('mcpServers', {{}})['supermanager'] = {{
+    'type': 'http',
+    'url': '{mcp_url}'
 }}
-CODEXJSON
-echo "        Created .codex-mcp.json in $(pwd)"
+with open(path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+"
+  echo "        Updated .codex-mcp.json in $(pwd)"
+else
+  echo "        WARNING: python3 not found — skipping Codex config."
+fi
 echo ""
 
 # ── Remove old global Codex config if present ────────────────
