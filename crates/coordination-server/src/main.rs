@@ -1,7 +1,7 @@
 mod api;
 mod store;
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use axum::{
@@ -12,37 +12,58 @@ use clap::Parser;
 use tokio::sync::broadcast;
 
 use api::AppState;
+use store::Db;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Ingest progress notes and serve a live feed")]
 struct Cli {
     #[arg(long, default_value = "127.0.0.1:8787")]
     bind: SocketAddr,
-    #[arg(long, default_value = "data")]
-    data_dir: PathBuf,
+    #[arg(long, default_value = "supermanager.db")]
+    db_path: PathBuf,
+    #[arg(long, default_value = "http://127.0.0.1:8787")]
+    base_url: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    store::initialize(&cli.data_dir)?;
+    let db = Arc::new(Db::open(&cli.db_path)?);
+    db.ensure_local_room()?;
+
     let (note_events, _) = broadcast::channel(256);
 
     let state = AppState {
-        data_dir: cli.data_dir,
+        db,
         note_events,
+        base_url: cli.base_url,
     };
 
     let app = Router::new()
-        .route("/health", get(api::health))
-        .route("/v1/progress", post(api::ingest_progress))
-        .route("/v1/feed", get(api::get_feed))
-        .route("/v1/feed/stream", get(api::stream_feed))
+        // ── Room management ──────────────────────────────
+        .route("/v1/rooms", post(api::create_room))
+        // ── Room-scoped routes ───────────────────────────
+        .route("/r/{room_id}", get(api::dashboard))
+        .route("/r/{room_id}/feed", get(api::get_feed))
+        .route("/r/{room_id}/feed/stream", get(api::stream_feed))
+        .route("/r/{room_id}/progress", post(api::ingest_progress))
         .route(
-            "/v1/manager-summary",
+            "/r/{room_id}/summary",
             get(api::get_manager_summary).put(api::update_manager_summary),
         )
-        .route("/mcp", post(api::handle_mcp))
+        .route("/r/{room_id}/mcp", post(api::handle_mcp))
+        .route("/r/{room_id}/install", get(api::install_script))
+        // ── Legacy (backwards-compat) routes ─────────────
+        .route("/v1/progress", post(api::legacy_ingest_progress))
+        .route("/v1/feed", get(api::legacy_get_feed))
+        .route("/v1/feed/stream", get(api::legacy_stream_feed))
+        .route(
+            "/v1/manager-summary",
+            get(api::legacy_get_manager_summary).put(api::legacy_update_manager_summary),
+        )
+        .route("/mcp", post(api::legacy_handle_mcp))
+        // ── Health ───────────────────────────────────────
+        .route("/health", get(api::health))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;

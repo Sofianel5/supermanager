@@ -1,10 +1,16 @@
 #!/usr/bin/env sh
+# Local development install script.
+# This configures Claude Code and Codex to talk to a local coordination server
+# running at http://127.0.0.1:8787 (the "__local" room).
+#
+# For hosted rooms, use:
+#   curl -sSf https://your-server/r/{room_id}/install?secret=your_secret | sh
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 INSTRUCTIONS_FILE="$SCRIPT_DIR/INSTRUCTIONS.md"
 
-echo "Installing supermanager..."
+echo "Installing supermanager (local dev)..."
 
 install_claude_settings() {
   SETTINGS_FILE="${HOME}/.claude/settings.json"

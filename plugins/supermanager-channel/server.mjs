@@ -6,9 +6,17 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-const STREAM_URL =
-  process.env.SUPERMANAGER_SSE_URL ??
-  "http://127.0.0.1:8787/v1/feed/stream";
+function resolveStreamUrl() {
+  const roomUrl = process.env.SUPERMANAGER_ROOM_URL;
+  if (roomUrl) {
+    return `${roomUrl.replace(/\/+$/, "")}/feed/stream`;
+  }
+  return (
+    process.env.SUPERMANAGER_SSE_URL ?? "http://127.0.0.1:8787/v1/feed/stream"
+  );
+}
+
+const STREAM_URL = resolveStreamUrl();
 const RECONNECT_DELAY_MS = Number.parseInt(
   process.env.SUPERMANAGER_RECONNECT_DELAY_MS ?? "3000",
   10,
@@ -21,7 +29,12 @@ const INSTRUCTIONS = [
   "Maintain the manager-facing Markdown summary document on the coordination server using the supermanager MCP server tools get_manager_summary and update_manager_summary.",
   "The summary is for a human manager and should explain what each person is currently working on, recent progress, and blockers.",
   "On startup, read the existing summary before replacing it. When a new note materially changes the status picture, update the summary document on the server rather than writing a local file.",
-].join(" ");
+  process.env.SUPERMANAGER_ROOM_SECRET
+    ? `When calling update_manager_summary, include the authorization header with Bearer token: ${process.env.SUPERMANAGER_ROOM_SECRET}`
+    : "",
+]
+  .filter(Boolean)
+  .join(" ");
 
 const server = new Server(
   {
