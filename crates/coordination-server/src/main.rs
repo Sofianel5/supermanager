@@ -32,10 +32,12 @@ async fn main() -> Result<()> {
     db.ensure_local_room()?;
 
     let (note_events, _) = broadcast::channel(256);
+    let (summary_events, _) = broadcast::channel(64);
 
     let state = AppState {
         db,
         note_events,
+        summary_events,
         base_url: cli.base_url,
         http: reqwest::Client::new(),
         openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
@@ -49,10 +51,7 @@ async fn main() -> Result<()> {
         .route("/r/{room_id}/feed", get(api::get_feed))
         .route("/r/{room_id}/feed/stream", get(api::stream_feed))
         .route("/r/{room_id}/progress", post(api::ingest_progress))
-        .route(
-            "/r/{room_id}/summary",
-            get(api::get_manager_summary).put(api::update_manager_summary),
-        )
+        .route("/r/{room_id}/summary", get(api::get_manager_summary))
         .route("/r/{room_id}/mcp", post(api::handle_mcp))
         .route("/r/{room_id}/install", get(api::install_script))
         .route("/r/{room_id}/uninstall", get(api::uninstall_script))
@@ -61,10 +60,7 @@ async fn main() -> Result<()> {
         .route("/v1/progress", post(api::legacy_ingest_progress))
         .route("/v1/feed", get(api::legacy_get_feed))
         .route("/v1/feed/stream", get(api::legacy_stream_feed))
-        .route(
-            "/v1/manager-summary",
-            get(api::legacy_get_manager_summary).put(api::legacy_update_manager_summary),
-        )
+        .route("/v1/manager-summary", get(api::legacy_get_manager_summary))
         .route("/mcp", post(api::legacy_handle_mcp))
         // ── Landing page ────────────────────────────────
         .route("/", get(api::landing_page))
