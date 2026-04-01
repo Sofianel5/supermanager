@@ -135,7 +135,7 @@ button:disabled{{opacity:0.5;cursor:not-allowed}}
 <body>
 <div class="shell">
   <div class="header">
-    <div class="logo">supermanager</div>
+    <a href="/" class="logo">supermanager</a>
     <h1>supermanager</h1>
     <p class="tagline">Real-time visibility into what your AI coding agents are working on.</p>
   </div>
@@ -448,7 +448,8 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 .shell{{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:32px 20px 80px}}
 .header{{margin-bottom:40px}}
 .header-top{{display:flex;align-items:center;gap:14px;margin-bottom:6px}}
-.logo{{font-family:var(--mono);font-weight:700;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--amber);background:var(--amber-glow);border:1px solid rgba(245,158,11,0.2);padding:4px 10px;border-radius:4px;white-space:nowrap;}}
+.logo{{font-family:var(--mono);font-weight:700;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--amber);background:var(--amber-glow);border:1px solid rgba(245,158,11,0.2);padding:4px 10px;border-radius:4px;white-space:nowrap;text-decoration:none;}}
+.logo:hover{{background:rgba(245,158,11,0.18);}}
 .room-name{{font-family:var(--sans);font-weight:800;font-size:2rem;letter-spacing:-0.03em;color:var(--text-primary);line-height:1.1;}}
 .header-meta{{display:flex;align-items:center;gap:16px;font-family:var(--mono);font-size:0.78rem;color:var(--text-muted);}}
 .room-id{{color:var(--text-secondary)}}
@@ -490,6 +491,8 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 .join-cmd:hover::after{{opacity:1}}
 .join-cmd.copied{{border-color:var(--emerald)}}
 .join-cmd.copied::after{{content:'copied!';color:var(--emerald);opacity:1}}
+.toggle-btn{{display:none;width:100%;margin-top:12px;padding:8px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;color:var(--text-muted);font-family:var(--mono);font-size:0.72rem;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;transition:color 0.2s,border-color 0.2s;}}
+.toggle-btn:hover{{color:var(--text-secondary);border-color:var(--border-hover)}}
 .footer{{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);text-align:center;font-family:var(--mono);font-size:0.68rem;color:var(--text-muted);letter-spacing:0.06em;}}
 @media(max-width:600px){{.shell{{padding:20px 14px 60px}}.room-name{{font-size:1.5rem}}.panel-body{{padding:14px}}.note{{padding:12px 14px}}.timeline{{padding-left:20px}}}}
 </style>
@@ -498,7 +501,7 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 <div class="shell">
   <div class="header">
     <div class="header-top">
-      <div class="logo">supermanager</div>
+      <a href="/" class="logo">supermanager</a>
     </div>
     <h1 class="room-name">{safe_name}</h1>
     <div class="header-meta">
@@ -526,6 +529,7 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
     </div>
     <div class="panel-body">
       <div id="feed" class="timeline"></div>
+      <button id="toggle-feed" class="toggle-btn"></button>
     </div>
   </div>
 
@@ -550,6 +554,9 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
   var countEl = document.getElementById('note-count');
   var summaryEl = document.getElementById('summary');
   var notes = [];
+  var expanded = false;
+  var FEED_LIMIT = 10;
+  var toggleBtn = document.getElementById('toggle-feed');
 
   function el(tag, cls, text) {{
     var e = document.createElement(tag);
@@ -604,12 +611,26 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
     feed.textContent = '';
     if (notes.length === 0) {{
       feed.appendChild(el('span', 'empty', 'No updates yet.'));
+      toggleBtn.style.display = 'none';
     }} else {{
-      notes.forEach(function(n, i) {{ feed.appendChild(buildNote(n, i)); }});
+      var visible = expanded ? notes : notes.slice(0, FEED_LIMIT);
+      visible.forEach(function(n, i) {{ feed.appendChild(buildNote(n, i)); }});
+      if (notes.length > FEED_LIMIT) {{
+        toggleBtn.style.display = 'block';
+        var hidden = notes.length - FEED_LIMIT;
+        toggleBtn.textContent = expanded ? 'Show less' : 'Show ' + hidden + ' more';
+      }} else {{
+        toggleBtn.style.display = 'none';
+      }}
     }}
     var label = notes.length === 1 ? '1 update' : notes.length + ' updates';
     countEl.textContent = label;
   }}
+
+  toggleBtn.addEventListener('click', function() {{
+    expanded = !expanded;
+    renderFeed();
+  }});
 
   setInterval(function() {{
     var times = feed.querySelectorAll('.note-time');
