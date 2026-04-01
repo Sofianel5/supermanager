@@ -446,6 +446,7 @@ set -e
 # Dashboard: {dashboard_url}
 
 echo "==> Supermanager: configuring AI coding agents for room {room_id}"
+echo "    NOTE: This configures the CURRENT DIRECTORY only (project-scoped)."
 echo ""
 
 # ── Detect employee name ────────────────────────────────────
@@ -463,13 +464,28 @@ if [ -z "$EMPLOYEE_NAME" ]; then
 fi
 echo "    Employee: $EMPLOYEE_NAME"
 
-# ── Configure Claude Code ───────────────────────────────────
-echo "==> Configuring Claude Code MCP server..."
+# ── Configure Claude Code (project-scoped) ──────────────────
+echo "==> Configuring Claude Code MCP server (project-scoped)..."
 if command -v claude >/dev/null 2>&1; then
-  claude mcp add --transport http supermanager "{mcp_url}"
-  echo "    Claude Code MCP configured."
+  # Remove any global entry first
+  claude mcp remove supermanager 2>/dev/null || true
+  # Add as project-scoped (writes to .mcp.json in current directory)
+  claude mcp add --scope project --transport http supermanager "{mcp_url}"
+  echo "    Claude Code MCP configured in $(pwd)/.mcp.json"
 else
-  echo "    Claude Code CLI not found — skipping (install from https://docs.anthropic.com/claude-code)."
+  # Write .mcp.json directly if claude CLI not available
+  echo "    Claude Code CLI not found — writing .mcp.json directly."
+  cat > .mcp.json <<MCPJSON
+{{
+  "mcpServers": {{
+    "supermanager": {{
+      "type": "http",
+      "url": "{mcp_url}"
+    }}
+  }}
+}}
+MCPJSON
+  echo "    Created .mcp.json in $(pwd)"
 fi
 
 # ── Auto-approve submit_progress in Claude settings ─────────
@@ -495,13 +511,23 @@ print('    Auto-approved submit_progress in Claude settings.')
   fi
 fi
 
-# ── Configure Codex ─────────────────────────────────────────
-echo "==> Configuring Codex MCP server..."
-CODEX_DIR="$HOME/.codex"
-CODEX_CFG="$CODEX_DIR/config.toml"
-mkdir -p "$CODEX_DIR"
-if [ -f "$CODEX_CFG" ]; then
-  # Remove existing supermanager section if present
+# ── Configure Codex (project-scoped) ────────────────────────
+echo "==> Writing .codex-mcp.json for Codex..."
+cat > .codex-mcp.json <<CODEXJSON
+{{
+  "mcpServers": {{
+    "supermanager": {{
+      "type": "http",
+      "url": "{mcp_url}"
+    }}
+  }}
+}}
+CODEXJSON
+echo "    Created .codex-mcp.json in $(pwd)"
+
+# ── Remove old global Codex config if present ────────────────
+CODEX_CFG="$HOME/.codex/config.toml"
+if [ -f "$CODEX_CFG" ] && grep -q "mcp_servers.supermanager" "$CODEX_CFG" 2>/dev/null; then
   if command -v python3 >/dev/null 2>&1; then
     python3 -c "
 import re
@@ -511,21 +537,16 @@ text = re.sub(r'\[mcp_servers\.supermanager\][^\[]*', '', text)
 with open('$CODEX_CFG', 'w') as f:
     f.write(text)
 "
+    echo "    Cleaned old global Codex supermanager config."
   fi
 fi
-cat >> "$CODEX_CFG" <<TOML
-
-[mcp_servers.supermanager]
-type = "http"
-url = "{mcp_url}"
-TOML
-echo "    Codex config written to $CODEX_CFG"
 
 # ── Done ────────────────────────────────────────────────────
 echo ""
 echo "==> Setup complete!"
 echo "    Dashboard: {dashboard_url}"
-echo "    Your AI agents will now report progress to the coordination server."
+echo "    Agents in $(pwd) will now report progress to the coordination server."
+echo "    Run this command from other repos to connect them too."
 echo ""
 "##,
         room_id = room_id,
