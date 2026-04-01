@@ -538,7 +538,7 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
       <span class="panel-title">Connect Agents</span>
     </div>
     <div class="panel-body">
-      <p class="join-label">Run this on each developer machine to connect their AI coding agent to this room:</p>
+      <p class="join-label">Run this in each repo to connect AI coding agents to this room. The room creator has the full command with the secret &mdash; ask them for it.</p>
       <code id="join-cmd" class="join-cmd">curl -sSf {safe_base}/r/{safe_id}/install?secret=YOUR_SECRET | sh</code>
     </div>
   </div>
