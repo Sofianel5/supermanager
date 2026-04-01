@@ -62,9 +62,34 @@ impl Db {
                 updated_at       TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS tasks (
+                task_id    TEXT PRIMARY KEY,
+                room_id    TEXT NOT NULL REFERENCES rooms(room_id),
+                title      TEXT NOT NULL,
+                status     TEXT NOT NULL DEFAULT 'todo',
+                assignee   TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_notes_room_received
-                ON notes(room_id, received_at);",
+                ON notes(room_id, received_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_room
+                ON tasks(room_id);",
         )?;
+
+        // ── Migrations for existing DBs ────────────────────────
+        // Add status column to summaries if missing
+        let has_status: bool = conn
+            .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='summaries'")?
+            .query_row([], |row| row.get::<_, String>(0))
+            .map(|sql| sql.contains("status"))
+            .unwrap_or(false);
+        if !has_status {
+            conn.execute_batch(
+                "ALTER TABLE summaries ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';",
+            )?;
+        }
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -291,6 +316,67 @@ impl Db {
         Ok(result)
     }
 
+    /// Get notes from OTHER people since a person's second-to-last update.
+    /// (Second-to-last because the most recent is the one just submitted.)
+    pub fn get_updates_from_others(
+        &self,
+        room_id: &str,
+        employee_name: &str,
+        limit: u32,
+    ) -> Result<Vec<StoredProgressNote>> {
+        let conn = self.conn.lock().unwrap();
+        // Get second-to-last update time for this person
+        let cutoff: Option<String> = conn
+            .query_row(
+                "SELECT received_at FROM notes
+                 WHERE room_id = ?1 AND employee_name = ?2
+                 ORDER BY received_at DESC LIMIT 1 OFFSET 1",
+                params![room_id, employee_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let (sql, param_values): (String, Vec<String>) = if let Some(ref t) = cutoff {
+            (
+                format!(
+                    "SELECT note_id, employee_name, repo, branch, progress_text, received_at
+                     FROM notes WHERE room_id = ?1 AND employee_name != ?2 AND received_at > ?3
+                     ORDER BY received_at DESC LIMIT ?4"
+                ),
+                vec![room_id.to_string(), employee_name.to_string(), t.clone(), limit.to_string()],
+            )
+        } else {
+            (
+                format!(
+                    "SELECT note_id, employee_name, repo, branch, progress_text, received_at
+                     FROM notes WHERE room_id = ?1 AND employee_name != ?2
+                     ORDER BY received_at DESC LIMIT ?3"
+                ),
+                vec![room_id.to_string(), employee_name.to_string(), limit.to_string()],
+            )
+        };
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let notes = stmt
+            .query_map(rusqlite::params_from_iter(param_refs.iter()), |row| {
+                let note_id_str: String = row.get(0)?;
+                Ok(StoredProgressNote {
+                    note_id: Uuid::parse_str(&note_id_str).unwrap_or_else(|_| Uuid::nil()),
+                    received_at: row.get(5)?,
+                    note: ProgressNote {
+                        employee_name: row.get(1)?,
+                        repo: row.get(2)?,
+                        branch: row.get(3)?,
+                        progress_text: row.get(4)?,
+                    },
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(notes)
+    }
+
     /// Get notes with optional filters: time cutoff, employee name, limit.
     pub fn get_notes_filtered(
         &self,
@@ -410,6 +496,75 @@ impl Db {
             params![room_id, content, now_rfc3339()],
         )?;
         Ok(())
+    }
+    // ── Tasks ───────────────────────────────────────────────
+
+    pub fn create_task(&self, room_id: &str, title: &str, assignee: Option<&str>) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        let task_id = Uuid::new_v4().to_string();
+        let now = now_rfc3339();
+        conn.execute(
+            "INSERT INTO tasks (task_id, room_id, title, status, assignee, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'todo', ?4, ?5, ?5)",
+            params![task_id, room_id, title, assignee, now],
+        )?;
+        Ok(task_id)
+    }
+
+    pub fn get_tasks(&self, room_id: &str, include_done: bool) -> Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = if include_done {
+            "SELECT task_id, title, status, assignee, created_at, updated_at
+             FROM tasks WHERE room_id = ?1 ORDER BY created_at"
+        } else {
+            "SELECT task_id, title, status, assignee, created_at, updated_at
+             FROM tasks WHERE room_id = ?1 AND status != 'done' ORDER BY created_at"
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let tasks = stmt
+            .query_map(params![room_id], |row| {
+                Ok(serde_json::json!({
+                    "task_id": row.get::<_, String>(0)?,
+                    "title": row.get::<_, String>(1)?,
+                    "status": row.get::<_, String>(2)?,
+                    "assignee": row.get::<_, Option<String>>(3)?,
+                    "created_at": row.get::<_, String>(4)?,
+                    "updated_at": row.get::<_, String>(5)?,
+                }))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(tasks)
+    }
+
+    pub fn update_task(&self, room_id: &str, task_id: &str, title: Option<&str>, status: Option<&str>, assignee: Option<&str>) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let mut sets = vec!["updated_at = ?3".to_string()];
+        let mut param_values: Vec<String> = vec![task_id.to_string(), room_id.to_string(), now_rfc3339()];
+        let mut idx = 4u32;
+
+        if let Some(t) = title {
+            sets.push(format!("title = ?{idx}"));
+            param_values.push(t.to_string());
+            idx += 1;
+        }
+        if let Some(s) = status {
+            sets.push(format!("status = ?{idx}"));
+            param_values.push(s.to_string());
+            idx += 1;
+        }
+        if let Some(a) = assignee {
+            sets.push(format!("assignee = ?{idx}"));
+            param_values.push(a.to_string());
+        }
+
+        let sql = format!(
+            "UPDATE tasks SET {} WHERE task_id = ?1 AND room_id = ?2",
+            sets.join(", ")
+        );
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let changed = conn.execute(&sql, rusqlite::params_from_iter(param_refs.iter()))?;
+        Ok(changed > 0)
     }
 }
 

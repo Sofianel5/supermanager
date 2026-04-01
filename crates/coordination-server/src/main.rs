@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
         .route("/r/{room_id}/feed/stream", get(api::stream_feed))
         .route("/r/{room_id}/progress", post(api::ingest_progress))
         .route("/r/{room_id}/summary", get(api::get_manager_summary))
+        .route("/r/{room_id}/tasks", get(api::get_tasks_http))
         .route("/r/{room_id}/mcp", post(api::handle_mcp))
         .route("/r/{room_id}/install", get(api::install_script))
         .route("/r/{room_id}/uninstall", get(api::uninstall_script))
