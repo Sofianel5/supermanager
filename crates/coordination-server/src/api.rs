@@ -726,8 +726,13 @@ set -e
 # Room:      {room_id}
 # Dashboard: {dashboard_url}
 
-echo "==> Supermanager: configuring AI coding agents for room {room_id}"
-echo "    NOTE: This configures the CURRENT DIRECTORY only (project-scoped)."
+echo ""
+echo "  ┌─────────────────────────────────────────────────┐"
+echo "  │  supermanager installer                         │"
+echo "  │  Room: {room_id}"
+echo "  └─────────────────────────────────────────────────┘"
+echo ""
+echo "  NOTE: This configures the CURRENT DIRECTORY only (project-scoped)."
 echo ""
 
 # ── Detect employee name ────────────────────────────────────
@@ -739,23 +744,24 @@ if [ -z "$EMPLOYEE_NAME" ]; then
   EMPLOYEE_NAME="$(whoami 2>/dev/null || true)"
 fi
 if [ -z "$EMPLOYEE_NAME" ]; then
-  echo "ERROR: Could not detect your name."
-  echo "Please run:  git config --global user.name \"Your Name\""
+  echo "  ERROR: Could not detect your name."
+  echo "  Please run:  git config --global user.name \"Your Name\""
   exit 1
 fi
-echo "    Employee: $EMPLOYEE_NAME"
+echo "  Employee: $EMPLOYEE_NAME"
+echo ""
 
 # ── Configure Claude Code (project-scoped) ──────────────────
-echo "==> Configuring Claude Code MCP server (project-scoped)..."
+echo "  [1/4] Configuring Claude Code..."
 if command -v claude >/dev/null 2>&1; then
   # Remove any global entry first
   claude mcp remove supermanager 2>/dev/null || true
   # Add as project-scoped (writes to .mcp.json in current directory)
   claude mcp add --scope project --transport http supermanager "{mcp_url}"
-  echo "    Claude Code MCP configured in $(pwd)/.mcp.json"
+  echo "        MCP configured in $(pwd)/.mcp.json"
 else
   # Write .mcp.json directly if claude CLI not available
-  echo "    Claude Code CLI not found — writing .mcp.json directly."
+  echo "        Claude CLI not found — writing .mcp.json directly."
   cat > .mcp.json <<MCPJSON
 {{
   "mcpServers": {{
@@ -766,8 +772,9 @@ else
   }}
 }}
 MCPJSON
-  echo "    Created .mcp.json in $(pwd)"
+  echo "        Created .mcp.json in $(pwd)"
 fi
+echo ""
 
 # ── Auto-approve submit_progress in Claude settings ─────────
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
@@ -787,13 +794,13 @@ if tool_entry not in allow:
     allow.append(tool_entry)
 with open('$CLAUDE_SETTINGS', 'w') as f:
     json.dump(cfg, f, indent=2)
-print('    Auto-approved submit_progress in Claude settings.')
+print('        Auto-approved submit_progress in Claude settings.')
 "
   fi
 fi
 
 # ── Configure Codex (project-scoped) ────────────────────────
-echo "==> Writing .codex-mcp.json for Codex..."
+echo "  [2/4] Configuring Codex..."
 cat > .codex-mcp.json <<CODEXJSON
 {{
   "mcpServers": {{
@@ -804,7 +811,8 @@ cat > .codex-mcp.json <<CODEXJSON
   }}
 }}
 CODEXJSON
-echo "    Created .codex-mcp.json in $(pwd)"
+echo "        Created .codex-mcp.json in $(pwd)"
+echo ""
 
 # ── Remove old global Codex config if present ────────────────
 CODEX_CFG="$HOME/.codex/config.toml"
@@ -818,11 +826,12 @@ text = re.sub(r'\[mcp_servers\.supermanager\][^\[]*', '', text)
 with open('$CODEX_CFG', 'w') as f:
     f.write(text)
 "
-    echo "    Cleaned old global Codex supermanager config."
+    echo "        Cleaned old global Codex config."
   fi
 fi
 
 # ── Inject instructions into CLAUDE.md and AGENTS.md ────────
+echo "  [3/4] Injecting agent instructions..."
 SUPERMANAGER_INSTRUCTIONS='{agent_instructions}'
 
 for INSTRUCTIONS_FILE in CLAUDE.md AGENTS.md; do
@@ -842,21 +851,29 @@ text = re.sub(
 with open('$INSTRUCTIONS_FILE', 'w') as f:
     f.write(text)
 "
-      echo "    Updated supermanager block in $INSTRUCTIONS_FILE"
+      echo "        Updated supermanager block in $INSTRUCTIONS_FILE"
     fi
   else
     # Append
     printf '\n%s\n' "$SUPERMANAGER_INSTRUCTIONS" >> "$INSTRUCTIONS_FILE"
-    echo "    Added supermanager block to $INSTRUCTIONS_FILE"
+    echo "        Added supermanager block to $INSTRUCTIONS_FILE"
   fi
 done
 
 # ── Done ────────────────────────────────────────────────────
 echo ""
-echo "==> Setup complete!"
-echo "    Dashboard: {dashboard_url}"
-echo "    Agents in $(pwd) will now report progress to the coordination server."
-echo "    Run this command from other repos to connect them too."
+echo "  [4/4] Done!"
+echo ""
+echo "  ┌─────────────────────────────────────────────────┐"
+echo "  │  Setup complete!                                │"
+echo "  │                                                 │"
+echo "  │  Dashboard: {dashboard_url}"
+echo "  │  Directory: $(pwd)"
+echo "  │                                                 │"
+echo "  │  Agents here will now report progress.          │"
+echo "  │  Run this command in other repos to connect     │"
+echo "  │  them too.                                      │"
+echo "  └─────────────────────────────────────────────────┘"
 echo ""
 "##,
         room_id = room_id,
