@@ -296,6 +296,7 @@ impl Db {
         room_id: &str,
         after_time: Option<&str>,
         employee_name: Option<&str>,
+        branch: Option<&str>,
         limit: u32,
     ) -> Result<Vec<StoredProgressNote>> {
         let conn = self.conn.lock().unwrap();
@@ -313,6 +314,12 @@ impl Db {
         if let Some(name) = employee_name {
             conditions.push(format!("employee_name = ?{idx}"));
             param_values.push(name.to_string());
+            idx += 1;
+        }
+
+        if let Some(b) = branch {
+            conditions.push(format!("branch = ?{idx}"));
+            param_values.push(b.to_string());
             idx += 1;
         }
 
