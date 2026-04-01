@@ -1,0 +1,5 @@
+{
+  "name": "supermanager-channel",
+  "description": "Forwards live supermanager notes into Claude Code through a Claude channel.",
+  "version": "0.1.0"
+}

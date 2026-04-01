@@ -44,6 +44,26 @@ pub fn read_all_notes(data_dir: &Path) -> Result<Vec<StoredProgressNote>> {
     Ok(notes)
 }
 
+pub fn read_notes_after(data_dir: &Path, note_id: &str) -> Result<Vec<StoredProgressNote>> {
+    let mut notes = read_all_notes(data_dir)?;
+    notes.reverse();
+
+    let mut found = false;
+    let mut replay = Vec::new();
+    for note in notes {
+        if found {
+            replay.push(note);
+            continue;
+        }
+
+        if note.note_id.to_string() == note_id {
+            found = true;
+        }
+    }
+
+    Ok(replay)
+}
+
 pub fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)

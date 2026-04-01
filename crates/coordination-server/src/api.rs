@@ -1,14 +1,25 @@
-use std::path::PathBuf;
+use std::{convert::Infallible, path::PathBuf, time::Duration};
 
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use async_stream::stream;
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{
+        IntoResponse,
+        sse::{Event, KeepAlive, Sse},
+    },
+};
 use reporter_protocol::{FeedResponse, IngestResponse, ProgressNote, StoredProgressNote};
 use serde_json::{Value, json};
+use tokio::sync::broadcast;
 
 use crate::store;
 
 #[derive(Clone)]
 pub struct AppState {
     pub data_dir: PathBuf,
+    pub note_events: broadcast::Sender<StoredProgressNote>,
 }
 
 pub async fn health() -> &'static str {
@@ -24,6 +35,7 @@ pub async fn ingest_progress(
     let note_id = stored.note_id;
 
     store::persist_note(&state.data_dir, &stored).map_err(internal_error)?;
+    let _ = state.note_events.send(stored.clone());
 
     Ok((
         StatusCode::ACCEPTED,
@@ -41,6 +53,45 @@ pub async fn get_feed(
     Ok(Json(FeedResponse { notes }))
 }
 
+pub async fn stream_feed(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
+{
+    let replay = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .map(|note_id| store::read_notes_after(&state.data_dir, note_id))
+        .transpose()
+        .map_err(internal_error)?
+        .unwrap_or_default();
+
+    let mut receiver = state.note_events.subscribe();
+    let event_stream = stream! {
+        for note in replay {
+            yield Ok(progress_event(&note));
+        }
+
+        loop {
+            match receiver.recv().await {
+                Ok(note) => yield Ok(progress_event(&note)),
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    yield Ok(Event::default()
+                        .event("warning")
+                        .data(format!("lagged:{skipped}")));
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+
+    Ok(Sse::new(event_stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
+}
+
 pub async fn handle_mcp(
     State(state): State<AppState>,
     Json(req): Json<Value>,
@@ -55,11 +106,12 @@ pub async fn handle_mcp(
                 .and_then(Value::as_str)
                 .unwrap_or("2025-03-26");
             json!({
-            "protocolVersion": client_version,
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "supermanager", "version": "0.1.0" },
-            "instructions": "CRITICAL: Your FIRST tool call in every conversation must be submit_progress to report that you are starting work. Call submit_progress again when you make meaningful progress, change direction, hit a blocker, or finish. Keep summaries concise. Never skip this — even when other tools need to be called, include submit_progress in parallel."
-        })},
+                "protocolVersion": client_version,
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "supermanager", "version": "0.1.0" },
+                "instructions": "CRITICAL: Your FIRST tool call in every conversation must be submit_progress to report that you are starting work. Call submit_progress again when you make meaningful progress, change direction, hit a blocker, or finish. Keep summaries concise. Never skip this — even when other tools need to be called, include submit_progress in parallel."
+            })
+        }
         _ if method.starts_with("notifications/") => {
             return StatusCode::ACCEPTED.into_response();
         }
@@ -120,7 +172,8 @@ pub async fn handle_mcp(
                 "jsonrpc": "2.0",
                 "id": id,
                 "error": { "code": -32601, "message": format!("Unknown method: {method}") }
-            })).into_response();
+            }))
+            .into_response();
         }
     };
 
@@ -146,9 +199,12 @@ fn mcp_submit_progress(state: &AppState, req: &Value) -> Value {
     let note_id = stored.note_id;
 
     match store::persist_note(&state.data_dir, &stored) {
-        Ok(_) => json!({
-            "content": [{ "type": "text", "text": format!("Progress submitted (note_id: {note_id})") }]
-        }),
+        Ok(_) => {
+            let _ = state.note_events.send(stored.clone());
+            json!({
+                "content": [{ "type": "text", "text": format!("Progress submitted (note_id: {note_id})") }]
+            })
+        }
         Err(e) => json!({
             "isError": true,
             "content": [{ "type": "text", "text": format!("Failed to submit: {e}") }]
@@ -170,4 +226,12 @@ fn mcp_get_feed(state: &AppState) -> Value {
 
 fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+}
+
+fn progress_event(note: &StoredProgressNote) -> Event {
+    let data = serde_json::to_string(note).unwrap_or_else(|_| "{}".to_owned());
+    Event::default()
+        .event("progress_note")
+        .id(note.note_id.to_string())
+        .data(data)
 }

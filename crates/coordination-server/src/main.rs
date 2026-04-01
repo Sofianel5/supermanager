@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post},
 };
 use clap::Parser;
+use tokio::sync::broadcast;
 
 use api::AppState;
 
@@ -25,15 +26,18 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     store::initialize(&cli.data_dir)?;
+    let (note_events, _) = broadcast::channel(256);
 
     let state = AppState {
         data_dir: cli.data_dir,
+        note_events,
     };
 
     let app = Router::new()
         .route("/health", get(api::health))
         .route("/v1/progress", post(api::ingest_progress))
         .route("/v1/feed", get(api::get_feed))
+        .route("/v1/feed/stream", get(api::stream_feed))
         .route("/mcp", post(api::handle_mcp))
         .with_state(state);
 
