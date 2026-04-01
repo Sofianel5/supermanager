@@ -260,6 +260,113 @@ For the HTTP hook approach, the coordination server needs endpoints like:
 
 These map the hook payloads to `submit_progress` internally. Employee name, repo, branch come from query params baked in at install time.
 
+---
+
+## Hook return values (bidirectional communication)
+
+Hooks aren't just fire-and-forget — they can return JSON that gets injected back into the Claude Code conversation. This enables the server to push context into the agent's thread.
+
+### Common output fields (all hooks)
+
+```json
+{
+  "continue": true,
+  "stopReason": "Message shown to user",
+  "suppressOutput": false,
+  "systemMessage": "Injected as a system message Claude sees"
+}
+```
+
+### Event-specific outputs
+
+**UserPromptSubmit / PostToolUse** — inject `additionalContext`:
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "Manager note: focus on the auth refactor today"
+  }
+}
+```
+
+**PreToolUse** — can allow/deny/modify tool calls:
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Blocked by policy",
+    "updatedInput": { "command": "npm run lint" },
+    "additionalContext": "Extra info for Claude"
+  }
+}
+```
+
+**Stop** — can force Claude to keep going:
+```json
+{
+  "decision": "block",
+  "reason": "You haven't run tests yet"
+}
+```
+
+### How hooks return values
+
+| Hook type | How to return | Format |
+|-----------|---------------|--------|
+| `command` | Write JSON to stdout | Exit code 0 = parse stdout as JSON |
+| `http` | HTTP response body | 2xx + JSON body = parse fields |
+
+Exit code 2 (command) or non-2xx (http) = blocking error, stderr/body shown to user.
+
+### Supermanager use case: inject manager context
+
+This is the killer feature. A `UserPromptSubmit` hook could:
+
+1. Fire on every user message
+2. Hit the coordination server
+3. Server responds with the manager's latest summary/priorities
+4. That gets injected as `additionalContext` — Claude sees it as context automatically
+
+```json
+// Hook config
+{
+  "hooks": {
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "http",
+        "url": "https://server/r/{room_id}/hooks/prompt-context?secret={secret}&employee=Bryan+Chiang",
+        "timeout": 5
+      }]
+    }]
+  }
+}
+```
+
+```json
+// Server response
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "Manager priorities: 1) Ship auth refactor by Friday 2) Don't touch the payments module"
+  }
+}
+```
+
+This means:
+- Manager updates priorities on the dashboard
+- Every agent conversation automatically sees them
+- No MCP call needed, no tokens spent on fetching
+- Agent doesn't need to remember to check `get_manager_summary`
+
+Could also inject the team feed, recent progress from other agents, or blockers — whatever the server wants to push.
+
+### Codex limitation
+
+Codex only supports `command` hooks, so the script would need to curl the server, capture the response, and echo JSON to stdout. Same result, just requires a script file.
+
+---
+
 ### What this replaces
 
 With hooks in place, the CLAUDE.md/AGENTS.md instructions to call `submit_progress` become optional — hooks handle the guaranteed baseline reporting. The MCP `submit_progress` tool can still exist for agents that want to send richer/curated updates beyond what the hooks capture.
