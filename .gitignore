@@ -8,3 +8,4 @@
 *.db-wal
 .mcp.json
 .codex-mcp.json
+.env
