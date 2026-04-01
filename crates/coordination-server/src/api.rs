@@ -1126,7 +1126,7 @@ pub async fn handle_mcp(
                 },
                 {
                     "name": "get_summary",
-                    "description": "Get an AI-generated summary of recent progress updates. Supports filtering by time window, message count, employee name, or since a specific person's last update.",
+                    "description": "Get an AI-generated summary of recent progress updates. Supports filtering by time window, message count, employee name, branch, or since a specific person's last update.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -1141,6 +1141,10 @@ pub async fn handle_mcp(
                             "employee_name": {
                                 "type": "string",
                                 "description": "Filter to only this person's updates"
+                            },
+                            "branch": {
+                                "type": "string",
+                                "description": "Filter to only updates from this git branch"
                             },
                             "since_last_update_by": {
                                 "type": "string",
@@ -1170,6 +1174,10 @@ pub async fn handle_mcp(
                             "employee_name": {
                                 "type": "string",
                                 "description": "Only search this person's updates"
+                            },
+                            "branch": {
+                                "type": "string",
+                                "description": "Only search updates from this git branch"
                             },
                             "since_last_update_by": {
                                 "type": "string",
@@ -1341,6 +1349,7 @@ fn resolve_notes_context(
     let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(default_limit as u64) as u32;
     let minutes = args.get("minutes").and_then(Value::as_u64);
     let employee_name = args.get("employee_name").and_then(Value::as_str);
+    let branch = args.get("branch").and_then(Value::as_str);
     let since_last_update_by = args.get("since_last_update_by").and_then(Value::as_str);
 
     // Resolve time cutoff
@@ -1363,6 +1372,7 @@ fn resolve_notes_context(
         room_id,
         after_time.as_deref(),
         employee_name,
+        branch,
         limit,
     ).map_err(|e| mcp_error(&format!("Failed to fetch notes: {e}")))?;
 
@@ -1387,6 +1397,9 @@ fn resolve_notes_context(
     let mut filter_desc = format!("{} most recent updates", notes.len());
     if let Some(name) = employee_name {
         filter_desc = format!("{filter_desc} from {name}");
+    }
+    if let Some(b) = branch {
+        filter_desc = format!("{filter_desc} on branch {b}");
     }
     if let Some(person) = since_last_update_by {
         filter_desc = format!("{filter_desc} (since {person}'s last update)");
