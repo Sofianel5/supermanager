@@ -2,6 +2,7 @@
 members = [
   "crates/coordination-server",
   "crates/reporter-protocol",
+  "crates/supermanager-cli",
 ]
 resolver = "2"
 

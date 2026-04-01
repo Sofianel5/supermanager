@@ -11,13 +11,13 @@ use uuid::Uuid;
 // ── Slug generation word lists ──────────────────────────────
 
 const ADJECTIVES: &[&str] = &[
-    "bright", "calm", "cool", "dark", "fast", "bold", "keen", "warm", "wild", "free",
-    "swift", "brave", "quiet", "sharp", "clear", "fresh", "grand", "prime", "true", "fair",
+    "bright", "calm", "cool", "dark", "fast", "bold", "keen", "warm", "wild", "free", "swift",
+    "brave", "quiet", "sharp", "clear", "fresh", "grand", "prime", "true", "fair",
 ];
 
 const NOUNS: &[&str] = &[
-    "fox", "owl", "bear", "wolf", "hawk", "deer", "lynx", "crow", "dove", "hare",
-    "lion", "seal", "wren", "orca", "puma", "swan", "moth", "frog", "newt", "mink",
+    "fox", "owl", "bear", "wolf", "hawk", "deer", "lynx", "crow", "dove", "hare", "lion", "seal",
+    "wren", "orca", "puma", "swan", "moth", "frog", "newt", "mink",
 ];
 
 // ── Database wrapper ────────────────────────────────────────
@@ -132,9 +132,8 @@ impl Db {
     /// Retrieve a room by its slug, or `None` if it does not exist.
     pub fn get_room(&self, room_id: &str) -> Result<Option<Room>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT room_id, name, secret, created_at FROM rooms WHERE room_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT room_id, name, secret, created_at FROM rooms WHERE room_id = ?1")?;
         let mut rows = stmt.query_map(params![room_id], |row| {
             Ok(Room {
                 room_id: row.get(0)?,
@@ -165,11 +164,7 @@ impl Db {
     // ── Notes ───────────────────────────────────────────────
 
     /// Insert a progress note into a room.
-    pub fn insert_note(
-        &self,
-        room_id: &str,
-        note: &ProgressNote,
-    ) -> Result<StoredProgressNote> {
+    pub fn insert_note(&self, room_id: &str, note: &ProgressNote) -> Result<StoredProgressNote> {
         let conn = self.conn.lock().unwrap();
         let note_id = Uuid::new_v4();
         let received_at = now_rfc3339();
@@ -319,7 +314,12 @@ impl Db {
                      FROM notes WHERE room_id = ?1 AND employee_name != ?2 AND received_at > ?3
                      ORDER BY received_at DESC LIMIT ?4"
                 ),
-                vec![room_id.to_string(), employee_name.to_string(), t.clone(), limit.to_string()],
+                vec![
+                    room_id.to_string(),
+                    employee_name.to_string(),
+                    t.clone(),
+                    limit.to_string(),
+                ],
             )
         } else {
             (
@@ -328,12 +328,18 @@ impl Db {
                      FROM notes WHERE room_id = ?1 AND employee_name != ?2
                      ORDER BY received_at DESC LIMIT ?3"
                 ),
-                vec![room_id.to_string(), employee_name.to_string(), limit.to_string()],
+                vec![
+                    room_id.to_string(),
+                    employee_name.to_string(),
+                    limit.to_string(),
+                ],
             )
         };
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
         let mut stmt = conn.prepare(&sql)?;
         let notes = stmt
             .query_map(rusqlite::params_from_iter(param_refs.iter()), |row| {
@@ -394,8 +400,10 @@ impl Db {
         );
         param_values.push(limit.to_string());
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
 
         let mut stmt = conn.prepare(&sql)?;
         let notes = stmt
@@ -475,7 +483,12 @@ impl Db {
     }
     // ── Tasks ───────────────────────────────────────────────
 
-    pub fn create_task(&self, room_id: &str, title: &str, assignee: Option<&str>) -> Result<String> {
+    pub fn create_task(
+        &self,
+        room_id: &str,
+        title: &str,
+        assignee: Option<&str>,
+    ) -> Result<String> {
         let conn = self.conn.lock().unwrap();
         let task_id = Uuid::new_v4().to_string();
         let now = now_rfc3339();
@@ -512,10 +525,18 @@ impl Db {
         Ok(tasks)
     }
 
-    pub fn update_task(&self, room_id: &str, task_id: &str, title: Option<&str>, status: Option<&str>, assignee: Option<&str>) -> Result<bool> {
+    pub fn update_task(
+        &self,
+        room_id: &str,
+        task_id: &str,
+        title: Option<&str>,
+        status: Option<&str>,
+        assignee: Option<&str>,
+    ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let mut sets = vec!["updated_at = ?3".to_string()];
-        let mut param_values: Vec<String> = vec![task_id.to_string(), room_id.to_string(), now_rfc3339()];
+        let mut param_values: Vec<String> =
+            vec![task_id.to_string(), room_id.to_string(), now_rfc3339()];
         let mut idx = 4u32;
 
         if let Some(t) = title {
@@ -537,8 +558,10 @@ impl Db {
             "UPDATE tasks SET {} WHERE task_id = ?1 AND room_id = ?2",
             sets.join(", ")
         );
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
         let changed = conn.execute(&sql, rusqlite::params_from_iter(param_refs.iter()))?;
         Ok(changed > 0)
     }

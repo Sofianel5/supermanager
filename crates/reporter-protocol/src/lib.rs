@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub const SUPERMANAGER_INSTRUCTIONS_TEMPLATE: &str = include_str!("supermanager_instructions.md");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressNote {
     pub employee_name: String,
@@ -46,6 +48,7 @@ pub struct CreateRoomRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateRoomResponse {
+    pub install_command: String,
     pub room_id: String,
     pub secret: String,
     pub dashboard_url: String,
