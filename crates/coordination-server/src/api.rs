@@ -419,7 +419,16 @@ pub async fn get_manager_summary(
     ))
 }
 
-
+pub async fn get_tasks_http(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let tasks = state
+        .db
+        .get_tasks(&room_id, false)
+        .map_err(internal_error)?;
+    Ok(Json(json!({ "tasks": tasks })))
+}
 
 // ── Dashboard ───────────────────────────────────────────────
 
@@ -489,6 +498,14 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 .summary-content{{font-family:var(--sans);font-size:0.92rem;color:var(--text-secondary);white-space:pre-wrap;line-height:1.7;}}
 .empty{{color:var(--text-muted);font-style:italic;font-size:0.88rem}}
 .generating{{color:var(--accent);font-style:italic;font-size:0.88rem;animation:pulse 1.5s ease-in-out infinite}}
+.task-item{{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-family:var(--sans);font-size:0.88rem;color:var(--text-secondary)}}
+.task-item:last-child{{border-bottom:none}}
+.task-status{{font-family:var(--mono);font-size:0.72rem;font-weight:600;padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:0.03em}}
+.task-status.todo{{color:var(--text-muted);border:1px solid var(--border)}}
+.task-status.in_progress{{color:var(--accent);border:1px solid var(--accent)}}
+.task-status.done{{color:var(--emerald);border:1px solid var(--emerald)}}
+.task-assignee{{color:var(--text-muted);font-size:0.78rem}}
+.task-list-empty{{color:var(--text-muted);font-style:italic;font-size:0.88rem}}
 @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.5}}}}
 .timeline{{position:relative;padding-left:24px}}
 .timeline::before{{content:'';position:absolute;left:7px;top:8px;bottom:8px;width:1px;background:var(--border);}}
@@ -565,6 +582,16 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
     </div>
   </div>
 
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-title">Task List</span>
+      <span id="task-count" class="panel-badge">0 tasks</span>
+    </div>
+    <div class="panel-body">
+      <div id="task-list" class="task-list-container"></div>
+    </div>
+  </div>
+
   <div class="footer">supermanager &middot; real-time ai coordination</div>
 </div>
 
@@ -574,6 +601,8 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
   var statusEl = document.getElementById('connection-status');
   var liveText = statusEl.querySelector('.live-text');
   var countEl = document.getElementById('note-count');
+  var taskList = document.getElementById('task-list');
+  var taskCount = document.getElementById('task-count');
   var summaryEl = document.getElementById('summary');
   var notes = [];
   var expanded = false;
@@ -682,6 +711,41 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
       .catch(function() {{}});
   }}
   loadSummary();
+
+  function loadTasks() {{
+    fetch(base + '/tasks')
+      .then(function(r) {{ return r.json(); }})
+      .then(function(data) {{
+        var tasks = data.tasks || [];
+        taskCount.textContent = tasks.length + ' task' + (tasks.length !== 1 ? 's' : '');
+        if (tasks.length === 0) {{
+          taskList.innerHTML = '<div class="task-list-empty">No tasks yet.</div>';
+          return;
+        }}
+        taskList.innerHTML = '';
+        tasks.forEach(function(t) {{
+          var item = document.createElement('div');
+          item.className = 'task-item';
+          var badge = document.createElement('span');
+          badge.className = 'task-status ' + t.status;
+          badge.textContent = t.status.replace('_', ' ');
+          item.appendChild(badge);
+          var title = document.createElement('span');
+          title.textContent = t.title;
+          title.style.flex = '1';
+          item.appendChild(title);
+          if (t.assignee) {{
+            var assignee = document.createElement('span');
+            assignee.className = 'task-assignee';
+            assignee.textContent = '@' + t.assignee;
+            item.appendChild(assignee);
+          }}
+          taskList.appendChild(item);
+        }});
+      }})
+      .catch(function() {{}});
+  }}
+  loadTasks();
 
   var es = new EventSource(base + '/feed/stream');
   es.onopen = function() {{
@@ -1122,6 +1186,10 @@ pub async fn handle_mcp(
                             "progress_text": {
                                 "type": "string",
                                 "description": "A concise summary of what was accomplished"
+                            },
+                            "quiet": {
+                                "type": "boolean",
+                                "description": "If true, skip returning others' updates and task list (default: false)"
                             }
                         },
                         "required": ["employee_name", "repo", "branch", "progress_text"]
@@ -1205,6 +1273,63 @@ pub async fn handle_mcp(
                         },
                         "required": ["question"]
                     }
+                },
+                {
+                    "name": "create_task",
+                    "description": "Create a task in the shared task list.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "title": {
+                                "type": "string",
+                                "description": "The task description"
+                            },
+                            "assignee": {
+                                "type": "string",
+                                "description": "Who this task is assigned to (optional)"
+                            }
+                        },
+                        "required": ["title"]
+                    }
+                },
+                {
+                    "name": "get_tasks",
+                    "description": "Get the shared task list. By default returns only incomplete tasks.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "include_done": {
+                                "type": "boolean",
+                                "description": "Include completed tasks (default: false)"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "update_task",
+                    "description": "Update a task — change its title, status, or assignee. Set status to 'done' to mark complete.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "task_id": {
+                                "type": "string",
+                                "description": "The task ID to update"
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "New title (optional)"
+                            },
+                            "status": {
+                                "type": "string",
+                                "description": "New status: todo, in_progress, done"
+                            },
+                            "assignee": {
+                                "type": "string",
+                                "description": "New assignee (optional)"
+                            }
+                        },
+                        "required": ["task_id"]
+                    }
                 }
             ]
         }),
@@ -1220,8 +1345,21 @@ pub async fn handle_mcp(
                         Err(msg) => mcp_error(msg),
                     }
                 }
+                "create_task" => {
+                    match verify_mcp_secret(&state, &room_id, &secret) {
+                        Ok(()) => mcp_create_task(&state, &room_id, &req),
+                        Err(msg) => mcp_error(msg),
+                    }
+                }
+                "update_task" => {
+                    match verify_mcp_secret(&state, &room_id, &secret) {
+                        Ok(()) => mcp_update_task(&state, &room_id, &req),
+                        Err(msg) => mcp_error(msg),
+                    }
+                }
                 // Public tools — no secret required
                 "get_feed" => mcp_get_feed(&state, &room_id),
+                "get_tasks" => mcp_get_tasks(&state, &room_id, &req),
                 "get_manager_summary" => mcp_get_manager_summary(&state, &room_id),
                 "get_summary" => mcp_get_summary(&state, &room_id, &req).await,
                 "ask" => mcp_ask(&state, &room_id, &req).await,
@@ -1282,9 +1420,15 @@ fn mcp_submit_progress(state: &AppState, room_id: &str, req: &Value) -> Value {
         progress_text: str_arg("progress_text"),
     };
 
+    let quiet = args
+        .and_then(|a| a.get("quiet"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
     match state.db.insert_note(room_id, &note) {
         Ok(stored) => {
             let note_id = stored.note_id;
+            let employee = note.employee_name.clone();
             let _ = state.note_events.send(NoteEvent {
                 room_id: room_id.to_owned(),
                 note: stored,
@@ -1292,14 +1436,54 @@ fn mcp_submit_progress(state: &AppState, room_id: &str, req: &Value) -> Value {
 
             // Spawn background auto-summarize
             eprintln!("[submit_progress] spawning auto_summarize for room {room_id}");
-            let state = state.clone();
-            let room = room_id.to_owned();
+            let bg_state = state.clone();
+            let bg_room = room_id.to_owned();
             tokio::spawn(async move {
-                auto_summarize(&state, &room).await;
+                auto_summarize(&bg_state, &bg_room).await;
             });
 
+            // Build response with context unless quiet
+            let mut response = format!("Progress submitted (note_id: {note_id})");
+
+            if !quiet {
+                // Get updates from others since our last submission
+                if let Ok(others) = state.db.get_updates_from_others(room_id, &employee, 20) {
+                    if !others.is_empty() {
+                        response.push_str(&format!("\n\n--- Updates from others ({}) ---\n", others.len()));
+                        for n in &others {
+                            response.push_str(&format!(
+                                "[{}] {} ({}): {}\n",
+                                n.received_at,
+                                n.note.employee_name,
+                                n.note.branch.as_deref().unwrap_or("—"),
+                                n.note.progress_text,
+                            ));
+                        }
+                    }
+                }
+
+                // Append task list
+                if let Ok(tasks) = state.db.get_tasks(room_id, false) {
+                    if !tasks.is_empty() {
+                        response.push_str("\n--- Task List ---\n");
+                        for t in &tasks {
+                            let status = t["status"].as_str().unwrap_or("todo");
+                            let marker = if status == "done" { "x" } else { " " };
+                            let title = t["title"].as_str().unwrap_or("");
+                            let assignee = t["assignee"].as_str().unwrap_or("");
+                            let id = t["task_id"].as_str().unwrap_or("");
+                            if assignee.is_empty() {
+                                response.push_str(&format!("- [{marker}] {title} ({id})\n"));
+                            } else {
+                                response.push_str(&format!("- [{marker}] {title} @{assignee} ({id})\n"));
+                            }
+                        }
+                    }
+                }
+            }
+
             json!({
-                "content": [{ "type": "text", "text": format!("Progress submitted (note_id: {note_id})") }]
+                "content": [{ "type": "text", "text": response }]
             })
         }
         Err(e) => json!({
@@ -1330,6 +1514,60 @@ fn mcp_get_manager_summary(state: &AppState, room_id: &str) -> Value {
             "isError": true,
             "content": [{ "type": "text", "text": format!("Failed to read manager summary: {e}") }]
         }),
+    }
+}
+
+fn mcp_create_task(state: &AppState, room_id: &str, req: &Value) -> Value {
+    let args = req.pointer("/params/arguments");
+    let title = args.and_then(|a| a.get("title")).and_then(Value::as_str).unwrap_or("");
+    let assignee = args.and_then(|a| a.get("assignee")).and_then(Value::as_str);
+
+    if title.is_empty() {
+        return mcp_error("Missing required field: title");
+    }
+
+    match state.db.create_task(room_id, title, assignee) {
+        Ok(task_id) => json!({
+            "content": [{ "type": "text", "text": format!("Task created (task_id: {task_id})") }]
+        }),
+        Err(e) => mcp_error(&format!("Failed to create task: {e}")),
+    }
+}
+
+fn mcp_get_tasks(state: &AppState, room_id: &str, req: &Value) -> Value {
+    let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
+    let include_done = args.get("include_done").and_then(Value::as_bool).unwrap_or(false);
+
+    match state.db.get_tasks(room_id, include_done) {
+        Ok(tasks) => {
+            let text = if tasks.is_empty() {
+                "No tasks.".to_owned()
+            } else {
+                serde_json::to_string_pretty(&tasks).unwrap_or_default()
+            };
+            json!({ "content": [{ "type": "text", "text": text }] })
+        }
+        Err(e) => mcp_error(&format!("Failed to get tasks: {e}")),
+    }
+}
+
+fn mcp_update_task(state: &AppState, room_id: &str, req: &Value) -> Value {
+    let args = req.pointer("/params/arguments");
+    let task_id = args.and_then(|a| a.get("task_id")).and_then(Value::as_str).unwrap_or("");
+    let title = args.and_then(|a| a.get("title")).and_then(Value::as_str);
+    let status = args.and_then(|a| a.get("status")).and_then(Value::as_str);
+    let assignee = args.and_then(|a| a.get("assignee")).and_then(Value::as_str);
+
+    if task_id.is_empty() {
+        return mcp_error("Missing required field: task_id");
+    }
+
+    match state.db.update_task(room_id, task_id, title, status, assignee) {
+        Ok(true) => json!({
+            "content": [{ "type": "text", "text": format!("Task {task_id} updated") }]
+        }),
+        Ok(false) => mcp_error(&format!("Task not found: {task_id}")),
+        Err(e) => mcp_error(&format!("Failed to update task: {e}")),
     }
 }
 
@@ -1465,9 +1703,9 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
         status: "generating".to_owned(),
     });
 
-    // Build context from last 5 minutes
-    let args = json!({ "minutes": 5 });
-    let (context, filter_desc) = match resolve_notes_context(state, room_id, &args, 50) {
+    // Build context from last 100 messages
+    let args = json!({});
+    let (context, filter_desc) = match resolve_notes_context(state, room_id, &args, 100) {
         Ok(v) => v,
         Err(_) => {
             eprintln!("[auto_summarize] no notes in last 5 min for room {room_id}");
