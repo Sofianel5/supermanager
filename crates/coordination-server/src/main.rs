@@ -62,6 +62,8 @@ async fn main() -> Result<()> {
             get(api::legacy_get_manager_summary).put(api::legacy_update_manager_summary),
         )
         .route("/mcp", post(api::legacy_handle_mcp))
+        // ── Landing page ────────────────────────────────
+        .route("/", get(api::landing_page))
         // ── Health ───────────────────────────────────────
         .route("/health", get(api::health))
         .with_state(state);
