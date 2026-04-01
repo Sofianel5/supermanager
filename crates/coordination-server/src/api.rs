@@ -1002,6 +1002,36 @@ pub async fn handle_mcp(
                             }
                         }
                     }
+                },
+                {
+                    "name": "ask",
+                    "description": "Ask a question about progress updates and get a focused, cited answer. Searches the raw log so you don't need it in context.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "The question to answer from the progress log"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "How far back to search in messages (default: 50)"
+                            },
+                            "minutes": {
+                                "type": "integer",
+                                "description": "Only search messages from the last N minutes"
+                            },
+                            "employee_name": {
+                                "type": "string",
+                                "description": "Only search this person's updates"
+                            },
+                            "since_last_update_by": {
+                                "type": "string",
+                                "description": "Only search updates since this person's most recent update"
+                            }
+                        },
+                        "required": ["question"]
+                    }
                 }
             ]
         }),
@@ -1027,6 +1057,7 @@ pub async fn handle_mcp(
                 "get_feed" => mcp_get_feed(&state, &room_id),
                 "get_manager_summary" => mcp_get_manager_summary(&state, &room_id),
                 "get_summary" => mcp_get_summary(&state, &room_id, &req).await,
+                "ask" => mcp_ask(&state, &room_id, &req).await,
                 _ => json!({
                     "isError": true,
                     "content": [{ "type": "text", "text": format!("Unknown tool: {tool_name}") }]
@@ -1153,22 +1184,23 @@ fn mcp_update_manager_summary(state: &AppState, room_id: &str, req: &Value) -> V
     }
 }
 
-async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
-
-    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20) as u32;
+/// Shared: resolve filter args → fetch notes → format context string.
+/// Returns `Ok((context, filter_desc))` or `Err(mcp error Value)`.
+fn resolve_notes_context(
+    state: &AppState,
+    room_id: &str,
+    args: &Value,
+    default_limit: u32,
+) -> Result<(String, String), Value> {
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(default_limit as u64) as u32;
     let minutes = args.get("minutes").and_then(Value::as_u64);
     let employee_name = args.get("employee_name").and_then(Value::as_str);
     let since_last_update_by = args.get("since_last_update_by").and_then(Value::as_str);
 
     // Resolve time cutoff
     let after_time = if let Some(person) = since_last_update_by {
-        match state.db.get_last_update_time(room_id, person) {
-            Ok(t) => t,
-            Err(e) => {
-                return mcp_error(&format!("Failed to look up last update by {person}: {e}"));
-            }
-        }
+        state.db.get_last_update_time(room_id, person)
+            .map_err(|e| mcp_error(&format!("Failed to look up last update by {person}: {e}")))?
     } else if let Some(mins) = minutes {
         let cutoff = time::OffsetDateTime::now_utc()
             - time::Duration::minutes(mins as i64);
@@ -1181,24 +1213,19 @@ async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value 
         None
     };
 
-    // Fetch filtered notes
-    let notes = match state.db.get_notes_filtered(
+    let notes = state.db.get_notes_filtered(
         room_id,
         after_time.as_deref(),
         employee_name,
         limit,
-    ) {
-        Ok(n) => n,
-        Err(e) => return mcp_error(&format!("Failed to fetch notes: {e}")),
-    };
+    ).map_err(|e| mcp_error(&format!("Failed to fetch notes: {e}")))?;
 
     if notes.is_empty() {
-        return json!({
+        return Err(json!({
             "content": [{ "type": "text", "text": "No progress updates found matching the filter." }]
-        });
+        }));
     }
 
-    // Format notes for the LLM
     let mut context = String::new();
     for n in &notes {
         context.push_str(&format!(
@@ -1211,12 +1238,6 @@ async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value 
         ));
     }
 
-    let api_key = match &state.openai_api_key {
-        Some(k) => k,
-        None => return mcp_error("OPENAI_API_KEY not configured on the server"),
-    };
-
-    // Build filter description for the prompt
     let mut filter_desc = format!("{} most recent updates", notes.len());
     if let Some(name) = employee_name {
         filter_desc = format!("{filter_desc} from {name}");
@@ -1228,10 +1249,20 @@ async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value 
         filter_desc = format!("{filter_desc} from the last {mins} minutes");
     }
 
+    Ok((context, filter_desc))
+}
+
+/// Shared: call OpenAI Responses API and return the text.
+async fn call_openai(state: &AppState, instructions: &str, input: &str) -> Value {
+    let api_key = match &state.openai_api_key {
+        Some(k) => k,
+        None => return mcp_error("OPENAI_API_KEY not configured on the server"),
+    };
+
     let body = json!({
         "model": "gpt-5.4-mini",
-        "instructions": "You are a concise project manager assistant. Summarize progress updates into a clear, actionable briefing. Group by person or theme. Highlight blockers, completions, and key decisions. Be brief.",
-        "input": format!("Summarize these {filter_desc}:\n\n{context}")
+        "instructions": instructions,
+        "input": input,
     });
 
     let resp = state
@@ -1258,15 +1289,49 @@ async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value 
         Err(e) => return mcp_error(&format!("Failed to parse OpenAI response: {e}")),
     };
 
-    // Extract text from: output[0].content[0].text
-    let summary = resp_json
+    let text = resp_json
         .pointer("/output/0/content/0/text")
         .and_then(Value::as_str)
         .unwrap_or("(empty response from OpenAI)");
 
     json!({
-        "content": [{ "type": "text", "text": summary }]
+        "content": [{ "type": "text", "text": text }]
     })
+}
+
+async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value {
+    let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
+
+    let (context, filter_desc) = match resolve_notes_context(state, room_id, &args, 20) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    call_openai(
+        state,
+        "You are a concise project manager assistant. Summarize progress updates into a clear, actionable briefing. Group by person or theme. Highlight blockers, completions, and key decisions. Be brief.",
+        &format!("Summarize these {filter_desc}:\n\n{context}"),
+    ).await
+}
+
+async fn mcp_ask(state: &AppState, room_id: &str, req: &Value) -> Value {
+    let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
+
+    let question = match args.get("question").and_then(Value::as_str) {
+        Some(q) => q.to_owned(),
+        None => return mcp_error("Missing required field: question"),
+    };
+
+    let (context, _filter_desc) = match resolve_notes_context(state, room_id, &args, 50) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    call_openai(
+        state,
+        "You are a project assistant. Answer the question based ONLY on the progress log below. Be specific — cite timestamps and names. If the answer isn't in the log, say so clearly.",
+        &format!("Question: {question}\n\nProgress log:\n{context}"),
+    ).await
 }
 
 // ── Legacy (non-room) routes ────────────────────────────────
