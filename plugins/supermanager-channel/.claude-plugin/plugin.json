@@ -1,5 +1,6 @@
 {
   "name": "supermanager-channel",
   "description": "Forwards live supermanager notes into Claude Code through a Claude channel.",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "mcpServers": "./.mcp.json"
 }
