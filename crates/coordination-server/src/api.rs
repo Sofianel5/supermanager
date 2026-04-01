@@ -427,142 +427,219 @@ fn build_dashboard_html(name: &str, room_id: &str, base_url: &str) -> String {
         r##"<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{safe_name} — Supermanager</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{safe_name} — supermanager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
-*,*::before,*::after{{box-sizing:border-box}}
-body{{
-  margin:0;padding:0;
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  background:#0d1117;color:#c9d1d9;line-height:1.6;
-}}
-.container{{max-width:900px;margin:0 auto;padding:24px 16px}}
-h1{{color:#58a6ff;margin:0 0 4px 0;font-size:1.8rem}}
-.subtitle{{color:#8b949e;margin:0 0 24px 0;font-size:0.9rem}}
-.section{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-bottom:20px}}
-.section h2{{color:#f0f6fc;margin:0 0 12px 0;font-size:1.2rem;border-bottom:1px solid #21262d;padding-bottom:8px}}
-.note{{border-left:3px solid #58a6ff;padding:12px 16px;margin-bottom:12px;background:#0d1117;border-radius:0 6px 6px 0}}
-.note:last-child{{margin-bottom:0}}
-.note-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:4px}}
-.note-author{{color:#58a6ff;font-weight:600}}
-.note-meta{{color:#8b949e;font-size:0.8rem}}
-.note-repo{{color:#7ee787;font-size:0.85rem;font-family:monospace}}
-.note-branch{{color:#d2a8ff;font-size:0.85rem;font-family:monospace}}
-.note-text{{color:#c9d1d9;margin-top:6px;white-space:pre-wrap}}
-.summary-content{{color:#c9d1d9;white-space:pre-wrap}}
-.empty{{color:#484f58;font-style:italic}}
-code{{background:#21262d;padding:2px 8px;border-radius:4px;font-size:0.85rem;color:#f0f6fc;word-break:break-all}}
-.join-section code{{display:block;margin-top:8px;padding:12px;white-space:pre-wrap;word-break:break-all}}
-.badge{{display:inline-block;background:#238636;color:#fff;font-size:0.7rem;padding:2px 8px;border-radius:12px;margin-left:8px;vertical-align:middle}}
-#connection-status{{font-size:0.8rem;color:#8b949e}}
-#connection-status.connected{{color:#3fb950}}
-#connection-status.error{{color:#f85149}}
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+:root{{--bg-deep:#06080d;--bg-primary:#0a0e17;--bg-surface:#0f1420;--bg-elevated:#141a27;--border:#1a2235;--border-hover:#243049;--text-primary:#e2e8f0;--text-secondary:#7a8ba8;--text-muted:#4a5568;--amber:#f59e0b;--amber-dim:#b27308;--amber-glow:rgba(245,158,11,0.12);--emerald:#10b981;--emerald-dim:#0a7c56;--red:#ef4444;--cyan:#22d3ee;--violet:#a78bfa;--mono:'JetBrains Mono',monospace;--sans:'Outfit',sans-serif;}}
+html{{scroll-behavior:smooth}}
+body{{background:var(--bg-deep);color:var(--text-primary);font-family:var(--sans);line-height:1.6;min-height:100vh;position:relative;overflow-x:hidden;}}
+body::before{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(245,158,11,0.06) 0%,transparent 60%),radial-gradient(ellipse 60% 40% at 80% 100%,rgba(16,185,129,0.04) 0%,transparent 50%);}}
+body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.035;background-image:url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cpattern id='g' width='60' height='60' patternUnits='userSpaceOnUse'%3E%3Cpath d='M60 0H0v60' fill='none' stroke='%23fff' stroke-width='0.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E");}}
+.shell{{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:32px 20px 80px}}
+.header{{margin-bottom:40px}}
+.header-top{{display:flex;align-items:center;gap:14px;margin-bottom:6px}}
+.logo{{font-family:var(--mono);font-weight:700;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--amber);background:var(--amber-glow);border:1px solid rgba(245,158,11,0.2);padding:4px 10px;border-radius:4px;white-space:nowrap;}}
+.room-name{{font-family:var(--sans);font-weight:800;font-size:2rem;letter-spacing:-0.03em;color:var(--text-primary);line-height:1.1;}}
+.header-meta{{display:flex;align-items:center;gap:16px;font-family:var(--mono);font-size:0.78rem;color:var(--text-muted);}}
+.room-id{{color:var(--text-secondary)}}
+.live-dot{{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-weight:600;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;}}
+.live-dot .dot{{width:7px;height:7px;border-radius:50%;background:var(--text-muted);box-shadow:0 0 0 0 transparent;transition:all 0.4s ease;}}
+.live-dot.connected .dot{{background:var(--emerald);box-shadow:0 0 8px 2px rgba(16,185,129,0.4);animation:pulse 2s ease-in-out infinite;}}
+.live-dot.connected{{color:var(--emerald)}}
+.live-dot.error .dot{{background:var(--red)}}
+.live-dot.error{{color:var(--red)}}
+@keyframes pulse{{0%,100%{{box-shadow:0 0 8px 2px rgba(16,185,129,0.4)}}50%{{box-shadow:0 0 14px 4px rgba(16,185,129,0.2)}}}}
+.panel{{background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;margin-bottom:24px;overflow:hidden;transition:border-color 0.2s;}}
+.panel:hover{{border-color:var(--border-hover)}}
+.panel-head{{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--bg-elevated);}}
+.panel-title{{font-family:var(--mono);font-weight:600;font-size:0.8rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-secondary);}}
+.panel-badge{{font-family:var(--mono);font-size:0.72rem;font-weight:500;color:var(--text-muted);background:var(--bg-primary);padding:2px 10px;border-radius:20px;border:1px solid var(--border);}}
+.panel-body{{padding:20px}}
+.summary-content{{font-family:var(--sans);font-size:0.92rem;color:var(--text-secondary);white-space:pre-wrap;line-height:1.7;}}
+.empty{{color:var(--text-muted);font-style:italic;font-size:0.88rem}}
+.timeline{{position:relative;padding-left:24px}}
+.timeline::before{{content:'';position:absolute;left:7px;top:8px;bottom:8px;width:1px;background:var(--border);}}
+.note{{position:relative;padding:16px 18px;margin-bottom:16px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;transition:border-color 0.2s, transform 0.2s;animation:noteIn 0.35s ease-out both;}}
+.note:hover{{border-color:var(--border-hover);transform:translateX(2px)}}
+.note::before{{content:'';position:absolute;left:-21px;top:22px;width:9px;height:9px;border-radius:50%;background:var(--bg-surface);border:2px solid var(--amber-dim);z-index:1;}}
+.note:first-child::before{{background:var(--amber);border-color:var(--amber);box-shadow:0 0 10px 2px var(--amber-glow);}}
+@keyframes noteIn{{from{{opacity:0;transform:translateY(8px) translateX(-4px)}}to{{opacity:1;transform:translateY(0) translateX(0)}}}}
+.note-row-top{{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap;}}
+.note-author{{font-family:var(--sans);font-weight:700;font-size:0.95rem;color:var(--text-primary);}}
+.note-time{{font-family:var(--mono);font-size:0.72rem;color:var(--text-muted);letter-spacing:0.02em;cursor:default;}}
+.note-time:hover{{color:var(--text-secondary)}}
+.note-repo-line{{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:0.76rem;margin-bottom:8px;flex-wrap:wrap;}}
+.note-repo{{color:var(--cyan);font-weight:500}}
+.note-branch{{color:var(--violet);font-weight:400}}
+.note-sep{{color:var(--text-muted);font-size:0.7rem}}
+.note-text{{color:var(--text-secondary);font-family:var(--sans);font-size:0.88rem;white-space:pre-wrap;line-height:1.6;}}
+.join-label{{font-family:var(--sans);font-size:0.85rem;color:var(--text-muted);margin-bottom:10px;}}
+.join-cmd{{display:block;font-family:var(--mono);font-size:0.78rem;color:var(--amber);background:var(--bg-deep);border:1px solid var(--border);padding:14px 16px;border-radius:6px;white-space:pre-wrap;word-break:break-all;cursor:pointer;transition:border-color 0.2s, background 0.2s;position:relative;}}
+.join-cmd:hover{{border-color:var(--amber-dim);background:rgba(245,158,11,0.04)}}
+.join-cmd::after{{content:'click to copy';position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:0.65rem;color:var(--text-muted);letter-spacing:0.04em;text-transform:uppercase;opacity:0;transition:opacity 0.2s;}}
+.join-cmd:hover::after{{opacity:1}}
+.join-cmd.copied{{border-color:var(--emerald)}}
+.join-cmd.copied::after{{content:'copied!';color:var(--emerald);opacity:1}}
+.footer{{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);text-align:center;font-family:var(--mono);font-size:0.68rem;color:var(--text-muted);letter-spacing:0.06em;}}
+@media(max-width:600px){{.shell{{padding:20px 14px 60px}}.room-name{{font-size:1.5rem}}.panel-body{{padding:14px}}.note{{padding:12px 14px}}.timeline{{padding-left:20px}}}}
 </style>
 </head>
 <body>
-<div class="container">
-  <h1>{safe_name}<span class="badge">LIVE</span></h1>
-  <p class="subtitle">Room <code>{safe_id}</code> &middot; <span id="connection-status">connecting&hellip;</span></p>
-
-  <div class="section" id="summary-section">
-    <h2>Manager Summary</h2>
-    <div id="summary" class="summary-content"></div>
+<div class="shell">
+  <div class="header">
+    <div class="header-top">
+      <div class="logo">supermanager</div>
+    </div>
+    <h1 class="room-name">{safe_name}</h1>
+    <div class="header-meta">
+      <span class="room-id">{safe_id}</span>
+      <div id="connection-status" class="live-dot error">
+        <div class="dot"></div>
+        <span class="live-text">connecting</span>
+      </div>
+    </div>
   </div>
 
-  <div class="section">
-    <h2>Progress Feed <span id="note-count" style="color:#8b949e;font-size:0.85rem"></span></h2>
-    <div id="feed"></div>
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-title">Manager Summary</span>
+    </div>
+    <div class="panel-body">
+      <div id="summary" class="summary-content empty">No summary yet.</div>
+    </div>
   </div>
 
-  <div class="section join-section">
-    <h2>Join this Room</h2>
-    <p style="color:#8b949e;font-size:0.9rem">Run this command on each developer machine to connect their AI coding agent:</p>
-    <code>curl -sSf {safe_base}/r/{safe_id}/install?secret=YOUR_SECRET | sh</code>
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-title">Activity Feed</span>
+      <span id="note-count" class="panel-badge">0 updates</span>
+    </div>
+    <div class="panel-body">
+      <div id="feed" class="timeline"></div>
+    </div>
   </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-title">Connect Agents</span>
+    </div>
+    <div class="panel-body">
+      <p class="join-label">Run this on each developer machine to connect their AI coding agent to this room:</p>
+      <code id="join-cmd" class="join-cmd">curl -sSf {safe_base}/r/{safe_id}/install?secret=YOUR_SECRET | sh</code>
+    </div>
+  </div>
+
+  <div class="footer">supermanager &middot; real-time ai coordination</div>
 </div>
 
 <script>
 (function(){{
   var feed = document.getElementById('feed');
-  var status = document.getElementById('connection-status');
+  var statusEl = document.getElementById('connection-status');
+  var liveText = statusEl.querySelector('.live-text');
   var countEl = document.getElementById('note-count');
   var summaryEl = document.getElementById('summary');
   var notes = [];
 
-  function el(tag, attrs, children) {{
+  function el(tag, cls, text) {{
     var e = document.createElement(tag);
-    if (attrs) Object.keys(attrs).forEach(function(k) {{ e.setAttribute(k, attrs[k]); }});
-    if (children) {{
-      if (typeof children === 'string') e.textContent = children;
-      else children.forEach(function(c) {{ if (c) e.appendChild(c); }});
-    }}
+    if (cls) e.className = cls;
+    if (text) e.textContent = text;
     return e;
   }}
 
-  function formatTime(iso) {{
+  function timeAgo(iso) {{
+    try {{
+      var d = new Date(iso);
+      var now = Date.now();
+      var diff = Math.floor((now - d.getTime()) / 1000);
+      if (diff < 5) return 'just now';
+      if (diff < 60) return diff + 's ago';
+      if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+      if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+      return Math.floor(diff / 86400) + 'd ago';
+    }} catch(e) {{
+      return iso;
+    }}
+  }}
+
+  function fullTime(iso) {{
     try {{ return new Date(iso).toLocaleString(); }}
     catch(e) {{ return iso; }}
   }}
 
-  function buildNote(n) {{
-    var header = el('div', {{'class':'note-header'}}, [
-      el('span', {{'class':'note-author'}}, n.employee_name),
-      el('span', {{'class':'note-meta'}}, formatTime(n.received_at))
-    ]);
-    var repo = el('span', {{'class':'note-repo'}}, n.repo);
-    var branch = n.branch ? el('span', {{'class':'note-branch'}}, ' / ' + n.branch) : null;
-    var text = el('div', {{'class':'note-text'}}, n.progress_text);
-    var card = el('div', {{'class':'note'}});
-    card.appendChild(header);
-    card.appendChild(repo);
-    if (branch) card.appendChild(branch);
-    card.appendChild(text);
+  function buildNote(n, i) {{
+    var card = el('div', 'note');
+    card.style.animationDelay = (i * 0.04) + 's';
+
+    var top = el('div', 'note-row-top');
+    top.appendChild(el('span', 'note-author', n.employee_name));
+    var time = el('span', 'note-time', timeAgo(n.received_at));
+    time.title = fullTime(n.received_at);
+    top.appendChild(time);
+    card.appendChild(top);
+
+    var repoLine = el('div', 'note-repo-line');
+    repoLine.appendChild(el('span', 'note-repo', n.repo));
+    if (n.branch) {{
+      repoLine.appendChild(el('span', 'note-sep', '/'));
+      repoLine.appendChild(el('span', 'note-branch', n.branch));
+    }}
+    card.appendChild(repoLine);
+    card.appendChild(el('div', 'note-text', n.progress_text));
     return card;
   }}
 
   function renderFeed() {{
     feed.textContent = '';
     if (notes.length === 0) {{
-      var empty = el('span', {{'class':'empty'}}, 'No updates yet.');
-      feed.appendChild(empty);
+      feed.appendChild(el('span', 'empty', 'No updates yet.'));
     }} else {{
-      notes.forEach(function(n) {{ feed.appendChild(buildNote(n)); }});
+      notes.forEach(function(n, i) {{ feed.appendChild(buildNote(n, i)); }});
     }}
-    countEl.textContent = '(' + notes.length + ')';
+    var label = notes.length === 1 ? '1 update' : notes.length + ' updates';
+    countEl.textContent = label;
   }}
 
-  // Load initial feed
+  setInterval(function() {{
+    var times = feed.querySelectorAll('.note-time');
+    var all = notes;
+    times.forEach(function(t, i) {{
+      if (all[i]) t.textContent = timeAgo(all[i].received_at);
+    }});
+  }}, 30000);
+
   var base = '{safe_base}/r/{safe_id}';
   fetch(base + '/feed')
     .then(function(r) {{ return r.json(); }})
     .then(function(data) {{
-      if (data.notes && data.notes.length > 0) {{
-        notes = data.notes.reverse();
-        renderFeed();
-      }} else {{
-        renderFeed();
-      }}
+      if (data.notes && data.notes.length > 0) {{ notes = data.notes; }}
+      renderFeed();
     }})
     .catch(function() {{ renderFeed(); }});
 
-  // Load summary
   function loadSummary() {{
     fetch(base + '/summary')
       .then(function(r) {{ return r.text(); }})
       .then(function(text) {{
         summaryEl.textContent = text || 'No summary yet.';
+        if (!text) summaryEl.className = 'summary-content empty';
+        else summaryEl.className = 'summary-content';
       }})
       .catch(function() {{}});
   }}
   loadSummary();
   setInterval(loadSummary, 30000);
 
-  // SSE stream
   var es = new EventSource(base + '/feed/stream');
   es.onopen = function() {{
-    status.textContent = 'connected';
-    status.className = 'connected';
+    liveText.textContent = 'live';
+    statusEl.className = 'live-dot connected';
   }};
   es.addEventListener('progress_note', function(e) {{
     try {{
@@ -572,9 +649,17 @@ code{{background:#21262d;padding:2px 8px;border-radius:4px;font-size:0.85rem;col
     }} catch(err) {{}}
   }});
   es.onerror = function() {{
-    status.textContent = 'reconnecting\u2026';
-    status.className = 'error';
+    liveText.textContent = 'reconnecting';
+    statusEl.className = 'live-dot error';
   }};
+
+  var joinCmd = document.getElementById('join-cmd');
+  joinCmd.addEventListener('click', function() {{
+    navigator.clipboard.writeText(joinCmd.textContent).then(function() {{
+      joinCmd.classList.add('copied');
+      setTimeout(function() {{ joinCmd.classList.remove('copied'); }}, 2000);
+    }});
+  }});
 }})();
 </script>
 </body>
