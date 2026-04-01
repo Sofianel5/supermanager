@@ -22,6 +22,26 @@ pub fn persist_note(data_dir: &Path, stored: &StoredProgressNote) -> Result<()> 
     Ok(())
 }
 
+pub fn read_manager_summary(data_dir: &Path) -> Result<String> {
+    let path = manager_summary_path(data_dir);
+    match fs::read_to_string(&path) {
+        Ok(summary) => Ok(summary),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+    }
+}
+
+pub fn persist_manager_summary(data_dir: &Path, content_markdown: &str) -> Result<()> {
+    let path = manager_summary_path(data_dir);
+    fs::write(&path, content_markdown)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+pub fn manager_summary_path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join("manager-summary.md")
+}
+
 pub fn read_all_notes(data_dir: &Path) -> Result<Vec<StoredProgressNote>> {
     let notes_dir = data_dir.join("notes");
     let mut notes: Vec<StoredProgressNote> = Vec::new();

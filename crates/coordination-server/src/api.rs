@@ -4,7 +4,7 @@ use async_stream::stream;
 use axum::{
     Json,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{
         IntoResponse,
         sse::{Event, KeepAlive, Sse},
@@ -51,6 +51,24 @@ pub async fn get_feed(
 ) -> Result<Json<FeedResponse>, (StatusCode, String)> {
     let notes = store::read_all_notes(&state.data_dir).map_err(internal_error)?;
     Ok(Json(FeedResponse { notes }))
+}
+
+pub async fn get_manager_summary(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let summary = store::read_manager_summary(&state.data_dir).map_err(internal_error)?;
+    Ok((
+        [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        summary,
+    ))
+}
+
+pub async fn update_manager_summary(
+    State(state): State<AppState>,
+    body: String,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    store::persist_manager_summary(&state.data_dir, &body).map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn stream_feed(
@@ -150,6 +168,28 @@ pub async fn handle_mcp(
                         "type": "object",
                         "properties": {}
                     }
+                },
+                {
+                    "name": "get_manager_summary",
+                    "description": "Read the manager-facing Markdown summary document that lives on the coordination server.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                },
+                {
+                    "name": "update_manager_summary",
+                    "description": "Replace the manager-facing Markdown summary document on the coordination server.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "content_markdown": {
+                                "type": "string",
+                                "description": "Full Markdown contents for the manager summary document."
+                            }
+                        },
+                        "required": ["content_markdown"]
+                    }
                 }
             ]
         }),
@@ -161,6 +201,8 @@ pub async fn handle_mcp(
             match tool_name {
                 "submit_progress" => mcp_submit_progress(&state, &req),
                 "get_feed" => mcp_get_feed(&state),
+                "get_manager_summary" => mcp_get_manager_summary(&state),
+                "update_manager_summary" => mcp_update_manager_summary(&state, &req),
                 _ => json!({
                     "isError": true,
                     "content": [{ "type": "text", "text": format!("Unknown tool: {tool_name}") }]
@@ -220,6 +262,48 @@ fn mcp_get_feed(state: &AppState) -> Value {
         Err(e) => json!({
             "isError": true,
             "content": [{ "type": "text", "text": format!("Failed to read feed: {e}") }]
+        }),
+    }
+}
+
+fn mcp_get_manager_summary(state: &AppState) -> Value {
+    match store::read_manager_summary(&state.data_dir) {
+        Ok(summary) => json!({
+            "content": [{ "type": "text", "text": summary }]
+        }),
+        Err(e) => json!({
+            "isError": true,
+            "content": [{ "type": "text", "text": format!("Failed to read manager summary: {e}") }]
+        }),
+    }
+}
+
+fn mcp_update_manager_summary(state: &AppState, req: &Value) -> Value {
+    let content_markdown = req
+        .pointer("/params/arguments/content_markdown")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+
+    if content_markdown.is_empty() {
+        return json!({
+            "isError": true,
+            "content": [{ "type": "text", "text": "Missing required field: content_markdown" }]
+        });
+    }
+
+    match store::persist_manager_summary(&state.data_dir, content_markdown) {
+        Ok(_) => json!({
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "Manager summary updated at {}",
+                    store::manager_summary_path(&state.data_dir).display()
+                )
+            }]
+        }),
+        Err(e) => json!({
+            "isError": true,
+            "content": [{ "type": "text", "text": format!("Failed to update manager summary: {e}") }]
         }),
     }
 }

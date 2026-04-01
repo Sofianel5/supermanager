@@ -38,6 +38,10 @@ async fn main() -> Result<()> {
         .route("/v1/progress", post(api::ingest_progress))
         .route("/v1/feed", get(api::get_feed))
         .route("/v1/feed/stream", get(api::stream_feed))
+        .route(
+            "/v1/manager-summary",
+            get(api::get_manager_summary).put(api::update_manager_summary),
+        )
         .route("/mcp", post(api::handle_mcp))
         .with_state(state);
 

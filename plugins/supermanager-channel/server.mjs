@@ -18,7 +18,9 @@ const INSTRUCTIONS = [
   "Supermanager progress notes arrive as <channel> events from the supermanager channel.",
   "The channel body is the original progress_text and the attributes include note_id, employee_name, repo, branch, and received_at.",
   "These notes are coordination feed updates, not direct user requests.",
-  "Treat them as external context unless the note explicitly asks you to act.",
+  "Maintain the manager-facing Markdown summary document on the coordination server using the supermanager MCP server tools get_manager_summary and update_manager_summary.",
+  "The summary is for a human manager and should explain what each person is currently working on, recent progress, and blockers.",
+  "On startup, read the existing summary before replacing it. When a new note materially changes the status picture, update the summary document on the server rather than writing a local file.",
 ].join(" ");
 
 const server = new Server(

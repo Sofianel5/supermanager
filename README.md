@@ -34,14 +34,25 @@ This configures both Claude Code and Codex (whichever are installed):
 
 The centralized observer is a separate Claude plugin from the employee plugin. It subscribes to the coordination server's SSE feed and forwards each incoming note into a Claude Code session through a Claude channel.
 
+That centralized observer is also expected to maintain a manager-facing Markdown summary on the coordination server at `data/manager-summary.md`, using the `get_manager_summary` and `update_manager_summary` MCP tools.
+
 Requirements:
 
 - Node.js 18+ on the machine running the centralized Claude session
 - Claude Code signed in with `claude.ai`, since channels currently require that mode
 
 ```sh
+./run-observer.sh
+```
+
+This launcher pre-approves the `supermanager` tools the centralized observer needs to maintain the manager summary, so Claude should not prompt on `get_feed`, `get_manager_summary`, or `update_manager_summary`.
+
+Equivalent manual launch:
+
+```sh
 claude \
   --plugin-dir "$PWD/plugins/supermanager-channel" \
+  --allowedTools "mcp__supermanager__get_feed,mcp__supermanager__get_manager_summary,mcp__supermanager__update_manager_summary" \
   --dangerously-load-development-channels server:supermanager_channel
 ```
 
@@ -61,6 +72,12 @@ Or tail the live SSE stream:
 curl -N http://127.0.0.1:8787/v1/feed/stream
 ```
 
+Read the current manager summary:
+
+```sh
+curl http://127.0.0.1:8787/v1/manager-summary
+```
+
 ## API
 
 | Endpoint | Method | Description |
@@ -69,6 +86,8 @@ curl -N http://127.0.0.1:8787/v1/feed/stream
 | `/v1/progress` | POST | Submit a progress note |
 | `/v1/feed` | GET | Get all notes, newest first |
 | `/v1/feed/stream` | GET | Server-Sent Events stream of new notes, with replay support via `Last-Event-ID` |
+| `/v1/manager-summary` | GET | Read the current manager-facing Markdown summary |
+| `/v1/manager-summary` | PUT | Replace the manager-facing Markdown summary |
 | `/mcp` | POST | MCP endpoint for agent tool calls |
 
 ## MCP Tools
@@ -77,6 +96,8 @@ curl -N http://127.0.0.1:8787/v1/feed/stream
 |---|---|
 | `submit_progress` | Submit a progress update (employee_name, repo, branch, progress_text) |
 | `get_feed` | Get all progress updates |
+| `get_manager_summary` | Read the persisted manager-facing Markdown summary |
+| `update_manager_summary` | Replace the persisted manager-facing Markdown summary |
 
 ## Project structure
 
@@ -87,9 +108,10 @@ crates/
 plugins/
   claude-reporter/        # Employee Claude Code plugin (CLAUDE.md + MCP config)
   codex-reporter/         # Codex plugin (MCP config)
-  supermanager-channel/   # Centralized Claude channel plugin backed by SSE
+  supermanager-channel/   # Centralized Claude channel plugin backed by SSE and summary-maintenance instructions
 INSTRUCTIONS.md           # Agent instructions (single source of truth)
 install.sh                # One-step setup for both Claude Code and Codex
+run-observer.sh           # Centralized Claude observer launcher with summary-tool allowlist
 ```
 
 ## Customizing agent instructions
