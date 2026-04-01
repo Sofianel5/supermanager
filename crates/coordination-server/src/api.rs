@@ -910,7 +910,66 @@ fi
 
 # ── Configure Codex (project-scoped) ────────────────────────
 echo "  [2/4] Configuring Codex..."
+mkdir -p .codex
 if command -v python3 >/dev/null 2>&1; then
+  python3 -c "
+from pathlib import Path
+
+path = Path('.codex/config.toml')
+path.parent.mkdir(parents=True, exist_ok=True)
+lines = path.read_text().splitlines() if path.exists() else []
+out = []
+server_section = '[mcp_servers.supermanager]'
+tool_section = '[mcp_servers.supermanager.tools.submit_progress]'
+inside_server = False
+inside_tool = False
+seen_server = False
+seen_tool = False
+set_tool_approval = False
+
+for line in lines:
+    stripped = line.strip()
+
+    if stripped.startswith('[') and stripped.endswith(']'):
+        if inside_tool and not set_tool_approval:
+            out.append('approval_mode = \"approve\"')
+            set_tool_approval = True
+        inside_server = stripped == server_section
+        inside_tool = stripped == tool_section
+        if stripped == server_section:
+            seen_server = True
+        if stripped == tool_section:
+            seen_tool = True
+        out.append(line)
+        continue
+
+    if inside_server and stripped.startswith('url ='):
+        out.append('url = \"{mcp_url}\"')
+    elif inside_tool and stripped.startswith('approval_mode'):
+        out.append('approval_mode = \"approve\"')
+        set_tool_approval = True
+    else:
+        out.append(line)
+
+if inside_tool and not set_tool_approval:
+    out.append('approval_mode = \"approve\"')
+
+if not seen_server:
+    if out and out[-1] != '':
+        out.append('')
+    out.append(server_section)
+    out.append('url = \"{mcp_url}\"')
+
+if not seen_tool:
+    if out and out[-1] != '':
+        out.append('')
+    out.append(tool_section)
+    out.append('approval_mode = \"approve\"')
+
+path.write_text('\\n'.join(out) + '\\n')
+"
+  echo "        Updated .codex/config.toml in $(pwd)"
+
   python3 -c "
 import json, os
 path = '.codex-mcp.json'
@@ -936,12 +995,40 @@ CODEX_CFG="$HOME/.codex/config.toml"
 if [ -f "$CODEX_CFG" ] && grep -q "mcp_servers.supermanager" "$CODEX_CFG" 2>/dev/null; then
   if command -v python3 >/dev/null 2>&1; then
     python3 -c "
-import re
-with open('$CODEX_CFG') as f:
-    text = f.read()
-text = re.sub(r'\[mcp_servers\.supermanager\][^\[]*', '', text)
-with open('$CODEX_CFG', 'w') as f:
-    f.write(text)
+from pathlib import Path
+
+path = Path('$CODEX_CFG')
+lines = path.read_text().splitlines()
+out = []
+server_section = '[mcp_servers.supermanager]'
+tool_section = '[mcp_servers.supermanager.tools.submit_progress]'
+inside_server = False
+inside_tool = False
+
+for line in lines:
+    stripped = line.strip()
+
+    if stripped.startswith('[') and stripped.endswith(']'):
+        if stripped == server_section:
+            inside_server = True
+            inside_tool = False
+            continue
+        if stripped == tool_section:
+            inside_tool = True
+            inside_server = False
+            continue
+        inside_server = False
+        inside_tool = False
+        out.append(line)
+        continue
+
+    if inside_server or inside_tool:
+        continue
+
+    out.append(line)
+
+text = '\\n'.join(out).rstrip()
+path.write_text((text + '\\n') if text else '')
 "
     echo "        Cleaned old global Codex config."
   fi
@@ -1087,6 +1174,53 @@ echo ""
 
 # ── Remove Codex config ────────────────────────────────────
 echo "  [3/4] Removing Codex MCP..."
+if [ -f .codex/config.toml ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+from pathlib import Path
+
+path = Path('.codex/config.toml')
+lines = path.read_text().splitlines()
+out = []
+server_section = '[mcp_servers.supermanager]'
+tool_section = '[mcp_servers.supermanager.tools.submit_progress]'
+inside_server = False
+inside_tool = False
+
+for line in lines:
+    stripped = line.strip()
+
+    if stripped.startswith('[') and stripped.endswith(']'):
+        if stripped == server_section:
+            inside_server = True
+            inside_tool = False
+            continue
+        if stripped == tool_section:
+            inside_tool = True
+            inside_server = False
+            continue
+        inside_server = False
+        inside_tool = False
+        out.append(line)
+        continue
+
+    if inside_server or inside_tool:
+        continue
+
+    out.append(line)
+
+text = '\\n'.join(out).rstrip()
+if text:
+    path.write_text(text + '\\n')
+    print('        Removed supermanager from .codex/config.toml')
+else:
+    path.unlink()
+    print('        Deleted .codex/config.toml (was only supermanager)')
+"
+  fi
+else
+  echo "        No .codex/config.toml found."
+fi
 if [ -f .codex-mcp.json ]; then
   rm -f .codex-mcp.json
   echo "        Deleted .codex-mcp.json"
