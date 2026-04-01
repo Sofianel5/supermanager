@@ -890,19 +890,31 @@ echo ""
     ))
 }
 
+pub async fn uninstall_script_global() -> impl IntoResponse {
+    uninstall_response(None)
+}
+
 pub async fn uninstall_script(
     Path(room_id): Path<String>,
 ) -> impl IntoResponse {
+    uninstall_response(Some(&room_id))
+}
+
+fn uninstall_response(room_id: Option<&str>) -> ([(header::HeaderName, &'static str); 1], String) {
+    let room_line = match room_id {
+        Some(id) => format!("echo \"  Room: {id}\""),
+        None => String::new(),
+    };
+
     let script = format!(
         r##"#!/bin/sh
 set -e
 
 # ── Supermanager agent uninstaller ─────────────────────────
-# Room: {room_id}
 
 echo ""
 echo "  supermanager uninstaller"
-echo "  Room: {room_id}"
+{room_line}
 echo ""
 
 # ── Remove Claude Code MCP ─────────────────────────────────
@@ -997,7 +1009,7 @@ echo ""
 echo "  Uninstall complete! Agents here will no longer report progress."
 echo ""
 "##,
-        room_id = room_id,
+        room_line = room_line,
     );
 
     (

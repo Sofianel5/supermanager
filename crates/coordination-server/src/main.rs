@@ -56,6 +56,7 @@ async fn main() -> Result<()> {
         .route("/r/{room_id}/mcp", post(api::handle_mcp))
         .route("/r/{room_id}/install", get(api::install_script))
         .route("/r/{room_id}/uninstall", get(api::uninstall_script))
+        .route("/uninstall", get(api::uninstall_script_global))
         // ── Legacy (backwards-compat) routes ─────────────
         .route("/v1/progress", post(api::legacy_ingest_progress))
         .route("/v1/feed", get(api::legacy_get_feed))
