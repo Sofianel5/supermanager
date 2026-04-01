@@ -37,6 +37,8 @@ async fn main() -> Result<()> {
         db,
         note_events,
         base_url: cli.base_url,
+        http: reqwest::Client::new(),
+        openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
     };
 
     let app = Router::new()

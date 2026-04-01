@@ -271,6 +271,82 @@ impl Db {
         Ok(notes)
     }
 
+    /// Get the received_at timestamp of a person's most recent note in a room.
+    pub fn get_last_update_time(
+        &self,
+        room_id: &str,
+        employee_name: &str,
+    ) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT received_at FROM notes
+                 WHERE room_id = ?1 AND employee_name = ?2
+                 ORDER BY received_at DESC LIMIT 1",
+                params![room_id, employee_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(result)
+    }
+
+    /// Get notes with optional filters: time cutoff, employee name, limit.
+    pub fn get_notes_filtered(
+        &self,
+        room_id: &str,
+        after_time: Option<&str>,
+        employee_name: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<StoredProgressNote>> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut conditions = vec!["room_id = ?1".to_string()];
+        let mut param_values: Vec<String> = vec![room_id.to_string()];
+        let mut idx = 2u32;
+
+        if let Some(time) = after_time {
+            conditions.push(format!("received_at > ?{idx}"));
+            param_values.push(time.to_string());
+            idx += 1;
+        }
+
+        if let Some(name) = employee_name {
+            conditions.push(format!("employee_name = ?{idx}"));
+            param_values.push(name.to_string());
+            idx += 1;
+        }
+
+        let where_clause = conditions.join(" AND ");
+        let sql = format!(
+            "SELECT note_id, employee_name, repo, branch, progress_text, received_at
+             FROM notes WHERE {where_clause}
+             ORDER BY received_at DESC LIMIT ?{idx}"
+        );
+        param_values.push(limit.to_string());
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+
+        let mut stmt = conn.prepare(&sql)?;
+        let notes = stmt
+            .query_map(rusqlite::params_from_iter(param_refs.iter()), |row| {
+                let note_id_str: String = row.get(0)?;
+                Ok(StoredProgressNote {
+                    note_id: Uuid::parse_str(&note_id_str).unwrap_or_else(|_| Uuid::nil()),
+                    received_at: row.get(5)?,
+                    note: ProgressNote {
+                        employee_name: row.get(1)?,
+                        repo: row.get(2)?,
+                        branch: row.get(3)?,
+                        progress_text: row.get(4)?,
+                    },
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(notes)
+    }
+
     // ── Summaries ───────────────────────────────────────────
 
     /// Get the manager summary for a room.
