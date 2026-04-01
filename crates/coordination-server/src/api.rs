@@ -118,8 +118,12 @@ button:disabled{{opacity:0.5;cursor:not-allowed}}
 .field-value:hover::after{{opacity:1}}
 .field-value.copied{{border-color:var(--emerald)}}
 .field-value.copied::after{{content:'copied!';color:var(--emerald);opacity:1}}
-.field-link{{color:var(--amber);text-decoration:none;font-family:var(--mono);font-size:0.85rem;}}
+.field-link{{color:var(--cyan);text-decoration:none;font-family:var(--mono);font-size:0.85rem;}}
 .field-link:hover{{text-decoration:underline}}
+.field-value.val-roomid{{color:var(--emerald)}}
+.field-value.val-roomid:hover{{border-color:var(--emerald-dim)}}
+.field-value.val-secret{{color:var(--violet)}}
+.field-value.val-secret:hover{{border-color:var(--violet)}}
 #error{{display:none;margin-top:12px;color:var(--red);font-family:var(--mono);font-size:0.82rem;}}
 .footer{{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);text-align:center;font-family:var(--mono);font-size:0.68rem;color:var(--text-muted);letter-spacing:0.06em;}}
 .footer a{{color:var(--text-secondary);text-decoration:none}}
@@ -166,9 +170,9 @@ button:disabled{{opacity:0.5;cursor:not-allowed}}
         <div class="field-label">Install command</div>
         <div class="field-value" id="res-install"></div>
         <div class="field-label">Room ID</div>
-        <div class="field-value" id="res-room-id"></div>
+        <div class="field-value val-roomid" id="res-room-id"></div>
         <div class="field-label">Secret</div>
-        <div class="field-value" id="res-secret"></div>
+        <div class="field-value val-secret" id="res-secret"></div>
       </div>
     </div>
   </div>
