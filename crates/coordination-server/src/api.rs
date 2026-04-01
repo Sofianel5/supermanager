@@ -1291,6 +1291,7 @@ fn mcp_submit_progress(state: &AppState, room_id: &str, req: &Value) -> Value {
             });
 
             // Spawn background auto-summarize
+            eprintln!("[submit_progress] spawning auto_summarize for room {room_id}");
             let state = state.clone();
             let room = room_id.to_owned();
             tokio::spawn(async move {
@@ -1418,6 +1419,7 @@ async fn call_openai(state: &AppState, instructions: &str, input: &str) -> Value
         "input": input,
     });
 
+    eprintln!("[call_openai] sending request to OpenAI (model: gpt-5.4-mini)");
     let resp = state
         .http
         .post("https://api.openai.com/v1/responses")
@@ -1454,6 +1456,8 @@ async fn call_openai(state: &AppState, instructions: &str, input: &str) -> Value
 
 /// Background auto-summarize: triggered after every new note.
 async fn auto_summarize(state: &AppState, room_id: &str) {
+    eprintln!("[auto_summarize] starting for room {room_id}");
+
     // Mark as generating + broadcast
     let _ = state.db.set_summary_status(room_id, "generating");
     let _ = state.summary_events.send(SummaryStatusEvent {
@@ -1466,7 +1470,7 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
     let (context, filter_desc) = match resolve_notes_context(state, room_id, &args, 50) {
         Ok(v) => v,
         Err(_) => {
-            // No notes in last 5 min — nothing to summarize
+            eprintln!("[auto_summarize] no notes in last 5 min for room {room_id}");
             let _ = state.db.set_summary_status(room_id, "ready");
             let _ = state.summary_events.send(SummaryStatusEvent {
                 room_id: room_id.to_owned(),
@@ -1475,6 +1479,8 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             return;
         }
     };
+
+    eprintln!("[auto_summarize] calling OpenAI with {filter_desc}");
 
     let result = call_openai(
         state,
@@ -1489,12 +1495,14 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
         .unwrap_or("");
 
     if text.is_empty() || result.get("isError").is_some() {
+        eprintln!("[auto_summarize] error for room {room_id}: {result}");
         let _ = state.db.set_summary_status(room_id, "error");
         let _ = state.summary_events.send(SummaryStatusEvent {
             room_id: room_id.to_owned(),
             status: "error".to_owned(),
         });
     } else {
+        eprintln!("[auto_summarize] success for room {room_id}, {} chars", text.len());
         let _ = state.db.set_summary(room_id, text);
         let _ = state.summary_events.send(SummaryStatusEvent {
             room_id: room_id.to_owned(),
