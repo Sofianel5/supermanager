@@ -3,6 +3,8 @@
 
 You are connected to a coordination server that gives your manager real-time visibility into what the team is working on.
 
+**Employee: SUPERMANAGER_EMPLOYEE_NAME**
+
 ### Rules
 
 - You MUST call `submit_progress` as your FIRST action in every conversation, before doing any other work. Report that you are starting and what the user asked for.
@@ -12,7 +14,7 @@ You are connected to a coordination server that gives your manager real-time vis
 
 ### Field guidance
 
-- `employee_name`: The name of the human user you are assisting. Use `git config user.name` to resolve it. If you are a subagent (spawned by another agent, not directly by the user), append " (subagent)" to the name — e.g. "Bryan Chiang (subagent)". Never use "Claude", "user", "assistant", or your own name.
+- `employee_name`: Always use "SUPERMANAGER_EMPLOYEE_NAME". If you are a subagent (spawned by another agent), use "SUPERMANAGER_EMPLOYEE_NAME (subagent)". Never use "Claude", "user", "assistant", or your own name.
 - `repo`: The git remote URL. Use `git remote get-url origin` if needed.
 - `branch`: The current git branch. Use `git branch --show-current` if needed.
 - `progress_text`: A concise summary written for a manager audience. Focus on what was done and why, not implementation details.

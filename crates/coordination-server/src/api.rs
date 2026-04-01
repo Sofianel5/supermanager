@@ -33,6 +33,8 @@ pub struct AppState {
     pub db: Arc<Db>,
     pub note_events: broadcast::Sender<NoteEvent>,
     pub base_url: String,
+    pub http: reqwest::Client,
+    pub openai_api_key: Option<String>,
 }
 
 // ── Query params ────────────────────────────────────────────
@@ -832,7 +834,7 @@ fi
 
 # ── Inject instructions into CLAUDE.md and AGENTS.md ────────
 echo "  [3/4] Injecting agent instructions..."
-SUPERMANAGER_INSTRUCTIONS='{agent_instructions}'
+SUPERMANAGER_INSTRUCTIONS=$(echo '{agent_instructions}' | sed "s/SUPERMANAGER_EMPLOYEE_NAME/$EMPLOYEE_NAME/g")
 
 for INSTRUCTIONS_FILE in CLAUDE.md AGENTS.md; do
   if [ -f "$INSTRUCTIONS_FILE" ] && grep -q '<!-- supermanager:start -->' "$INSTRUCTIONS_FILE"; then
@@ -975,6 +977,31 @@ pub async fn handle_mcp(
                         },
                         "required": ["content_markdown"]
                     }
+                },
+                {
+                    "name": "get_summary",
+                    "description": "Get an AI-generated summary of recent progress updates. Supports filtering by time window, message count, employee name, or since a specific person's last update.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {
+                                "type": "integer",
+                                "description": "Max number of messages to summarize (default: 20)"
+                            },
+                            "minutes": {
+                                "type": "integer",
+                                "description": "Only include messages from the last N minutes"
+                            },
+                            "employee_name": {
+                                "type": "string",
+                                "description": "Filter to only this person's updates"
+                            },
+                            "since_last_update_by": {
+                                "type": "string",
+                                "description": "Include all updates since this person's most recent update"
+                            }
+                        }
+                    }
                 }
             ]
         }),
@@ -999,6 +1026,7 @@ pub async fn handle_mcp(
                 // Public tools — no secret required
                 "get_feed" => mcp_get_feed(&state, &room_id),
                 "get_manager_summary" => mcp_get_manager_summary(&state, &room_id),
+                "get_summary" => mcp_get_summary(&state, &room_id, &req).await,
                 _ => json!({
                     "isError": true,
                     "content": [{ "type": "text", "text": format!("Unknown tool: {tool_name}") }]
@@ -1123,6 +1151,122 @@ fn mcp_update_manager_summary(state: &AppState, room_id: &str, req: &Value) -> V
             "content": [{ "type": "text", "text": format!("Failed to update manager summary: {e}") }]
         }),
     }
+}
+
+async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value {
+    let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
+
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20) as u32;
+    let minutes = args.get("minutes").and_then(Value::as_u64);
+    let employee_name = args.get("employee_name").and_then(Value::as_str);
+    let since_last_update_by = args.get("since_last_update_by").and_then(Value::as_str);
+
+    // Resolve time cutoff
+    let after_time = if let Some(person) = since_last_update_by {
+        match state.db.get_last_update_time(room_id, person) {
+            Ok(t) => t,
+            Err(e) => {
+                return mcp_error(&format!("Failed to look up last update by {person}: {e}"));
+            }
+        }
+    } else if let Some(mins) = minutes {
+        let cutoff = time::OffsetDateTime::now_utc()
+            - time::Duration::minutes(mins as i64);
+        Some(
+            cutoff
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+        )
+    } else {
+        None
+    };
+
+    // Fetch filtered notes
+    let notes = match state.db.get_notes_filtered(
+        room_id,
+        after_time.as_deref(),
+        employee_name,
+        limit,
+    ) {
+        Ok(n) => n,
+        Err(e) => return mcp_error(&format!("Failed to fetch notes: {e}")),
+    };
+
+    if notes.is_empty() {
+        return json!({
+            "content": [{ "type": "text", "text": "No progress updates found matching the filter." }]
+        });
+    }
+
+    // Format notes for the LLM
+    let mut context = String::new();
+    for n in &notes {
+        context.push_str(&format!(
+            "[{}] {} ({}, {}): {}\n",
+            n.received_at,
+            n.note.employee_name,
+            n.note.repo,
+            n.note.branch.as_deref().unwrap_or("—"),
+            n.note.progress_text,
+        ));
+    }
+
+    let api_key = match &state.openai_api_key {
+        Some(k) => k,
+        None => return mcp_error("OPENAI_API_KEY not configured on the server"),
+    };
+
+    // Build filter description for the prompt
+    let mut filter_desc = format!("{} most recent updates", notes.len());
+    if let Some(name) = employee_name {
+        filter_desc = format!("{filter_desc} from {name}");
+    }
+    if let Some(person) = since_last_update_by {
+        filter_desc = format!("{filter_desc} (since {person}'s last update)");
+    }
+    if let Some(mins) = minutes {
+        filter_desc = format!("{filter_desc} from the last {mins} minutes");
+    }
+
+    let body = json!({
+        "model": "gpt-5.4-mini",
+        "instructions": "You are a concise project manager assistant. Summarize progress updates into a clear, actionable briefing. Group by person or theme. Highlight blockers, completions, and key decisions. Be brief.",
+        "input": format!("Summarize these {filter_desc}:\n\n{context}")
+    });
+
+    let resp = state
+        .http
+        .post("https://api.openai.com/v1/responses")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return mcp_error(&format!("OpenAI request failed: {e}")),
+    };
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body_text = resp.text().await.unwrap_or_default();
+        return mcp_error(&format!("OpenAI returned {status}: {body_text}"));
+    }
+
+    let resp_json: Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return mcp_error(&format!("Failed to parse OpenAI response: {e}")),
+    };
+
+    // Extract text from: output[0].content[0].text
+    let summary = resp_json
+        .pointer("/output/0/content/0/text")
+        .and_then(Value::as_str)
+        .unwrap_or("(empty response from OpenAI)");
+
+    json!({
+        "content": [{ "type": "text", "text": summary }]
+    })
 }
 
 // ── Legacy (non-room) routes ────────────────────────────────
