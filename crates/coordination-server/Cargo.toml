@@ -16,4 +16,5 @@ serde_json.workspace = true
 uuid.workspace = true
 time.workspace = true
 tokio.workspace = true
+reqwest.workspace = true
 reporter-protocol = { path = "../reporter-protocol" }
