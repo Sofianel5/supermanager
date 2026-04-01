@@ -29,9 +29,16 @@ pub struct NoteEvent {
 }
 
 #[derive(Clone)]
+pub struct SummaryStatusEvent {
+    pub room_id: String,
+    pub status: String, // "generating", "ready", "error"
+}
+
+#[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Db>,
     pub note_events: broadcast::Sender<NoteEvent>,
+    pub summary_events: broadcast::Sender<SummaryStatusEvent>,
     pub base_url: String,
     pub http: reqwest::Client,
     pub openai_api_key: Option<String>,
@@ -290,8 +297,15 @@ pub async fn ingest_progress(
     let received_at = stored.received_at.clone();
 
     let _ = state.note_events.send(NoteEvent {
-        room_id,
+        room_id: room_id.clone(),
         note: stored,
+    });
+
+    // Spawn background auto-summarize
+    let bg_state = state.clone();
+    let bg_room = room_id;
+    tokio::spawn(async move {
+        auto_summarize(&bg_state, &bg_room).await;
     });
 
     Ok((
@@ -332,27 +346,54 @@ pub async fn stream_feed(
         .map_err(internal_error)?
         .unwrap_or_default();
 
-    let mut receiver = state.note_events.subscribe();
+    let mut note_rx = state.note_events.subscribe();
+    let mut summary_rx = state.summary_events.subscribe();
     let target_room = room_id.clone();
 
+    // Send initial summary status
+    let initial_status = state.db.get_summary_status(&room_id).unwrap_or_else(|_| "ready".to_owned());
+
     let event_stream = stream! {
+        // Replay missed notes
         for note in replay {
             yield Ok(progress_event(&note));
         }
 
+        // Send current summary status on connect
+        yield Ok(Event::default()
+            .event("summary_status")
+            .data(json!({ "status": initial_status }).to_string()));
+
         loop {
-            match receiver.recv().await {
-                Ok(evt) => {
-                    if evt.room_id == target_room {
-                        yield Ok(progress_event(&evt.note));
+            tokio::select! {
+                note_result = note_rx.recv() => {
+                    match note_result {
+                        Ok(evt) => {
+                            if evt.room_id == target_room {
+                                yield Ok(progress_event(&evt.note));
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            yield Ok(Event::default()
+                                .event("warning")
+                                .data(format!("lagged:{skipped}")));
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    yield Ok(Event::default()
-                        .event("warning")
-                        .data(format!("lagged:{skipped}")));
+                summary_result = summary_rx.recv() => {
+                    match summary_result {
+                        Ok(evt) => {
+                            if evt.room_id == target_room {
+                                yield Ok(Event::default()
+                                    .event("summary_status")
+                                    .data(json!({ "status": evt.status }).to_string()));
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     };
@@ -378,30 +419,7 @@ pub async fn get_manager_summary(
     ))
 }
 
-pub async fn update_manager_summary(
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    headers: HeaderMap,
-    Query(query): Query<SecretQuery>,
-    body: String,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let secret = extract_secret(&headers, &query)
-        .ok_or((StatusCode::UNAUTHORIZED, "missing secret".to_owned()))?;
 
-    let valid = state
-        .db
-        .verify_room_secret(&room_id, &secret)
-        .map_err(internal_error)?;
-    if !valid {
-        return Err((StatusCode::UNAUTHORIZED, "invalid secret".to_owned()));
-    }
-
-    state
-        .db
-        .set_summary(&room_id, &body)
-        .map_err(internal_error)?;
-    Ok(StatusCode::NO_CONTENT)
-}
 
 // ── Dashboard ───────────────────────────────────────────────
 
@@ -470,6 +488,8 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 .panel-body{{padding:20px}}
 .summary-content{{font-family:var(--sans);font-size:0.92rem;color:var(--text-secondary);white-space:pre-wrap;line-height:1.7;}}
 .empty{{color:var(--text-muted);font-style:italic;font-size:0.88rem}}
+.generating{{color:var(--accent);font-style:italic;font-size:0.88rem;animation:pulse 1.5s ease-in-out infinite}}
+@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.5}}}}
 .timeline{{position:relative;padding-left:24px}}
 .timeline::before{{content:'';position:absolute;left:7px;top:8px;bottom:8px;width:1px;background:var(--border);}}
 .note{{position:relative;padding:16px 18px;margin-bottom:16px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;transition:border-color 0.2s, transform 0.2s;animation:noteIn 0.35s ease-out both;}}
@@ -662,7 +682,6 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
       .catch(function() {{}});
   }}
   loadSummary();
-  setInterval(loadSummary, 30000);
 
   var es = new EventSource(base + '/feed/stream');
   es.onopen = function() {{
@@ -674,6 +693,20 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
       var note = JSON.parse(e.data);
       notes.unshift(note);
       renderFeed();
+    }} catch(err) {{}}
+  }});
+  es.addEventListener('summary_status', function(e) {{
+    try {{
+      var data = JSON.parse(e.data);
+      if (data.status === 'generating') {{
+        summaryEl.textContent = 'Generating summary...';
+        summaryEl.className = 'summary-content generating';
+      }} else if (data.status === 'ready') {{
+        loadSummary();
+      }} else if (data.status === 'error') {{
+        summaryEl.textContent = 'Summary generation failed.';
+        summaryEl.className = 'summary-content error';
+      }}
     }} catch(err) {{}}
   }});
   es.onerror = function() {{
@@ -1111,20 +1144,6 @@ pub async fn handle_mcp(
                     }
                 },
                 {
-                    "name": "update_manager_summary",
-                    "description": "Replace the manager-facing Markdown summary document on the coordination server.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "content_markdown": {
-                                "type": "string",
-                                "description": "Full Markdown contents for the manager summary document."
-                            }
-                        },
-                        "required": ["content_markdown"]
-                    }
-                },
-                {
                     "name": "get_summary",
                     "description": "Get an AI-generated summary of recent progress updates. Always pass your current git branch to scope results. Supports filtering by time window, message count, employee name, branch, or since a specific person's last update.",
                     "inputSchema": {
@@ -1201,12 +1220,6 @@ pub async fn handle_mcp(
                         Err(msg) => mcp_error(msg),
                     }
                 }
-                "update_manager_summary" => {
-                    match verify_mcp_secret(&state, &room_id, &secret) {
-                        Ok(()) => mcp_update_manager_summary(&state, &room_id, &req),
-                        Err(msg) => mcp_error(msg),
-                    }
-                }
                 // Public tools — no secret required
                 "get_feed" => mcp_get_feed(&state, &room_id),
                 "get_manager_summary" => mcp_get_manager_summary(&state, &room_id),
@@ -1276,6 +1289,14 @@ fn mcp_submit_progress(state: &AppState, room_id: &str, req: &Value) -> Value {
                 room_id: room_id.to_owned(),
                 note: stored,
             });
+
+            // Spawn background auto-summarize
+            let state = state.clone();
+            let room = room_id.to_owned();
+            tokio::spawn(async move {
+                auto_summarize(&state, &room).await;
+            });
+
             json!({
                 "content": [{ "type": "text", "text": format!("Progress submitted (note_id: {note_id})") }]
             })
@@ -1307,33 +1328,6 @@ fn mcp_get_manager_summary(state: &AppState, room_id: &str) -> Value {
         Err(e) => json!({
             "isError": true,
             "content": [{ "type": "text", "text": format!("Failed to read manager summary: {e}") }]
-        }),
-    }
-}
-
-fn mcp_update_manager_summary(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let content_markdown = req
-        .pointer("/params/arguments/content_markdown")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-
-    if content_markdown.is_empty() {
-        return json!({
-            "isError": true,
-            "content": [{ "type": "text", "text": "Missing required field: content_markdown" }]
-        });
-    }
-
-    match state.db.set_summary(room_id, content_markdown) {
-        Ok(_) => json!({
-            "content": [{
-                "type": "text",
-                "text": format!("Manager summary updated for room {room_id}")
-            }]
-        }),
-        Err(e) => json!({
-            "isError": true,
-            "content": [{ "type": "text", "text": format!("Failed to update manager summary: {e}") }]
         }),
     }
 }
@@ -1458,6 +1452,57 @@ async fn call_openai(state: &AppState, instructions: &str, input: &str) -> Value
     })
 }
 
+/// Background auto-summarize: triggered after every new note.
+async fn auto_summarize(state: &AppState, room_id: &str) {
+    // Mark as generating + broadcast
+    let _ = state.db.set_summary_status(room_id, "generating");
+    let _ = state.summary_events.send(SummaryStatusEvent {
+        room_id: room_id.to_owned(),
+        status: "generating".to_owned(),
+    });
+
+    // Build context from last 5 minutes
+    let args = json!({ "minutes": 5 });
+    let (context, filter_desc) = match resolve_notes_context(state, room_id, &args, 50) {
+        Ok(v) => v,
+        Err(_) => {
+            // No notes in last 5 min — nothing to summarize
+            let _ = state.db.set_summary_status(room_id, "ready");
+            let _ = state.summary_events.send(SummaryStatusEvent {
+                room_id: room_id.to_owned(),
+                status: "ready".to_owned(),
+            });
+            return;
+        }
+    };
+
+    let result = call_openai(
+        state,
+        "You are a concise project manager assistant. Summarize progress updates into a clear, actionable briefing. Group by person or theme. Highlight blockers, completions, and key decisions. Be brief.",
+        &format!("Summarize these {filter_desc}:\n\n{context}"),
+    ).await;
+
+    // Extract text from MCP response
+    let text = result
+        .pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+
+    if text.is_empty() || result.get("isError").is_some() {
+        let _ = state.db.set_summary_status(room_id, "error");
+        let _ = state.summary_events.send(SummaryStatusEvent {
+            room_id: room_id.to_owned(),
+            status: "error".to_owned(),
+        });
+    } else {
+        let _ = state.db.set_summary(room_id, text);
+        let _ = state.summary_events.send(SummaryStatusEvent {
+            room_id: room_id.to_owned(),
+            status: "ready".to_owned(),
+        });
+    }
+}
+
 async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value {
     let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
 
@@ -1510,6 +1555,12 @@ pub async fn legacy_ingest_progress(
     let _ = state.note_events.send(NoteEvent {
         room_id: LOCAL_ROOM_ID.to_owned(),
         note: stored,
+    });
+
+    // Spawn background auto-summarize
+    let bg_state = state.clone();
+    tokio::spawn(async move {
+        auto_summarize(&bg_state, LOCAL_ROOM_ID).await;
     });
 
     Ok((
@@ -1588,16 +1639,7 @@ pub async fn legacy_get_manager_summary(
     ))
 }
 
-pub async fn legacy_update_manager_summary(
-    State(state): State<AppState>,
-    body: String,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    state
-        .db
-        .set_summary(LOCAL_ROOM_ID, &body)
-        .map_err(internal_error)?;
-    Ok(StatusCode::NO_CONTENT)
-}
+
 
 pub async fn legacy_handle_mcp(
     state: State<AppState>,

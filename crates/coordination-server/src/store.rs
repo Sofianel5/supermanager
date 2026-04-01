@@ -58,6 +58,7 @@ impl Db {
             CREATE TABLE IF NOT EXISTS summaries (
                 room_id          TEXT PRIMARY KEY REFERENCES rooms(room_id),
                 content_markdown TEXT NOT NULL,
+                status           TEXT NOT NULL DEFAULT 'ready',
                 updated_at       TEXT NOT NULL
             );
 
@@ -369,14 +370,42 @@ impl Db {
         Ok(result.unwrap_or_default())
     }
 
+    /// Get the summary generation status for a room.
+    pub fn get_summary_status(&self, room_id: &str) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT status FROM summaries WHERE room_id = ?1",
+                params![room_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(result.unwrap_or_else(|| "ready".to_owned()))
+    }
+
+    /// Set just the summary status (generating/ready/error).
+    pub fn set_summary_status(&self, room_id: &str, status: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO summaries (room_id, content_markdown, status, updated_at)
+             VALUES (?1, '', ?2, ?3)
+             ON CONFLICT(room_id) DO UPDATE SET
+                status     = excluded.status,
+                updated_at = excluded.updated_at",
+            params![room_id, status, now_rfc3339()],
+        )?;
+        Ok(())
+    }
+
     /// Create or replace the manager summary for a room.
     pub fn set_summary(&self, room_id: &str, content: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO summaries (room_id, content_markdown, updated_at)
-             VALUES (?1, ?2, ?3)
+            "INSERT INTO summaries (room_id, content_markdown, status, updated_at)
+             VALUES (?1, ?2, 'ready', ?3)
              ON CONFLICT(room_id) DO UPDATE SET
                 content_markdown = excluded.content_markdown,
+                status           = 'ready',
                 updated_at       = excluded.updated_at",
             params![room_id, content, now_rfc3339()],
         )?;
