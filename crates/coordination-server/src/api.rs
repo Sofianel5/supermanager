@@ -890,6 +890,122 @@ echo ""
     ))
 }
 
+pub async fn uninstall_script(
+    Path(room_id): Path<String>,
+) -> impl IntoResponse {
+    let script = format!(
+        r##"#!/bin/sh
+set -e
+
+# ── Supermanager agent uninstaller ─────────────────────────
+# Room: {room_id}
+
+echo ""
+echo "  supermanager uninstaller"
+echo "  Room: {room_id}"
+echo ""
+
+# ── Remove Claude Code MCP ─────────────────────────────────
+echo "  [1/4] Removing Claude Code MCP..."
+if command -v claude >/dev/null 2>&1; then
+  claude mcp remove supermanager 2>/dev/null || true
+  echo "        Removed supermanager MCP from Claude."
+fi
+if [ -f .mcp.json ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import json
+with open('.mcp.json') as f:
+    cfg = json.load(f)
+servers = cfg.get('mcpServers', {{}})
+if 'supermanager' in servers:
+    del servers['supermanager']
+if servers:
+    with open('.mcp.json', 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print('        Removed supermanager from .mcp.json')
+else:
+    import os
+    os.remove('.mcp.json')
+    print('        Deleted .mcp.json (was only supermanager)')
+"
+  fi
+fi
+echo ""
+
+# ── Remove auto-approve from Claude settings ───────────────
+echo "  [2/4] Removing auto-approve..."
+CLAUDE_SETTINGS="\$HOME/.claude/settings.json"
+if [ -f "\$CLAUDE_SETTINGS" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import json
+with open('\$CLAUDE_SETTINGS') as f:
+    cfg = json.load(f)
+perms = cfg.get('permissions', {{}})
+allow = perms.get('allow', [])
+entries = [e for e in allow if 'supermanager' in str(e)]
+for e in entries:
+    allow.remove(e)
+with open('\$CLAUDE_SETTINGS', 'w') as f:
+    json.dump(cfg, f, indent=2)
+if entries:
+    print('        Removed ' + str(len(entries)) + ' auto-approve entries.')
+else:
+    print('        No auto-approve entries found.')
+"
+  fi
+fi
+echo ""
+
+# ── Remove Codex config ────────────────────────────────────
+echo "  [3/4] Removing Codex MCP..."
+if [ -f .codex-mcp.json ]; then
+  rm -f .codex-mcp.json
+  echo "        Deleted .codex-mcp.json"
+else
+  echo "        No .codex-mcp.json found."
+fi
+echo ""
+
+# ── Remove instructions from CLAUDE.md and AGENTS.md ──────
+echo "  [4/4] Removing agent instructions..."
+for INSTRUCTIONS_FILE in CLAUDE.md AGENTS.md; do
+  if [ -f "$INSTRUCTIONS_FILE" ] && grep -q '<!-- supermanager:start -->' "$INSTRUCTIONS_FILE"; then
+    if command -v python3 >/dev/null 2>&1; then
+      python3 -c "
+import re
+with open('$INSTRUCTIONS_FILE') as f:
+    text = f.read()
+text = re.sub(
+    r'\n?<!-- supermanager:start -->.*?<!-- supermanager:end -->\n?',
+    '',
+    text,
+    flags=re.DOTALL,
+)
+with open('$INSTRUCTIONS_FILE', 'w') as f:
+    f.write(text.strip() + '\n')
+print('        Removed supermanager block from $INSTRUCTIONS_FILE')
+"
+    fi
+  else
+    echo "        No supermanager block in $INSTRUCTIONS_FILE"
+  fi
+done
+
+echo ""
+echo "  Uninstall complete! Agents here will no longer report progress."
+echo ""
+"##,
+        room_id = room_id,
+    );
+
+    (
+        [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
+        script,
+    )
+}
+
 // ── Room-scoped MCP ─────────────────────────────────────────
 
 pub async fn handle_mcp(
