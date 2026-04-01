@@ -23,6 +23,11 @@ struct Cli {
     db_path: PathBuf,
     #[arg(long, default_value = "http://127.0.0.1:8787")]
     base_url: String,
+    #[arg(
+        long,
+        default_value = "cargo install --git https://github.com/Sofianel5/supermanager.git supermanager"
+    )]
+    cli_install_command: String,
 }
 
 #[tokio::main]
@@ -38,6 +43,7 @@ async fn main() -> Result<()> {
         note_events,
         summary_events,
         base_url: cli.base_url,
+        cli_install_command: cli.cli_install_command,
         http: reqwest::Client::new(),
         openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
     };

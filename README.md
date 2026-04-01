@@ -1,6 +1,6 @@
 # Supermanager
 
-Supermanager is a room-based coordination server for coding agents. It creates per-team rooms, gives each room its own MCP endpoint and installer, stores progress updates in SQLite, and renders a live dashboard plus an auto-generated summary.
+Supermanager is a room-based coordination server for coding agents. It creates per-team rooms, gives each room its own MCP endpoint, stores progress updates in SQLite, and renders a live dashboard plus an auto-generated summary. Repos join rooms through a globally installed `supermanager` CLI.
 
 ## Setup
 
@@ -12,7 +12,28 @@ cargo run -p coordination-server
 
 By default it listens on `http://127.0.0.1:8787` and writes to `supermanager.db`.
 
-### 2. Create a room
+To customize the one-time CLI install command shown in the UI and API responses:
+
+```sh
+cargo run -p coordination-server -- \
+  --cli-install-command 'cargo install --git https://github.com/your-org/supermanager.git supermanager'
+```
+
+### 2. Install the CLI once per machine
+
+From this repo:
+
+```sh
+cargo install --path crates/supermanager-cli
+```
+
+Or directly from Git:
+
+```sh
+cargo install --git https://github.com/Sofianel5/supermanager.git supermanager
+```
+
+### 3. Create a room
 
 Open `http://127.0.0.1:8787` in a browser and create a room, or call the API directly:
 
@@ -24,22 +45,29 @@ curl -sS http://127.0.0.1:8787/v1/rooms \
 
 The response includes:
 
+- `install_command`
 - `dashboard_url`
 - `room_id`
 - `secret`
 - `join_command`
 
-### 3. Join repos to the room
+### 4. Join repos to the room
 
-Run the returned installer inside each repo you want connected:
+Run the returned join command inside each repo you want connected:
 
 ```sh
-curl -sSf "http://127.0.0.1:8787/r/<room-id>/install?secret=<room-secret>" | sh
+supermanager join --server "http://127.0.0.1:8787" --room "<room-id>" --secret "<room-secret>"
 ```
 
-That installer writes the room-specific MCP config and injects the reporting instructions into local `CLAUDE.md` and `AGENTS.md` files.
+That command writes the room-specific MCP config and injects the reporting instructions into local `CLAUDE.md` and `AGENTS.md` files for the current repo only.
 
-### 4. Use the dashboard
+To remove the repo from supermanager later:
+
+```sh
+supermanager leave
+```
+
+### 5. Use the dashboard
 
 Open the room dashboard:
 
@@ -63,9 +91,9 @@ The dashboard reads the room feed, shows task state, and watches summary generat
 | `/r/{room_id}/summary` | GET | Read the current room summary |
 | `/r/{room_id}/tasks` | GET | Read the current room task list |
 | `/r/{room_id}/mcp` | POST | Room-scoped MCP endpoint |
-| `/r/{room_id}/install` | GET | Generate the room installer |
-| `/r/{room_id}/uninstall` | GET | Generate a room-specific uninstall script |
-| `/uninstall` | GET | Generate a generic uninstall script |
+| `/r/{room_id}/install` | GET | Compatibility wrapper that forwards to `supermanager join` |
+| `/r/{room_id}/uninstall` | GET | Compatibility wrapper that forwards to `supermanager leave` |
+| `/uninstall` | GET | Compatibility wrapper that forwards to `supermanager leave` |
 
 ## MCP tools
 
@@ -84,13 +112,14 @@ The dashboard reads the room feed, shows task state, and watches summary generat
 
 ```text
 crates/
-  coordination-server/    # HTTP server, dashboard, MCP endpoint, installers
+  coordination-server/    # HTTP server, dashboard, room APIs, MCP endpoint
   reporter-protocol/      # Shared room and note types
+  supermanager-cli/       # Global CLI for joining/leaving repos
 Dockerfile                # Production image
 fly.toml                  # Fly deployment config
 ```
 
 ## Notes
 
-- Agent-install instructions now live in `crates/coordination-server/src/supermanager_instructions.md`.
+- Install-time instruction template now lives in `crates/reporter-protocol/src/supermanager_instructions.md`.
 - Summary generation runs on the server after new notes arrive.

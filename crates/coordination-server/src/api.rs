@@ -40,6 +40,7 @@ pub struct AppState {
     pub note_events: broadcast::Sender<NoteEvent>,
     pub summary_events: broadcast::Sender<SummaryStatusEvent>,
     pub base_url: String,
+    pub cli_install_command: String,
     pub http: reqwest::Client,
     pub openai_api_key: Option<String>,
 }
@@ -79,6 +80,7 @@ pub async fn health() -> &'static str {
 
 pub async fn landing_page(State(state): State<AppState>) -> impl IntoResponse {
     let base = html_escape(&state.base_url);
+    let cli_install_command = html_escape(&state.cli_install_command);
     let html = format!(
         r##"<!DOCTYPE html>
 <html lang="en">
@@ -156,10 +158,20 @@ button:disabled{{opacity:0.5;cursor:not-allowed}}
     <div class="panel-body">
       <ol class="steps">
         <li>Create a room for your team</li>
-        <li>Run the install command in each developer's repo</li>
+        <li>Install the <code>supermanager</code> CLI once on each machine</li>
+        <li>Run the room join command in each repo you want connected</li>
         <li>AI agents (<code>Claude Code</code>, <code>Codex</code>) automatically report progress as they work</li>
         <li>Watch it all on a live dashboard</li>
       </ol>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-title">Install The CLI Once</span>
+    </div>
+    <div class="panel-body">
+      <div class="field-value" id="cli-install-hint">{cli_install_command}</div>
     </div>
   </div>
 
@@ -177,8 +189,10 @@ button:disabled{{opacity:0.5;cursor:not-allowed}}
       <div id="result">
         <div class="field-label">Dashboard</div>
         <div><a id="res-dashboard" class="field-link" href="#" target="_blank"></a></div>
-        <div class="field-label">Install command</div>
-        <div class="field-value" id="res-install"></div>
+        <div class="field-label">Install CLI</div>
+        <div class="field-value" id="res-cli-install"></div>
+        <div class="field-label">Join command</div>
+        <div class="field-value" id="res-join"></div>
         <div class="field-label">Room ID</div>
         <div class="field-value val-roomid" id="res-room-id"></div>
         <div class="field-label">Secret</div>
@@ -217,7 +231,8 @@ button:disabled{{opacity:0.5;cursor:not-allowed}}
     .then(function(data) {{
       document.getElementById('res-dashboard').href = data.dashboard_url;
       document.getElementById('res-dashboard').textContent = data.dashboard_url;
-      document.getElementById('res-install').textContent = data.join_command;
+      document.getElementById('res-cli-install').textContent = data.install_command;
+      document.getElementById('res-join').textContent = data.join_command;
       document.getElementById('res-room-id').textContent = data.room_id;
       document.getElementById('res-secret').textContent = data.secret;
       resultEl.style.display = 'block';
@@ -245,6 +260,7 @@ button:disabled{{opacity:0.5;cursor:not-allowed}}
 </body>
 </html>"##,
         base = base,
+        cli_install_command = cli_install_command,
     );
 
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html)
@@ -258,11 +274,9 @@ pub async fn create_room(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let room = state.db.create_room(&req.name).map_err(internal_error)?;
     let resp = CreateRoomResponse {
+        install_command: state.cli_install_command.clone(),
         dashboard_url: format!("{}/r/{}", state.base_url, room.room_id),
-        join_command: format!(
-            "curl -sSf \"{}/r/{}/install?secret={}\" | sh",
-            state.base_url, room.room_id, room.secret
-        ),
+        join_command: cli_join_command(&state.base_url, &room.room_id, &room.secret),
         room_id: room.room_id,
         secret: room.secret,
     };
@@ -325,10 +339,7 @@ pub async fn get_feed(
     if room.is_none() {
         return Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}")));
     }
-    let notes = state
-        .db
-        .get_notes(&room_id)
-        .map_err(internal_error)?;
+    let notes = state.db.get_notes(&room_id).map_err(internal_error)?;
     Ok(Json(FeedResponse { notes }))
 }
 
@@ -351,7 +362,10 @@ pub async fn stream_feed(
     let target_room = room_id.clone();
 
     // Send initial summary status
-    let initial_status = state.db.get_summary_status(&room_id).unwrap_or_else(|_| "ready".to_owned());
+    let initial_status = state
+        .db
+        .get_summary_status(&room_id)
+        .unwrap_or_else(|_| "ready".to_owned());
 
     let event_stream = stream! {
         // Replay missed notes
@@ -409,10 +423,7 @@ pub async fn get_manager_summary(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let summary = state
-        .db
-        .get_summary(&room_id)
-        .map_err(internal_error)?;
+    let summary = state.db.get_summary(&room_id).map_err(internal_error)?;
     Ok((
         [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
         summary,
@@ -436,27 +447,28 @@ pub async fn dashboard(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let room = state
-        .db
-        .get_room(&room_id)
-        .map_err(internal_error)?;
+    let room = state.db.get_room(&room_id).map_err(internal_error)?;
     match room {
         Some(r) => {
             let base = &state.base_url;
-            let html = build_dashboard_html(&r.name, &r.room_id, base);
-            Ok((
-                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-                html,
-            ))
+            let html = build_dashboard_html(&r.name, &r.room_id, base, &state.cli_install_command);
+            Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html))
         }
         None => Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}"))),
     }
 }
 
-fn build_dashboard_html(name: &str, room_id: &str, base_url: &str) -> String {
+fn build_dashboard_html(
+    name: &str,
+    room_id: &str,
+    base_url: &str,
+    cli_install_command: &str,
+) -> String {
     let safe_name = html_escape(name);
     let safe_id = html_escape(room_id);
     let safe_base = html_escape(base_url);
+    let safe_install_command = html_escape(cli_install_command);
+    let safe_join_command = html_escape(&cli_join_command(base_url, room_id, "YOUR_SECRET"));
     format!(
         r##"<!DOCTYPE html>
 <html lang="en">
@@ -557,8 +569,10 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
       <span class="panel-title">Connect Agents</span>
     </div>
     <div class="panel-body">
-      <p class="join-label">Run this in each repo to connect AI coding agents to this room. The room creator has the full command with the secret &mdash; ask them for it.</p>
-      <code id="join-cmd" class="join-cmd">curl -sSf {safe_base}/r/{safe_id}/install?secret=YOUR_SECRET | sh</code>
+      <p class="join-label">Install the CLI once on each machine, then run the room join command in every repo you want connected.</p>
+      <code id="install-cmd" class="join-cmd">{safe_install_command}</code>
+      <p class="join-label" style="margin-top:16px">The room creator has the full join command with the secret. Ask them for it if you only have the room URL.</p>
+      <code id="join-cmd" class="join-cmd">{safe_join_command}</code>
     </div>
   </div>
 
@@ -778,11 +792,12 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
     statusEl.className = 'live-dot error';
   }};
 
-  var joinCmd = document.getElementById('join-cmd');
-  joinCmd.addEventListener('click', function() {{
-    navigator.clipboard.writeText(joinCmd.textContent).then(function() {{
-      joinCmd.classList.add('copied');
-      setTimeout(function() {{ joinCmd.classList.remove('copied'); }}, 2000);
+  document.addEventListener('click', function(e) {{
+    var copyTarget = e.target.closest('.join-cmd');
+    if (!copyTarget) return;
+    navigator.clipboard.writeText(copyTarget.textContent).then(function() {{
+      copyTarget.classList.add('copied');
+      setTimeout(function() {{ copyTarget.classList.remove('copied'); }}, 2000);
     }});
   }});
 }})();
@@ -799,11 +814,10 @@ pub async fn install_script(
     Path(room_id): Path<String>,
     Query(query): Query<SecretQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let secret = query
-        .secret
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or((StatusCode::FORBIDDEN, "missing secret query param".to_owned()))?;
+    let secret = query.secret.as_deref().filter(|s| !s.is_empty()).ok_or((
+        StatusCode::FORBIDDEN,
+        "missing secret query param".to_owned(),
+    ))?;
 
     let valid = state
         .db
@@ -814,276 +828,39 @@ pub async fn install_script(
     }
 
     let base = &state.base_url;
-    let mcp_url = format!("{base}/r/{room_id}/mcp?secret={secret}");
     let dashboard_url = format!("{base}/r/{room_id}");
+    let install_command = &state.cli_install_command;
+    let join_command = cli_join_command(base, &room_id, secret);
 
     let script = format!(
         r##"#!/bin/sh
 set -e
 
-# ── Supermanager agent installer ────────────────────────────
+# ── Supermanager room join wrapper ──────────────────────────
 # Room:      {room_id}
 # Dashboard: {dashboard_url}
 
 echo ""
 echo "  ┌─────────────────────────────────────────────────┐"
-echo "  │  supermanager installer                         │"
+echo "  │  supermanager join                              │"
 echo "  │  Room: {room_id}"
 echo "  └─────────────────────────────────────────────────┘"
 echo ""
-echo "  NOTE: This configures the CURRENT DIRECTORY only (project-scoped)."
-echo ""
-
-# ── Detect employee name ────────────────────────────────────
-EMPLOYEE_NAME=""
-if command -v git >/dev/null 2>&1; then
-  EMPLOYEE_NAME="$(git config user.name 2>/dev/null || true)"
-fi
-if [ -z "$EMPLOYEE_NAME" ]; then
-  EMPLOYEE_NAME="$(whoami 2>/dev/null || true)"
-fi
-if [ -z "$EMPLOYEE_NAME" ]; then
-  echo "  ERROR: Could not detect your name."
-  echo "  Please run:  git config --global user.name \"Your Name\""
+if ! command -v supermanager >/dev/null 2>&1; then
+  echo "  supermanager CLI not found."
+  echo ""
+  echo "  Install it once with:"
+  echo "    {install_command}"
+  echo ""
   exit 1
 fi
-echo "  Employee: $EMPLOYEE_NAME"
-echo ""
 
-# ── Configure Claude Code (project-scoped) ──────────────────
-echo "  [1/4] Configuring Claude Code..."
-if command -v claude >/dev/null 2>&1; then
-  # Remove any global entry first
-  claude mcp remove supermanager 2>/dev/null || true
-  # Add as project-scoped (writes to .mcp.json in current directory)
-  claude mcp add --scope project --transport http supermanager "{mcp_url}"
-  echo "        MCP configured in $(pwd)/.mcp.json"
-else
-  # Merge into .mcp.json without clobbering other servers
-  echo "        Claude CLI not found — updating .mcp.json directly."
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c "
-import json, os
-path = '.mcp.json'
-cfg = {{}}
-if os.path.exists(path):
-    with open(path) as f:
-        cfg = json.load(f)
-cfg.setdefault('mcpServers', {{}})['supermanager'] = {{
-    'type': 'http',
-    'url': '{mcp_url}'
-}}
-with open(path, 'w') as f:
-    json.dump(cfg, f, indent=2)
-"
-    echo "        Updated .mcp.json in $(pwd)"
-  else
-    echo "        ERROR: Neither claude CLI nor python3 found. Cannot configure MCP."
-    echo "        Please install Claude Code or python3 and re-run."
-    exit 1
-  fi
-fi
-echo ""
-
-# ── Auto-approve submit_progress in Claude settings ─────────
-CLAUDE_SETTINGS="$HOME/.claude/settings.json"
-if [ -f "$CLAUDE_SETTINGS" ]; then
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c "
-import json, sys
-try:
-    with open('$CLAUDE_SETTINGS') as f:
-        cfg = json.load(f)
-except:
-    cfg = {{}}
-perms = cfg.setdefault('permissions', {{}})
-allow = perms.setdefault('allow', [])
-tool_entry = 'mcp__supermanager__submit_progress'
-if tool_entry not in allow:
-    allow.append(tool_entry)
-with open('$CLAUDE_SETTINGS', 'w') as f:
-    json.dump(cfg, f, indent=2)
-print('        Auto-approved submit_progress in Claude settings.')
-"
-  fi
-fi
-
-# ── Configure Codex (project-scoped) ────────────────────────
-echo "  [2/4] Configuring Codex..."
-mkdir -p .codex
-if command -v python3 >/dev/null 2>&1; then
-  python3 -c "
-from pathlib import Path
-
-path = Path('.codex/config.toml')
-path.parent.mkdir(parents=True, exist_ok=True)
-lines = path.read_text().splitlines() if path.exists() else []
-out = []
-server_section = '[mcp_servers.supermanager]'
-tool_section = '[mcp_servers.supermanager.tools.submit_progress]'
-inside_server = False
-inside_tool = False
-seen_server = False
-seen_tool = False
-set_tool_approval = False
-
-for line in lines:
-    stripped = line.strip()
-
-    if stripped.startswith('[') and stripped.endswith(']'):
-        if inside_tool and not set_tool_approval:
-            out.append('approval_mode = \"approve\"')
-            set_tool_approval = True
-        inside_server = stripped == server_section
-        inside_tool = stripped == tool_section
-        if stripped == server_section:
-            seen_server = True
-        if stripped == tool_section:
-            seen_tool = True
-        out.append(line)
-        continue
-
-    if inside_server and stripped.startswith('url ='):
-        out.append('url = \"{mcp_url}\"')
-    elif inside_tool and stripped.startswith('approval_mode'):
-        out.append('approval_mode = \"approve\"')
-        set_tool_approval = True
-    else:
-        out.append(line)
-
-if inside_tool and not set_tool_approval:
-    out.append('approval_mode = \"approve\"')
-
-if not seen_server:
-    if out and out[-1] != '':
-        out.append('')
-    out.append(server_section)
-    out.append('url = \"{mcp_url}\"')
-
-if not seen_tool:
-    if out and out[-1] != '':
-        out.append('')
-    out.append(tool_section)
-    out.append('approval_mode = \"approve\"')
-
-path.write_text('\\n'.join(out) + '\\n')
-"
-  echo "        Updated .codex/config.toml in $(pwd)"
-
-  python3 -c "
-import json, os
-path = '.codex-mcp.json'
-cfg = {{}}
-if os.path.exists(path):
-    with open(path) as f:
-        cfg = json.load(f)
-cfg.setdefault('mcpServers', {{}})['supermanager'] = {{
-    'type': 'http',
-    'url': '{mcp_url}'
-}}
-with open(path, 'w') as f:
-    json.dump(cfg, f, indent=2)
-"
-  echo "        Updated .codex-mcp.json in $(pwd)"
-else
-  echo "        WARNING: python3 not found — skipping Codex config."
-fi
-echo ""
-
-# ── Remove old global Codex config if present ────────────────
-CODEX_CFG="$HOME/.codex/config.toml"
-if [ -f "$CODEX_CFG" ] && grep -q "mcp_servers.supermanager" "$CODEX_CFG" 2>/dev/null; then
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c "
-from pathlib import Path
-
-path = Path('$CODEX_CFG')
-lines = path.read_text().splitlines()
-out = []
-server_section = '[mcp_servers.supermanager]'
-tool_section = '[mcp_servers.supermanager.tools.submit_progress]'
-inside_server = False
-inside_tool = False
-
-for line in lines:
-    stripped = line.strip()
-
-    if stripped.startswith('[') and stripped.endswith(']'):
-        if stripped == server_section:
-            inside_server = True
-            inside_tool = False
-            continue
-        if stripped == tool_section:
-            inside_tool = True
-            inside_server = False
-            continue
-        inside_server = False
-        inside_tool = False
-        out.append(line)
-        continue
-
-    if inside_server or inside_tool:
-        continue
-
-    out.append(line)
-
-text = '\\n'.join(out).rstrip()
-path.write_text((text + '\\n') if text else '')
-"
-    echo "        Cleaned old global Codex config."
-  fi
-fi
-
-# ── Inject instructions into CLAUDE.md and AGENTS.md ────────
-echo "  [3/4] Injecting agent instructions..."
-SUPERMANAGER_INSTRUCTIONS=$(echo '{agent_instructions}' | sed "s/SUPERMANAGER_EMPLOYEE_NAME/$EMPLOYEE_NAME/g")
-
-for INSTRUCTIONS_FILE in CLAUDE.md AGENTS.md; do
-  if [ -f "$INSTRUCTIONS_FILE" ] && grep -q '<!-- supermanager:start -->' "$INSTRUCTIONS_FILE"; then
-    # Replace existing block
-    if command -v python3 >/dev/null 2>&1; then
-      python3 -c "
-import re
-with open('$INSTRUCTIONS_FILE') as f:
-    text = f.read()
-text = re.sub(
-    r'<!-- supermanager:start -->.*?<!-- supermanager:end -->',
-    '''$SUPERMANAGER_INSTRUCTIONS''',
-    text,
-    flags=re.DOTALL,
-)
-with open('$INSTRUCTIONS_FILE', 'w') as f:
-    f.write(text)
-"
-      echo "        Updated supermanager block in $INSTRUCTIONS_FILE"
-    fi
-  else
-    # Append
-    printf '\n%s\n' "$SUPERMANAGER_INSTRUCTIONS" >> "$INSTRUCTIONS_FILE"
-    echo "        Added supermanager block to $INSTRUCTIONS_FILE"
-  fi
-done
-
-# ── Done ────────────────────────────────────────────────────
-echo ""
-echo "  [4/4] Done!"
-echo ""
-echo "  ┌─────────────────────────────────────────────────┐"
-echo "  │  Setup complete!                                │"
-echo "  │                                                 │"
-echo "  │  Dashboard: {dashboard_url}"
-echo "  │  Directory: $(pwd)"
-echo "  │                                                 │"
-echo "  │  Agents here will now report progress.          │"
-echo "  │  Run this command in other repos to connect     │"
-echo "  │  them too.                                      │"
-echo "  └─────────────────────────────────────────────────┘"
-echo ""
+exec {join_command}
 "##,
         room_id = room_id,
-        mcp_url = mcp_url,
         dashboard_url = dashboard_url,
-        agent_instructions = include_str!("supermanager_instructions.md"),
+        install_command = install_command,
+        join_command = join_command,
     );
 
     Ok((
@@ -1096,9 +873,7 @@ pub async fn uninstall_script_global() -> impl IntoResponse {
     uninstall_response(None)
 }
 
-pub async fn uninstall_script(
-    Path(room_id): Path<String>,
-) -> impl IntoResponse {
+pub async fn uninstall_script(Path(room_id): Path<String>) -> impl IntoResponse {
     uninstall_response(Some(&room_id))
 }
 
@@ -1119,144 +894,16 @@ echo "  supermanager uninstaller"
 {room_line}
 echo ""
 
-# ── Remove Claude Code MCP ─────────────────────────────────
-echo "  [1/4] Removing Claude Code MCP..."
-if command -v claude >/dev/null 2>&1; then
-  claude mcp remove supermanager 2>/dev/null || true
-  echo "        Removed supermanager MCP from Claude."
+if ! command -v supermanager >/dev/null 2>&1; then
+  echo "  supermanager CLI not found."
+  echo ""
+  echo "  Install it first, then run:"
+  echo "    supermanager leave"
+  echo ""
+  exit 1
 fi
-if [ -f .mcp.json ]; then
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c "
-import json
-with open('.mcp.json') as f:
-    cfg = json.load(f)
-servers = cfg.get('mcpServers', {{}})
-if 'supermanager' in servers:
-    del servers['supermanager']
-if servers:
-    with open('.mcp.json', 'w') as f:
-        json.dump(cfg, f, indent=2)
-    print('        Removed supermanager from .mcp.json')
-else:
-    import os
-    os.remove('.mcp.json')
-    print('        Deleted .mcp.json (was only supermanager)')
-"
-  fi
-fi
-echo ""
 
-# ── Remove auto-approve from Claude settings ───────────────
-echo "  [2/4] Removing auto-approve..."
-CLAUDE_SETTINGS="\$HOME/.claude/settings.json"
-if [ -f "\$CLAUDE_SETTINGS" ]; then
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c "
-import json
-with open('\$CLAUDE_SETTINGS') as f:
-    cfg = json.load(f)
-perms = cfg.get('permissions', {{}})
-allow = perms.get('allow', [])
-entries = [e for e in allow if 'supermanager' in str(e)]
-for e in entries:
-    allow.remove(e)
-with open('\$CLAUDE_SETTINGS', 'w') as f:
-    json.dump(cfg, f, indent=2)
-if entries:
-    print('        Removed ' + str(len(entries)) + ' auto-approve entries.')
-else:
-    print('        No auto-approve entries found.')
-"
-  fi
-fi
-echo ""
-
-# ── Remove Codex config ────────────────────────────────────
-echo "  [3/4] Removing Codex MCP..."
-if [ -f .codex/config.toml ]; then
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c "
-from pathlib import Path
-
-path = Path('.codex/config.toml')
-lines = path.read_text().splitlines()
-out = []
-server_section = '[mcp_servers.supermanager]'
-tool_section = '[mcp_servers.supermanager.tools.submit_progress]'
-inside_server = False
-inside_tool = False
-
-for line in lines:
-    stripped = line.strip()
-
-    if stripped.startswith('[') and stripped.endswith(']'):
-        if stripped == server_section:
-            inside_server = True
-            inside_tool = False
-            continue
-        if stripped == tool_section:
-            inside_tool = True
-            inside_server = False
-            continue
-        inside_server = False
-        inside_tool = False
-        out.append(line)
-        continue
-
-    if inside_server or inside_tool:
-        continue
-
-    out.append(line)
-
-text = '\\n'.join(out).rstrip()
-if text:
-    path.write_text(text + '\\n')
-    print('        Removed supermanager from .codex/config.toml')
-else:
-    path.unlink()
-    print('        Deleted .codex/config.toml (was only supermanager)')
-"
-  fi
-else
-  echo "        No .codex/config.toml found."
-fi
-if [ -f .codex-mcp.json ]; then
-  rm -f .codex-mcp.json
-  echo "        Deleted .codex-mcp.json"
-else
-  echo "        No .codex-mcp.json found."
-fi
-echo ""
-
-# ── Remove instructions from CLAUDE.md and AGENTS.md ──────
-echo "  [4/4] Removing agent instructions..."
-for INSTRUCTIONS_FILE in CLAUDE.md AGENTS.md; do
-  if [ -f "$INSTRUCTIONS_FILE" ] && grep -q '<!-- supermanager:start -->' "$INSTRUCTIONS_FILE"; then
-    if command -v python3 >/dev/null 2>&1; then
-      python3 -c "
-import re
-with open('$INSTRUCTIONS_FILE') as f:
-    text = f.read()
-text = re.sub(
-    r'\n?<!-- supermanager:start -->.*?<!-- supermanager:end -->\n?',
-    '',
-    text,
-    flags=re.DOTALL,
-)
-with open('$INSTRUCTIONS_FILE', 'w') as f:
-    f.write(text.strip() + '\n')
-print('        Removed supermanager block from $INSTRUCTIONS_FILE')
-"
-    fi
-  else
-    echo "        No supermanager block in $INSTRUCTIONS_FILE"
-  fi
-done
-
-echo ""
-echo "  Uninstall complete! Agents here will no longer report progress."
-echo ""
+exec supermanager leave
 "##,
         room_line = room_line,
     );
@@ -1473,24 +1120,18 @@ pub async fn handle_mcp(
                 .and_then(Value::as_str)
                 .unwrap_or("");
             match tool_name {
-                "submit_progress" => {
-                    match verify_mcp_secret(&state, &room_id, &secret) {
-                        Ok(()) => mcp_submit_progress(&state, &room_id, &req),
-                        Err(msg) => mcp_error(msg),
-                    }
-                }
-                "create_task" => {
-                    match verify_mcp_secret(&state, &room_id, &secret) {
-                        Ok(()) => mcp_create_task(&state, &room_id, &req),
-                        Err(msg) => mcp_error(msg),
-                    }
-                }
-                "update_task" => {
-                    match verify_mcp_secret(&state, &room_id, &secret) {
-                        Ok(()) => mcp_update_task(&state, &room_id, &req),
-                        Err(msg) => mcp_error(msg),
-                    }
-                }
+                "submit_progress" => match verify_mcp_secret(&state, &room_id, &secret) {
+                    Ok(()) => mcp_submit_progress(&state, &room_id, &req),
+                    Err(msg) => mcp_error(msg),
+                },
+                "create_task" => match verify_mcp_secret(&state, &room_id, &secret) {
+                    Ok(()) => mcp_create_task(&state, &room_id, &req),
+                    Err(msg) => mcp_error(msg),
+                },
+                "update_task" => match verify_mcp_secret(&state, &room_id, &secret) {
+                    Ok(()) => mcp_update_task(&state, &room_id, &req),
+                    Err(msg) => mcp_error(msg),
+                },
                 // Public tools — no secret required
                 "get_feed" => mcp_get_feed(&state, &room_id),
                 "get_tasks" => mcp_get_tasks(&state, &room_id, &req),
@@ -1518,14 +1159,19 @@ pub async fn handle_mcp(
 
 /// Verify that a secret is present and valid for the given room.
 /// Returns Ok(()) on success or Err(message) on failure.
-fn verify_mcp_secret(state: &AppState, room_id: &str, secret: &Option<String>) -> Result<(), &'static str> {
+fn verify_mcp_secret(
+    state: &AppState,
+    room_id: &str,
+    secret: &Option<String>,
+) -> Result<(), &'static str> {
     match secret {
         Some(s) => {
-            let valid = state
-                .db
-                .verify_room_secret(room_id, s)
-                .unwrap_or(false);
-            if valid { Ok(()) } else { Err("Unauthorized: invalid secret") }
+            let valid = state.db.verify_room_secret(room_id, s).unwrap_or(false);
+            if valid {
+                Ok(())
+            } else {
+                Err("Unauthorized: invalid secret")
+            }
         }
         None => Err("Unauthorized: secret required"),
     }
@@ -1583,7 +1229,10 @@ fn mcp_submit_progress(state: &AppState, room_id: &str, req: &Value) -> Value {
                 // Get updates from others since our last submission
                 if let Ok(others) = state.db.get_updates_from_others(room_id, &employee, 20) {
                     if !others.is_empty() {
-                        response.push_str(&format!("\n\n--- Updates from others ({}) ---\n", others.len()));
+                        response.push_str(&format!(
+                            "\n\n--- Updates from others ({}) ---\n",
+                            others.len()
+                        ));
                         for n in &others {
                             response.push_str(&format!(
                                 "[{}] {} ({}): {}\n",
@@ -1609,7 +1258,9 @@ fn mcp_submit_progress(state: &AppState, room_id: &str, req: &Value) -> Value {
                             if assignee.is_empty() {
                                 response.push_str(&format!("- [{marker}] {title} ({id})\n"));
                             } else {
-                                response.push_str(&format!("- [{marker}] {title} @{assignee} ({id})\n"));
+                                response.push_str(&format!(
+                                    "- [{marker}] {title} @{assignee} ({id})\n"
+                                ));
                             }
                         }
                     }
@@ -1653,7 +1304,10 @@ fn mcp_get_manager_summary(state: &AppState, room_id: &str) -> Value {
 
 fn mcp_create_task(state: &AppState, room_id: &str, req: &Value) -> Value {
     let args = req.pointer("/params/arguments");
-    let title = args.and_then(|a| a.get("title")).and_then(Value::as_str).unwrap_or("");
+    let title = args
+        .and_then(|a| a.get("title"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let assignee = args.and_then(|a| a.get("assignee")).and_then(Value::as_str);
 
     if title.is_empty() {
@@ -1669,8 +1323,14 @@ fn mcp_create_task(state: &AppState, room_id: &str, req: &Value) -> Value {
 }
 
 fn mcp_get_tasks(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
-    let include_done = args.get("include_done").and_then(Value::as_bool).unwrap_or(false);
+    let args = req
+        .pointer("/params/arguments")
+        .cloned()
+        .unwrap_or(json!({}));
+    let include_done = args
+        .get("include_done")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     match state.db.get_tasks(room_id, include_done) {
         Ok(tasks) => {
@@ -1687,7 +1347,10 @@ fn mcp_get_tasks(state: &AppState, room_id: &str, req: &Value) -> Value {
 
 fn mcp_update_task(state: &AppState, room_id: &str, req: &Value) -> Value {
     let args = req.pointer("/params/arguments");
-    let task_id = args.and_then(|a| a.get("task_id")).and_then(Value::as_str).unwrap_or("");
+    let task_id = args
+        .and_then(|a| a.get("task_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let title = args.and_then(|a| a.get("title")).and_then(Value::as_str);
     let status = args.and_then(|a| a.get("status")).and_then(Value::as_str);
     let assignee = args.and_then(|a| a.get("assignee")).and_then(Value::as_str);
@@ -1696,7 +1359,10 @@ fn mcp_update_task(state: &AppState, room_id: &str, req: &Value) -> Value {
         return mcp_error("Missing required field: task_id");
     }
 
-    match state.db.update_task(room_id, task_id, title, status, assignee) {
+    match state
+        .db
+        .update_task(room_id, task_id, title, status, assignee)
+    {
         Ok(true) => json!({
             "content": [{ "type": "text", "text": format!("Task {task_id} updated") }]
         }),
@@ -1713,7 +1379,10 @@ fn resolve_notes_context(
     args: &Value,
     default_limit: u32,
 ) -> Result<(String, String), Value> {
-    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(default_limit as u64) as u32;
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(default_limit as u64) as u32;
     let minutes = args.get("minutes").and_then(Value::as_u64);
     let employee_name = args.get("employee_name").and_then(Value::as_str);
     let branch = args.get("branch").and_then(Value::as_str);
@@ -1721,11 +1390,12 @@ fn resolve_notes_context(
 
     // Resolve time cutoff
     let after_time = if let Some(person) = since_last_update_by {
-        state.db.get_last_update_time(room_id, person)
+        state
+            .db
+            .get_last_update_time(room_id, person)
             .map_err(|e| mcp_error(&format!("Failed to look up last update by {person}: {e}")))?
     } else if let Some(mins) = minutes {
-        let cutoff = time::OffsetDateTime::now_utc()
-            - time::Duration::minutes(mins as i64);
+        let cutoff = time::OffsetDateTime::now_utc() - time::Duration::minutes(mins as i64);
         Some(
             cutoff
                 .format(&time::format_description::well_known::Rfc3339)
@@ -1735,13 +1405,10 @@ fn resolve_notes_context(
         None
     };
 
-    let notes = state.db.get_notes_filtered(
-        room_id,
-        after_time.as_deref(),
-        employee_name,
-        branch,
-        limit,
-    ).map_err(|e| mcp_error(&format!("Failed to fetch notes: {e}")))?;
+    let notes = state
+        .db
+        .get_notes_filtered(room_id, after_time.as_deref(), employee_name, branch, limit)
+        .map_err(|e| mcp_error(&format!("Failed to fetch notes: {e}")))?;
 
     if notes.is_empty() {
         return Err(json!({
@@ -1874,7 +1541,10 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             status: "error".to_owned(),
         });
     } else {
-        eprintln!("[auto_summarize] success for room {room_id}, {} chars", text.len());
+        eprintln!(
+            "[auto_summarize] success for room {room_id}, {} chars",
+            text.len()
+        );
         let _ = state.db.set_summary(room_id, text);
         let _ = state.summary_events.send(SummaryStatusEvent {
             room_id: room_id.to_owned(),
@@ -1884,7 +1554,10 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
 }
 
 async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
+    let args = req
+        .pointer("/params/arguments")
+        .cloned()
+        .unwrap_or(json!({}));
 
     let (context, filter_desc) = match resolve_notes_context(state, room_id, &args, 20) {
         Ok(v) => v,
@@ -1899,7 +1572,10 @@ async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value 
 }
 
 async fn mcp_ask(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req.pointer("/params/arguments").cloned().unwrap_or(json!({}));
+    let args = req
+        .pointer("/params/arguments")
+        .cloned()
+        .unwrap_or(json!({}));
 
     let question = match args.get("question").and_then(Value::as_str) {
         Some(q) => q.to_owned(),
@@ -1919,6 +1595,15 @@ async fn mcp_ask(state: &AppState, room_id: &str, req: &Value) -> Value {
 }
 
 // ── Helpers ─────────────────────────────────────────────────
+
+fn cli_join_command(base_url: &str, room_id: &str, secret: &str) -> String {
+    format!(
+        "supermanager join --server \"{}\" --room \"{}\" --secret \"{}\"",
+        base_url.trim_end_matches('/'),
+        room_id,
+        secret,
+    )
+}
 
 fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
