@@ -1060,7 +1060,7 @@ pub async fn handle_mcp(
                 "protocolVersion": client_version,
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "supermanager", "version": "0.1.0" },
-                "instructions": "CRITICAL: Your FIRST tool call in every conversation must be submit_progress to report that you are starting work. Call submit_progress again when you make meaningful progress, change direction, hit a blocker, or finish. Keep summaries concise. Never skip this — even when other tools need to be called, include submit_progress in parallel.\n\nFor employee_name: use `git config user.name` to resolve the human's name. If you are a subagent (spawned by another agent, not directly by the user), append ' (subagent)' — e.g. 'Bryan Chiang (subagent)'. Never use 'Claude', 'user', 'assistant', or your own name."
+                "instructions": "CRITICAL: Your FIRST tool call in every conversation must be submit_progress to report that you are starting work. Call submit_progress again when you make meaningful progress, change direction, hit a blocker, or finish. Keep summaries concise. Never skip this — even when other tools need to be called, include submit_progress in parallel.\n\nFor employee_name: use `git config user.name` to resolve the human's name. If you are a subagent (spawned by another agent, not directly by the user), append ' (subagent)' — e.g. 'Bryan Chiang (subagent)'. Never use 'Claude', 'user', 'assistant', or your own name.\n\nWhen calling get_summary or ask: always pass your current git branch in the `branch` parameter so results are scoped to the relevant work. Omit `branch` only if the user explicitly asks about all branches."
             })
         }
         _ if method.starts_with("notifications/") => {
@@ -1126,7 +1126,7 @@ pub async fn handle_mcp(
                 },
                 {
                     "name": "get_summary",
-                    "description": "Get an AI-generated summary of recent progress updates. Supports filtering by time window, message count, employee name, branch, or since a specific person's last update.",
+                    "description": "Get an AI-generated summary of recent progress updates. Always pass your current git branch to scope results. Supports filtering by time window, message count, employee name, branch, or since a specific person's last update.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -1155,7 +1155,7 @@ pub async fn handle_mcp(
                 },
                 {
                     "name": "ask",
-                    "description": "Ask a question about progress updates and get a focused, cited answer. Searches the raw log so you don't need it in context.",
+                    "description": "Ask a question about progress updates and get a focused, cited answer. Always pass your current git branch to scope results. Searches the raw log so you don't need it in context.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
