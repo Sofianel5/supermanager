@@ -88,7 +88,8 @@ body::before{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;ba
 body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.035;background-image:url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cpattern id='g' width='60' height='60' patternUnits='userSpaceOnUse'%3E%3Cpath d='M60 0H0v60' fill='none' stroke='%23fff' stroke-width='0.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E");}}
 .shell{{position:relative;z-index:1;max-width:720px;margin:0 auto;padding:48px 20px 80px}}
 .header{{margin-bottom:40px;text-align:center}}
-.logo{{display:inline-block;font-family:var(--mono);font-weight:700;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--amber);background:var(--amber-glow);border:1px solid rgba(245,158,11,0.2);padding:4px 10px;border-radius:4px;margin-bottom:14px;}}
+.logo{{display:inline-block;font-family:var(--mono);font-weight:700;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--amber);background:var(--amber-glow);border:1px solid rgba(245,158,11,0.2);padding:4px 10px;border-radius:4px;margin-bottom:14px;text-decoration:none;}}
+.logo:hover{{background:rgba(245,158,11,0.18);}}
 h1{{font-family:var(--sans);font-weight:800;font-size:2.6rem;letter-spacing:-0.03em;color:var(--text-primary);line-height:1.1;margin-bottom:10px;}}
 .tagline{{font-family:var(--sans);font-size:1.05rem;color:var(--text-secondary);}}
 .panel{{background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;margin-bottom:24px;overflow:hidden;transition:border-color 0.2s;}}
@@ -800,6 +801,35 @@ with open('$CODEX_CFG', 'w') as f:
   fi
 fi
 
+# ── Inject instructions into CLAUDE.md and AGENTS.md ────────
+SUPERMANAGER_INSTRUCTIONS='{agent_instructions}'
+
+for INSTRUCTIONS_FILE in CLAUDE.md AGENTS.md; do
+  if [ -f "$INSTRUCTIONS_FILE" ] && grep -q '<!-- supermanager:start -->' "$INSTRUCTIONS_FILE"; then
+    # Replace existing block
+    if command -v python3 >/dev/null 2>&1; then
+      python3 -c "
+import re
+with open('$INSTRUCTIONS_FILE') as f:
+    text = f.read()
+text = re.sub(
+    r'<!-- supermanager:start -->.*?<!-- supermanager:end -->',
+    '''$SUPERMANAGER_INSTRUCTIONS''',
+    text,
+    flags=re.DOTALL,
+)
+with open('$INSTRUCTIONS_FILE', 'w') as f:
+    f.write(text)
+"
+      echo "    Updated supermanager block in $INSTRUCTIONS_FILE"
+    fi
+  else
+    # Append
+    printf '\n%s\n' "$SUPERMANAGER_INSTRUCTIONS" >> "$INSTRUCTIONS_FILE"
+    echo "    Added supermanager block to $INSTRUCTIONS_FILE"
+  fi
+done
+
 # ── Done ────────────────────────────────────────────────────
 echo ""
 echo "==> Setup complete!"
@@ -811,6 +841,7 @@ echo ""
         room_id = room_id,
         mcp_url = mcp_url,
         dashboard_url = dashboard_url,
+        agent_instructions = include_str!("supermanager_instructions.md"),
     );
 
     Ok((
