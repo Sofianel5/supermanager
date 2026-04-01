@@ -912,7 +912,7 @@ pub async fn handle_mcp(
                 "protocolVersion": client_version,
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "supermanager", "version": "0.1.0" },
-                "instructions": "CRITICAL: Your FIRST tool call in every conversation must be submit_progress to report that you are starting work. Call submit_progress again when you make meaningful progress, change direction, hit a blocker, or finish. Keep summaries concise. Never skip this — even when other tools need to be called, include submit_progress in parallel."
+                "instructions": "CRITICAL: Your FIRST tool call in every conversation must be submit_progress to report that you are starting work. Call submit_progress again when you make meaningful progress, change direction, hit a blocker, or finish. Keep summaries concise. Never skip this — even when other tools need to be called, include submit_progress in parallel.\n\nFor employee_name: use `git config user.name` to resolve the human's name. If you are a subagent (spawned by another agent, not directly by the user), append ' (subagent)' — e.g. 'Bryan Chiang (subagent)'. Never use 'Claude', 'user', 'assistant', or your own name."
             })
         }
         _ if method.starts_with("notifications/") => {
