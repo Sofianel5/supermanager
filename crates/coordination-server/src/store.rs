@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use rand::Rng;
 use reporter_protocol::{ProgressNote, Room, StoredProgressNote};
 use rusqlite::{Connection, params};
@@ -19,9 +19,6 @@ const NOUNS: &[&str] = &[
     "fox", "owl", "bear", "wolf", "hawk", "deer", "lynx", "crow", "dove", "hare",
     "lion", "seal", "wren", "orca", "puma", "swan", "moth", "frog", "newt", "mink",
 ];
-
-/// The default room used for backwards-compatible (non-room) API routes.
-pub const LOCAL_ROOM_ID: &str = "__local";
 
 // ── Database wrapper ────────────────────────────────────────
 
@@ -163,27 +160,6 @@ impl Db {
             )
             .optional()?;
         Ok(result.as_deref() == Some(secret))
-    }
-
-    /// Delete a room and all associated notes/summaries. Returns `true` if the
-    /// room existed.
-    pub fn delete_room(&self, room_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM summaries WHERE room_id = ?1", params![room_id])?;
-        conn.execute("DELETE FROM notes WHERE room_id = ?1", params![room_id])?;
-        let affected = conn.execute("DELETE FROM rooms WHERE room_id = ?1", params![room_id])?;
-        Ok(affected > 0)
-    }
-
-    /// Ensure the local default room exists (idempotent).
-    pub fn ensure_local_room(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR IGNORE INTO rooms (room_id, name, secret, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![LOCAL_ROOM_ID, "Local", generate_secret(&mut rand::rng()), now_rfc3339()],
-        )?;
-        Ok(())
     }
 
     // ── Notes ───────────────────────────────────────────────

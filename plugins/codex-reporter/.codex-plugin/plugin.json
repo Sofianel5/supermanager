@@ -1,6 +1,0 @@
-{
-  "name": "supermanager",
-  "description": "Connects Codex to the supermanager coordination server via MCP.",
-  "version": "0.1.0",
-  "mcpServers": "./.mcp.json"
-}

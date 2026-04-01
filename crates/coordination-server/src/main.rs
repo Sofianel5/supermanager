@@ -29,7 +29,6 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let db = Arc::new(Db::open(&cli.db_path)?);
-    db.ensure_local_room()?;
 
     let (note_events, _) = broadcast::channel(256);
     let (summary_events, _) = broadcast::channel(64);
@@ -57,12 +56,6 @@ async fn main() -> Result<()> {
         .route("/r/{room_id}/install", get(api::install_script))
         .route("/r/{room_id}/uninstall", get(api::uninstall_script))
         .route("/uninstall", get(api::uninstall_script_global))
-        // ── Legacy (backwards-compat) routes ─────────────
-        .route("/v1/progress", post(api::legacy_ingest_progress))
-        .route("/v1/feed", get(api::legacy_get_feed))
-        .route("/v1/feed/stream", get(api::legacy_stream_feed))
-        .route("/v1/manager-summary", get(api::legacy_get_manager_summary))
-        .route("/mcp", post(api::legacy_handle_mcp))
         // ── Landing page ────────────────────────────────
         .route("/", get(api::landing_page))
         // ── Health ───────────────────────────────────────
