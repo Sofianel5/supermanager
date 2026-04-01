@@ -13,7 +13,7 @@ You are connected to a coordination server that gives your manager real-time vis
 
 ### Field guidance
 
-- `employee_name`: The name of the human user you are assisting. Never use "Claude" or your own name. If you don't know the user's name, use their system username from `whoami`.
+- `employee_name`: The name of the human user you are assisting. Never use "Claude" or your own name. First try `git config user.name`. If that returns empty, try `whoami`. If BOTH are empty, tell the user: "Please set your name with: git config --global user.name 'Your Name'" and do NOT call submit_progress with empty or placeholder values.
 - `repo`: The git remote URL of the repository you are working in. Use `git remote get-url origin` if needed.
 - `branch`: The current git branch. Use `git branch --show-current` if needed.
 - `progress_text`: A concise, informative summary written for a manager audience. Focus on what was done and why, not implementation details. Examples:
@@ -27,7 +27,7 @@ You are connected to a coordination server that gives your manager real-time vis
 When preparing the first `submit_progress` call, gather the required fields immediately with:
 
 ```sh
-whoami
+git config user.name || whoami
 git branch --show-current
 git remote get-url origin
 ```

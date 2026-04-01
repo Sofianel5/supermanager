@@ -1,41 +1,121 @@
-use std::{convert::Infallible, path::PathBuf, time::Duration};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use async_stream::stream;
 use axum::{
     Json,
-    extract::State,
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{
         IntoResponse,
         sse::{Event, KeepAlive, Sse},
     },
 };
-use reporter_protocol::{FeedResponse, IngestResponse, ProgressNote, StoredProgressNote};
+use reporter_protocol::{
+    CreateRoomRequest, CreateRoomResponse, FeedResponse, IngestResponse, ProgressNote,
+    StoredProgressNote,
+};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
-use crate::store;
+use crate::store::{Db, LOCAL_ROOM_ID};
+
+// ── Shared state ────────────────────────────────────────────
+
+#[derive(Clone)]
+pub struct NoteEvent {
+    pub room_id: String,
+    pub note: StoredProgressNote,
+}
 
 #[derive(Clone)]
 pub struct AppState {
-    pub data_dir: PathBuf,
-    pub note_events: broadcast::Sender<StoredProgressNote>,
+    pub db: Arc<Db>,
+    pub note_events: broadcast::Sender<NoteEvent>,
+    pub base_url: String,
 }
+
+// ── Query params ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SecretQuery {
+    pub secret: Option<String>,
+}
+
+// ── Helper: extract secret from header or query ─────────────
+
+fn extract_secret(headers: &HeaderMap, query: &SecretQuery) -> Option<String> {
+    // Try Authorization: Bearer <secret> first
+    if let Some(auth) = headers.get(header::AUTHORIZATION) {
+        if let Ok(val) = auth.to_str() {
+            if let Some(token) = val.strip_prefix("Bearer ") {
+                let token = token.trim();
+                if !token.is_empty() {
+                    return Some(token.to_owned());
+                }
+            }
+        }
+    }
+    // Fall back to query param
+    query.secret.clone().filter(|s| !s.is_empty())
+}
+
+// ── Health ──────────────────────────────────────────────────
 
 pub async fn health() -> &'static str {
     "ok"
 }
 
+// ── Room management ─────────────────────────────────────────
+
+pub async fn create_room(
+    State(state): State<AppState>,
+    Json(req): Json<CreateRoomRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let room = state.db.create_room(&req.name).map_err(internal_error)?;
+    let resp = CreateRoomResponse {
+        dashboard_url: format!("{}/r/{}", state.base_url, room.room_id),
+        join_command: format!(
+            "curl -sSf \"{}/r/{}/install?secret={}\" | sh",
+            state.base_url, room.room_id, room.secret
+        ),
+        room_id: room.room_id,
+        secret: room.secret,
+    };
+    Ok((StatusCode::CREATED, Json(resp)))
+}
+
+// ── Room-scoped routes ──────────────────────────────────────
+
 pub async fn ingest_progress(
     State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<SecretQuery>,
     Json(note): Json<ProgressNote>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let received_at = store::now_rfc3339();
-    let stored = StoredProgressNote::new(note, received_at.clone());
-    let note_id = stored.note_id;
+    let secret = extract_secret(&headers, &query)
+        .ok_or((StatusCode::UNAUTHORIZED, "missing secret".to_owned()))?;
 
-    store::persist_note(&state.data_dir, &stored).map_err(internal_error)?;
-    let _ = state.note_events.send(stored.clone());
+    let valid = state
+        .db
+        .verify_room_secret(&room_id, &secret)
+        .map_err(internal_error)?;
+    if !valid {
+        return Err((StatusCode::UNAUTHORIZED, "invalid secret".to_owned()));
+    }
+
+    let stored = state
+        .db
+        .insert_note(&room_id, &note)
+        .map_err(internal_error)?;
+    let note_id = stored.note_id;
+    let received_at = stored.received_at.clone();
+
+    let _ = state.note_events.send(NoteEvent {
+        room_id,
+        note: stored,
+    });
 
     Ok((
         StatusCode::ACCEPTED,
@@ -48,43 +128,36 @@ pub async fn ingest_progress(
 
 pub async fn get_feed(
     State(state): State<AppState>,
+    Path(room_id): Path<String>,
 ) -> Result<Json<FeedResponse>, (StatusCode, String)> {
-    let notes = store::read_all_notes(&state.data_dir).map_err(internal_error)?;
+    let room = state.db.get_room(&room_id).map_err(internal_error)?;
+    if room.is_none() {
+        return Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}")));
+    }
+    let notes = state
+        .db
+        .get_notes(&room_id)
+        .map_err(internal_error)?;
     Ok(Json(FeedResponse { notes }))
-}
-
-pub async fn get_manager_summary(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let summary = store::read_manager_summary(&state.data_dir).map_err(internal_error)?;
-    Ok((
-        [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-        summary,
-    ))
-}
-
-pub async fn update_manager_summary(
-    State(state): State<AppState>,
-    body: String,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    store::persist_manager_summary(&state.data_dir, &body).map_err(internal_error)?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn stream_feed(
     State(state): State<AppState>,
+    Path(room_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
 {
     let replay = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
-        .map(|note_id| store::read_notes_after(&state.data_dir, note_id))
+        .map(|note_id| state.db.get_notes_after(&room_id, note_id))
         .transpose()
         .map_err(internal_error)?
         .unwrap_or_default();
 
     let mut receiver = state.note_events.subscribe();
+    let target_room = room_id.clone();
+
     let event_stream = stream! {
         for note in replay {
             yield Ok(progress_event(&note));
@@ -92,7 +165,11 @@ pub async fn stream_feed(
 
         loop {
             match receiver.recv().await {
-                Ok(note) => yield Ok(progress_event(&note)),
+                Ok(evt) => {
+                    if evt.room_id == target_room {
+                        yield Ok(progress_event(&evt.note));
+                    }
+                }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     yield Ok(Event::default()
                         .event("warning")
@@ -110,12 +187,371 @@ pub async fn stream_feed(
     ))
 }
 
+pub async fn get_manager_summary(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let summary = state
+        .db
+        .get_summary(&room_id)
+        .map_err(internal_error)?;
+    Ok((
+        [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        summary,
+    ))
+}
+
+pub async fn update_manager_summary(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<SecretQuery>,
+    body: String,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let secret = extract_secret(&headers, &query)
+        .ok_or((StatusCode::UNAUTHORIZED, "missing secret".to_owned()))?;
+
+    let valid = state
+        .db
+        .verify_room_secret(&room_id, &secret)
+        .map_err(internal_error)?;
+    if !valid {
+        return Err((StatusCode::UNAUTHORIZED, "invalid secret".to_owned()));
+    }
+
+    state
+        .db
+        .set_summary(&room_id, &body)
+        .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Dashboard ───────────────────────────────────────────────
+
+pub async fn dashboard(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let room = state
+        .db
+        .get_room(&room_id)
+        .map_err(internal_error)?;
+    match room {
+        Some(r) => {
+            let base = &state.base_url;
+            let html = build_dashboard_html(&r.name, &r.room_id, base);
+            Ok((
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                html,
+            ))
+        }
+        None => Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}"))),
+    }
+}
+
+fn build_dashboard_html(name: &str, room_id: &str, base_url: &str) -> String {
+    let safe_name = html_escape(name);
+    let safe_id = html_escape(room_id);
+    let safe_base = html_escape(base_url);
+    format!(
+        r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{safe_name} — Supermanager</title>
+<style>
+*,*::before,*::after{{box-sizing:border-box}}
+body{{
+  margin:0;padding:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:#0d1117;color:#c9d1d9;line-height:1.6;
+}}
+.container{{max-width:900px;margin:0 auto;padding:24px 16px}}
+h1{{color:#58a6ff;margin:0 0 4px 0;font-size:1.8rem}}
+.subtitle{{color:#8b949e;margin:0 0 24px 0;font-size:0.9rem}}
+.section{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-bottom:20px}}
+.section h2{{color:#f0f6fc;margin:0 0 12px 0;font-size:1.2rem;border-bottom:1px solid #21262d;padding-bottom:8px}}
+.note{{border-left:3px solid #58a6ff;padding:12px 16px;margin-bottom:12px;background:#0d1117;border-radius:0 6px 6px 0}}
+.note:last-child{{margin-bottom:0}}
+.note-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:4px}}
+.note-author{{color:#58a6ff;font-weight:600}}
+.note-meta{{color:#8b949e;font-size:0.8rem}}
+.note-repo{{color:#7ee787;font-size:0.85rem;font-family:monospace}}
+.note-branch{{color:#d2a8ff;font-size:0.85rem;font-family:monospace}}
+.note-text{{color:#c9d1d9;margin-top:6px;white-space:pre-wrap}}
+.summary-content{{color:#c9d1d9;white-space:pre-wrap}}
+.empty{{color:#484f58;font-style:italic}}
+code{{background:#21262d;padding:2px 8px;border-radius:4px;font-size:0.85rem;color:#f0f6fc;word-break:break-all}}
+.join-section code{{display:block;margin-top:8px;padding:12px;white-space:pre-wrap;word-break:break-all}}
+.badge{{display:inline-block;background:#238636;color:#fff;font-size:0.7rem;padding:2px 8px;border-radius:12px;margin-left:8px;vertical-align:middle}}
+#connection-status{{font-size:0.8rem;color:#8b949e}}
+#connection-status.connected{{color:#3fb950}}
+#connection-status.error{{color:#f85149}}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>{safe_name}<span class="badge">LIVE</span></h1>
+  <p class="subtitle">Room <code>{safe_id}</code> &middot; <span id="connection-status">connecting&hellip;</span></p>
+
+  <div class="section" id="summary-section">
+    <h2>Manager Summary</h2>
+    <div id="summary" class="summary-content"></div>
+  </div>
+
+  <div class="section">
+    <h2>Progress Feed <span id="note-count" style="color:#8b949e;font-size:0.85rem"></span></h2>
+    <div id="feed"></div>
+  </div>
+
+  <div class="section join-section">
+    <h2>Join this Room</h2>
+    <p style="color:#8b949e;font-size:0.9rem">Run this command on each developer machine to connect their AI coding agent:</p>
+    <code>curl -sSf {safe_base}/r/{safe_id}/install?secret=YOUR_SECRET | sh</code>
+  </div>
+</div>
+
+<script>
+(function(){{
+  var feed = document.getElementById('feed');
+  var status = document.getElementById('connection-status');
+  var countEl = document.getElementById('note-count');
+  var summaryEl = document.getElementById('summary');
+  var notes = [];
+
+  function el(tag, attrs, children) {{
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function(k) {{ e.setAttribute(k, attrs[k]); }});
+    if (children) {{
+      if (typeof children === 'string') e.textContent = children;
+      else children.forEach(function(c) {{ if (c) e.appendChild(c); }});
+    }}
+    return e;
+  }}
+
+  function formatTime(iso) {{
+    try {{ return new Date(iso).toLocaleString(); }}
+    catch(e) {{ return iso; }}
+  }}
+
+  function buildNote(n) {{
+    var header = el('div', {{'class':'note-header'}}, [
+      el('span', {{'class':'note-author'}}, n.employee_name),
+      el('span', {{'class':'note-meta'}}, formatTime(n.received_at))
+    ]);
+    var repo = el('span', {{'class':'note-repo'}}, n.repo);
+    var branch = n.branch ? el('span', {{'class':'note-branch'}}, ' / ' + n.branch) : null;
+    var text = el('div', {{'class':'note-text'}}, n.progress_text);
+    var card = el('div', {{'class':'note'}});
+    card.appendChild(header);
+    card.appendChild(repo);
+    if (branch) card.appendChild(branch);
+    card.appendChild(text);
+    return card;
+  }}
+
+  function renderFeed() {{
+    feed.textContent = '';
+    if (notes.length === 0) {{
+      var empty = el('span', {{'class':'empty'}}, 'No updates yet.');
+      feed.appendChild(empty);
+    }} else {{
+      notes.forEach(function(n) {{ feed.appendChild(buildNote(n)); }});
+    }}
+    countEl.textContent = '(' + notes.length + ')';
+  }}
+
+  // Load initial feed
+  var base = '{safe_base}/r/{safe_id}';
+  fetch(base + '/feed')
+    .then(function(r) {{ return r.json(); }})
+    .then(function(data) {{
+      if (data.notes && data.notes.length > 0) {{
+        notes = data.notes.reverse();
+        renderFeed();
+      }} else {{
+        renderFeed();
+      }}
+    }})
+    .catch(function() {{ renderFeed(); }});
+
+  // Load summary
+  function loadSummary() {{
+    fetch(base + '/summary')
+      .then(function(r) {{ return r.text(); }})
+      .then(function(text) {{
+        summaryEl.textContent = text || 'No summary yet.';
+      }})
+      .catch(function() {{}});
+  }}
+  loadSummary();
+  setInterval(loadSummary, 30000);
+
+  // SSE stream
+  var es = new EventSource(base + '/feed/stream');
+  es.onopen = function() {{
+    status.textContent = 'connected';
+    status.className = 'connected';
+  }};
+  es.addEventListener('progress_note', function(e) {{
+    try {{
+      var note = JSON.parse(e.data);
+      notes.unshift(note);
+      renderFeed();
+    }} catch(err) {{}}
+  }});
+  es.onerror = function() {{
+    status.textContent = 'reconnecting\u2026';
+    status.className = 'error';
+  }};
+}})();
+</script>
+</body>
+</html>"##,
+    )
+}
+
+// ── Install script ──────────────────────────────────────────
+
+pub async fn install_script(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Query(query): Query<SecretQuery>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let secret = query
+        .secret
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or((StatusCode::FORBIDDEN, "missing secret query param".to_owned()))?;
+
+    let valid = state
+        .db
+        .verify_room_secret(&room_id, secret)
+        .map_err(internal_error)?;
+    if !valid {
+        return Err((StatusCode::FORBIDDEN, "invalid secret".to_owned()));
+    }
+
+    let base = &state.base_url;
+    let mcp_url = format!("{base}/r/{room_id}/mcp?secret={secret}");
+    let dashboard_url = format!("{base}/r/{room_id}");
+
+    let script = format!(
+        r##"#!/bin/sh
+set -e
+
+# ── Supermanager agent installer ────────────────────────────
+# Room:      {room_id}
+# Dashboard: {dashboard_url}
+
+echo "==> Supermanager: configuring AI coding agents for room {room_id}"
+echo ""
+
+# ── Detect employee name ────────────────────────────────────
+EMPLOYEE_NAME=""
+if command -v git >/dev/null 2>&1; then
+  EMPLOYEE_NAME="$(git config user.name 2>/dev/null || true)"
+fi
+if [ -z "$EMPLOYEE_NAME" ]; then
+  EMPLOYEE_NAME="$(whoami 2>/dev/null || true)"
+fi
+if [ -z "$EMPLOYEE_NAME" ]; then
+  echo "ERROR: Could not detect your name."
+  echo "Please run:  git config --global user.name \"Your Name\""
+  exit 1
+fi
+echo "    Employee: $EMPLOYEE_NAME"
+
+# ── Configure Claude Code ───────────────────────────────────
+echo "==> Configuring Claude Code MCP server..."
+if command -v claude >/dev/null 2>&1; then
+  claude mcp add --transport http supermanager "{mcp_url}"
+  echo "    Claude Code MCP configured."
+else
+  echo "    Claude Code CLI not found — skipping (install from https://docs.anthropic.com/claude-code)."
+fi
+
+# ── Auto-approve submit_progress in Claude settings ─────────
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+if [ -f "$CLAUDE_SETTINGS" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import json, sys
+try:
+    with open('$CLAUDE_SETTINGS') as f:
+        cfg = json.load(f)
+except:
+    cfg = {{}}
+perms = cfg.setdefault('permissions', {{}})
+allow = perms.setdefault('allow', [])
+tool_entry = 'mcp__supermanager__submit_progress'
+if tool_entry not in allow:
+    allow.append(tool_entry)
+with open('$CLAUDE_SETTINGS', 'w') as f:
+    json.dump(cfg, f, indent=2)
+print('    Auto-approved submit_progress in Claude settings.')
+"
+  fi
+fi
+
+# ── Configure Codex ─────────────────────────────────────────
+echo "==> Configuring Codex MCP server..."
+CODEX_DIR="$HOME/.codex"
+CODEX_CFG="$CODEX_DIR/config.toml"
+mkdir -p "$CODEX_DIR"
+if [ -f "$CODEX_CFG" ]; then
+  # Remove existing supermanager section if present
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import re
+with open('$CODEX_CFG') as f:
+    text = f.read()
+text = re.sub(r'\[mcp_servers\.supermanager\][^\[]*', '', text)
+with open('$CODEX_CFG', 'w') as f:
+    f.write(text)
+"
+  fi
+fi
+cat >> "$CODEX_CFG" <<TOML
+
+[mcp_servers.supermanager]
+type = "http"
+url = "{mcp_url}"
+TOML
+echo "    Codex config written to $CODEX_CFG"
+
+# ── Done ────────────────────────────────────────────────────
+echo ""
+echo "==> Setup complete!"
+echo "    Dashboard: {dashboard_url}"
+echo "    Your AI agents will now report progress to the coordination server."
+echo ""
+"##,
+        room_id = room_id,
+        mcp_url = mcp_url,
+        dashboard_url = dashboard_url,
+    );
+
+    Ok((
+        [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
+        script,
+    ))
+}
+
+// ── Room-scoped MCP ─────────────────────────────────────────
+
 pub async fn handle_mcp(
     State(state): State<AppState>,
+    Path(room_id): Path<String>,
+    Query(query): Query<SecretQuery>,
+    headers: HeaderMap,
     Json(req): Json<Value>,
 ) -> impl IntoResponse {
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let method = req.get("method").and_then(Value::as_str).unwrap_or("");
+
+    let secret = extract_secret(&headers, &query);
 
     let result = match method {
         "initialize" => {
@@ -199,10 +635,21 @@ pub async fn handle_mcp(
                 .and_then(Value::as_str)
                 .unwrap_or("");
             match tool_name {
-                "submit_progress" => mcp_submit_progress(&state, &req),
-                "get_feed" => mcp_get_feed(&state),
-                "get_manager_summary" => mcp_get_manager_summary(&state),
-                "update_manager_summary" => mcp_update_manager_summary(&state, &req),
+                "submit_progress" => {
+                    match verify_mcp_secret(&state, &room_id, &secret) {
+                        Ok(()) => mcp_submit_progress(&state, &room_id, &req),
+                        Err(msg) => mcp_error(msg),
+                    }
+                }
+                "update_manager_summary" => {
+                    match verify_mcp_secret(&state, &room_id, &secret) {
+                        Ok(()) => mcp_update_manager_summary(&state, &room_id, &req),
+                        Err(msg) => mcp_error(msg),
+                    }
+                }
+                // Public tools — no secret required
+                "get_feed" => mcp_get_feed(&state, &room_id),
+                "get_manager_summary" => mcp_get_manager_summary(&state, &room_id),
                 _ => json!({
                     "isError": true,
                     "content": [{ "type": "text", "text": format!("Unknown tool: {tool_name}") }]
@@ -222,7 +669,29 @@ pub async fn handle_mcp(
     Json(json!({ "jsonrpc": "2.0", "id": id, "result": result })).into_response()
 }
 
-fn mcp_submit_progress(state: &AppState, req: &Value) -> Value {
+/// Verify that a secret is present and valid for the given room.
+/// Returns Ok(()) on success or Err(message) on failure.
+fn verify_mcp_secret(state: &AppState, room_id: &str, secret: &Option<String>) -> Result<(), &'static str> {
+    match secret {
+        Some(s) => {
+            let valid = state
+                .db
+                .verify_room_secret(room_id, s)
+                .unwrap_or(false);
+            if valid { Ok(()) } else { Err("Unauthorized: invalid secret") }
+        }
+        None => Err("Unauthorized: secret required"),
+    }
+}
+
+fn mcp_error(msg: &str) -> Value {
+    json!({
+        "isError": true,
+        "content": [{ "type": "text", "text": msg }]
+    })
+}
+
+fn mcp_submit_progress(state: &AppState, room_id: &str, req: &Value) -> Value {
     let args = req.pointer("/params/arguments");
     let str_arg = |field| {
         args.and_then(|a| a.get(field))
@@ -237,12 +706,14 @@ fn mcp_submit_progress(state: &AppState, req: &Value) -> Value {
         branch: Some(str_arg("branch")),
         progress_text: str_arg("progress_text"),
     };
-    let stored = StoredProgressNote::new(note, store::now_rfc3339());
-    let note_id = stored.note_id;
 
-    match store::persist_note(&state.data_dir, &stored) {
-        Ok(_) => {
-            let _ = state.note_events.send(stored.clone());
+    match state.db.insert_note(room_id, &note) {
+        Ok(stored) => {
+            let note_id = stored.note_id;
+            let _ = state.note_events.send(NoteEvent {
+                room_id: room_id.to_owned(),
+                note: stored,
+            });
             json!({
                 "content": [{ "type": "text", "text": format!("Progress submitted (note_id: {note_id})") }]
             })
@@ -254,8 +725,8 @@ fn mcp_submit_progress(state: &AppState, req: &Value) -> Value {
     }
 }
 
-fn mcp_get_feed(state: &AppState) -> Value {
-    match store::read_all_notes(&state.data_dir) {
+fn mcp_get_feed(state: &AppState, room_id: &str) -> Value {
+    match state.db.get_notes(room_id) {
         Ok(notes) => json!({
             "content": [{ "type": "text", "text": serde_json::to_string_pretty(&notes).unwrap_or_default() }]
         }),
@@ -266,8 +737,8 @@ fn mcp_get_feed(state: &AppState) -> Value {
     }
 }
 
-fn mcp_get_manager_summary(state: &AppState) -> Value {
-    match store::read_manager_summary(&state.data_dir) {
+fn mcp_get_manager_summary(state: &AppState, room_id: &str) -> Value {
+    match state.db.get_summary(room_id) {
         Ok(summary) => json!({
             "content": [{ "type": "text", "text": summary }]
         }),
@@ -278,7 +749,7 @@ fn mcp_get_manager_summary(state: &AppState) -> Value {
     }
 }
 
-fn mcp_update_manager_summary(state: &AppState, req: &Value) -> Value {
+fn mcp_update_manager_summary(state: &AppState, room_id: &str, req: &Value) -> Value {
     let content_markdown = req
         .pointer("/params/arguments/content_markdown")
         .and_then(Value::as_str)
@@ -291,14 +762,11 @@ fn mcp_update_manager_summary(state: &AppState, req: &Value) -> Value {
         });
     }
 
-    match store::persist_manager_summary(&state.data_dir, content_markdown) {
+    match state.db.set_summary(room_id, content_markdown) {
         Ok(_) => json!({
             "content": [{
                 "type": "text",
-                "text": format!(
-                    "Manager summary updated at {}",
-                    store::manager_summary_path(&state.data_dir).display()
-                )
+                "text": format!("Manager summary updated for room {room_id}")
             }]
         }),
         Err(e) => json!({
@@ -307,6 +775,129 @@ fn mcp_update_manager_summary(state: &AppState, req: &Value) -> Value {
         }),
     }
 }
+
+// ── Legacy (non-room) routes ────────────────────────────────
+// These delegate to the "__local" default room for backwards compat.
+
+pub async fn legacy_ingest_progress(
+    State(state): State<AppState>,
+    Json(note): Json<ProgressNote>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let stored = state
+        .db
+        .insert_note(LOCAL_ROOM_ID, &note)
+        .map_err(internal_error)?;
+    let note_id = stored.note_id;
+    let received_at = stored.received_at.clone();
+
+    let _ = state.note_events.send(NoteEvent {
+        room_id: LOCAL_ROOM_ID.to_owned(),
+        note: stored,
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(IngestResponse {
+            note_id,
+            received_at,
+        }),
+    ))
+}
+
+pub async fn legacy_get_feed(
+    State(state): State<AppState>,
+) -> Result<Json<FeedResponse>, (StatusCode, String)> {
+    let notes = state
+        .db
+        .get_notes(LOCAL_ROOM_ID)
+        .map_err(internal_error)?;
+    Ok(Json(FeedResponse { notes }))
+}
+
+pub async fn legacy_stream_feed(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
+{
+    let replay = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .map(|note_id| state.db.get_notes_after(LOCAL_ROOM_ID, note_id))
+        .transpose()
+        .map_err(internal_error)?
+        .unwrap_or_default();
+
+    let mut receiver = state.note_events.subscribe();
+
+    let event_stream = stream! {
+        for note in replay {
+            yield Ok(progress_event(&note));
+        }
+
+        loop {
+            match receiver.recv().await {
+                Ok(evt) => {
+                    if evt.room_id == LOCAL_ROOM_ID {
+                        yield Ok(progress_event(&evt.note));
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    yield Ok(Event::default()
+                        .event("warning")
+                        .data(format!("lagged:{skipped}")));
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+
+    Ok(Sse::new(event_stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
+}
+
+pub async fn legacy_get_manager_summary(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let summary = state
+        .db
+        .get_summary(LOCAL_ROOM_ID)
+        .map_err(internal_error)?;
+    Ok((
+        [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        summary,
+    ))
+}
+
+pub async fn legacy_update_manager_summary(
+    State(state): State<AppState>,
+    body: String,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    state
+        .db
+        .set_summary(LOCAL_ROOM_ID, &body)
+        .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn legacy_handle_mcp(
+    state: State<AppState>,
+    headers: HeaderMap,
+    json: Json<Value>,
+) -> impl IntoResponse {
+    handle_mcp(
+        state,
+        Path(LOCAL_ROOM_ID.to_owned()),
+        Query(SecretQuery { secret: None }),
+        headers,
+        json,
+    )
+    .await
+}
+
+// ── Helpers ─────────────────────────────────────────────────
 
 fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
@@ -318,4 +909,11 @@ fn progress_event(note: &StoredProgressNote) -> Event {
         .event("progress_note")
         .id(note.note_id.to_string())
         .data(data)
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }

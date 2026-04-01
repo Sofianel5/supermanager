@@ -1,4 +1,11 @@
 #!/usr/bin/env sh
+# Run the supermanager observer (Claude with the SSE channel plugin).
+#
+# For local dev, no extra env vars are needed (defaults to localhost:8787).
+#
+# For hosted rooms:
+#   SUPERMANAGER_ROOM_URL=https://supermanager.fly.dev/r/bright-fox-42
+#   SUPERMANAGER_ROOM_SECRET=sm_sec_abc123
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)

@@ -38,3 +38,26 @@ pub struct IngestResponse {
 pub struct FeedResponse {
     pub notes: Vec<StoredProgressNote>,
 }
+
+// ── Room types ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Room {
+    pub room_id: String,
+    pub name: String,
+    pub secret: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateRoomRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateRoomResponse {
+    pub room_id: String,
+    pub secret: String,
+    pub dashboard_url: String,
+    pub join_command: String,
+}
