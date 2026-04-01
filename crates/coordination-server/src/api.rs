@@ -76,146 +76,157 @@ pub async fn landing_page(State(state): State<AppState>) -> impl IntoResponse {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Supermanager</title>
+<title>supermanager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
-*,*::before,*::after{{box-sizing:border-box}}
-body{{
-  margin:0;padding:0;
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  background:#0d1117;color:#c9d1d9;line-height:1.6;
-}}
-.container{{max-width:720px;margin:0 auto;padding:48px 16px}}
-h1{{color:#f0f6fc;margin:0 0 8px 0;font-size:2.4rem;font-weight:700;letter-spacing:-0.02em}}
-h1 span{{color:#58a6ff}}
-.tagline{{color:#8b949e;font-size:1.1rem;margin:0 0 40px 0}}
-.section{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:24px;margin-bottom:20px}}
-.section h2{{color:#f0f6fc;margin:0 0 12px 0;font-size:1.2rem;border-bottom:1px solid #21262d;padding-bottom:8px}}
-.how-it-works ol{{margin:0;padding-left:20px;color:#c9d1d9}}
-.how-it-works li{{margin-bottom:8px}}
-.how-it-works code{{background:#21262d;padding:2px 8px;border-radius:4px;font-size:0.85rem;color:#f0f6fc}}
-label{{display:block;color:#c9d1d9;font-size:0.9rem;margin-bottom:6px;font-weight:500}}
-input[type="text"]{{
-  width:100%;padding:10px 12px;
-  background:#0d1117;border:1px solid #30363d;border-radius:6px;
-  color:#f0f6fc;font-size:1rem;outline:none;
-}}
-input[type="text"]:focus{{border-color:#58a6ff}}
-input[type="text"]::placeholder{{color:#484f58}}
-button{{
-  margin-top:16px;padding:10px 24px;
-  background:#238636;border:1px solid #2ea043;border-radius:6px;
-  color:#fff;font-size:1rem;font-weight:600;cursor:pointer;
-}}
-button:hover{{background:#2ea043}}
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+:root{{--bg-deep:#06080d;--bg-primary:#0a0e17;--bg-surface:#0f1420;--bg-elevated:#141a27;--border:#1a2235;--border-hover:#243049;--text-primary:#e2e8f0;--text-secondary:#7a8ba8;--text-muted:#4a5568;--amber:#f59e0b;--amber-dim:#b27308;--amber-glow:rgba(245,158,11,0.12);--emerald:#10b981;--emerald-dim:#0a7c56;--red:#ef4444;--mono:'JetBrains Mono',monospace;--sans:'Outfit',sans-serif;}}
+body{{background:var(--bg-deep);color:var(--text-primary);font-family:var(--sans);line-height:1.6;min-height:100vh;position:relative;overflow-x:hidden;}}
+body::before{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(245,158,11,0.06) 0%,transparent 60%),radial-gradient(ellipse 60% 40% at 80% 100%,rgba(16,185,129,0.04) 0%,transparent 50%);}}
+body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.035;background-image:url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cpattern id='g' width='60' height='60' patternUnits='userSpaceOnUse'%3E%3Cpath d='M60 0H0v60' fill='none' stroke='%23fff' stroke-width='0.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E");}}
+.shell{{position:relative;z-index:1;max-width:720px;margin:0 auto;padding:48px 20px 80px}}
+.header{{margin-bottom:40px;text-align:center}}
+.logo{{display:inline-block;font-family:var(--mono);font-weight:700;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--amber);background:var(--amber-glow);border:1px solid rgba(245,158,11,0.2);padding:4px 10px;border-radius:4px;margin-bottom:14px;}}
+h1{{font-family:var(--sans);font-weight:800;font-size:2.6rem;letter-spacing:-0.03em;color:var(--text-primary);line-height:1.1;margin-bottom:10px;}}
+.tagline{{font-family:var(--sans);font-size:1.05rem;color:var(--text-secondary);}}
+.panel{{background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;margin-bottom:24px;overflow:hidden;transition:border-color 0.2s;}}
+.panel:hover{{border-color:var(--border-hover)}}
+.panel-head{{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--bg-elevated);}}
+.panel-title{{font-family:var(--mono);font-weight:600;font-size:0.8rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-secondary);}}
+.panel-body{{padding:20px}}
+.steps{{list-style:none;padding:0;counter-reset:step;}}
+.steps li{{position:relative;padding-left:36px;margin-bottom:14px;font-family:var(--sans);font-size:0.92rem;color:var(--text-secondary);line-height:1.6;}}
+.steps li::before{{content:counter(step);counter-increment:step;position:absolute;left:0;top:1px;width:24px;height:24px;border-radius:50%;background:var(--amber-glow);border:1px solid rgba(245,158,11,0.25);color:var(--amber);font-family:var(--mono);font-size:0.72rem;font-weight:600;display:flex;align-items:center;justify-content:center;}}
+.steps li:last-child{{margin-bottom:0}}
+.steps code{{font-family:var(--mono);font-size:0.82rem;color:var(--amber);background:var(--bg-deep);padding:2px 6px;border-radius:4px;}}
+label{{display:block;font-family:var(--mono);font-weight:500;font-size:0.78rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px;}}
+input[type="text"]{{width:100%;padding:12px 14px;background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--sans);font-size:1rem;outline:none;transition:border-color 0.2s;}}
+input[type="text"]:focus{{border-color:var(--amber)}}
+input[type="text"]::placeholder{{color:var(--text-muted)}}
+button{{margin-top:16px;padding:12px 28px;background:var(--amber);border:none;border-radius:6px;color:var(--bg-deep);font-family:var(--mono);font-size:0.85rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;transition:background 0.2s, transform 0.1s;}}
+button:hover{{background:#d97706}}
+button:active{{transform:scale(0.98)}}
 button:disabled{{opacity:0.5;cursor:not-allowed}}
-#result{{display:none;margin-top:20px}}
-#result .field-label{{color:#8b949e;font-size:0.8rem;margin:12px 0 4px 0}}
-#result .field-label:first-child{{margin-top:0}}
-#result .value{{
-  background:#0d1117;border:1px solid #30363d;border-radius:6px;
-  padding:12px;font-family:monospace;font-size:0.85rem;color:#f0f6fc;
-  word-break:break-all;white-space:pre-wrap;position:relative;cursor:pointer;
-}}
-#result .value:hover{{border-color:#58a6ff}}
-#result .value::after{{
-  content:'click to copy';position:absolute;right:8px;top:8px;
-  font-size:0.7rem;color:#484f58;font-family:sans-serif;
-}}
-#result a{{color:#58a6ff;text-decoration:none}}
-#result a:hover{{text-decoration:underline}}
-#error{{display:none;margin-top:12px;color:#f85149;font-size:0.9rem}}
-.footer{{color:#484f58;font-size:0.8rem;text-align:center;margin-top:40px}}
-.footer a{{color:#58a6ff;text-decoration:none}}
+#result{{display:none;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);}}
+.field-label{{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin:16px 0 6px 0;}}
+.field-label:first-child{{margin-top:0}}
+.field-value{{display:block;font-family:var(--mono);font-size:0.78rem;color:var(--amber);background:var(--bg-deep);border:1px solid var(--border);padding:12px 14px;border-radius:6px;white-space:pre-wrap;word-break:break-all;cursor:pointer;transition:border-color 0.2s;position:relative;}}
+.field-value:hover{{border-color:var(--amber-dim)}}
+.field-value::after{{content:'click to copy';position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:0.65rem;color:var(--text-muted);letter-spacing:0.04em;text-transform:uppercase;opacity:0;transition:opacity 0.2s;}}
+.field-value:hover::after{{opacity:1}}
+.field-value.copied{{border-color:var(--emerald)}}
+.field-value.copied::after{{content:'copied!';color:var(--emerald);opacity:1}}
+.field-link{{color:var(--amber);text-decoration:none;font-family:var(--mono);font-size:0.85rem;}}
+.field-link:hover{{text-decoration:underline}}
+#error{{display:none;margin-top:12px;color:var(--red);font-family:var(--mono);font-size:0.82rem;}}
+.footer{{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);text-align:center;font-family:var(--mono);font-size:0.68rem;color:var(--text-muted);letter-spacing:0.06em;}}
+.footer a{{color:var(--text-secondary);text-decoration:none}}
+.footer a:hover{{color:var(--text-primary)}}
+@media(max-width:600px){{.shell{{padding:32px 14px 60px}}h1{{font-size:2rem}}.panel-body{{padding:14px}}}}
 </style>
 </head>
 <body>
-<div class="container">
-  <h1><span>super</span>manager</h1>
-  <p class="tagline">Real-time visibility into what your AI coding agents are working on.</p>
-
-  <div class="section how-it-works">
-    <h2>How it works</h2>
-    <ol>
-      <li>Create a room for your team</li>
-      <li>Run the install command in each developer's repo</li>
-      <li>AI agents (Claude Code, Codex) automatically report progress as they work</li>
-      <li>Watch it all on a live dashboard</li>
-    </ol>
+<div class="shell">
+  <div class="header">
+    <div class="logo">supermanager</div>
+    <h1>supermanager</h1>
+    <p class="tagline">Real-time visibility into what your AI coding agents are working on.</p>
   </div>
 
-  <div class="section">
-    <h2>Create a Room</h2>
-    <form id="create-form">
-      <label for="room-name">Team / Room Name</label>
-      <input type="text" id="room-name" name="name" placeholder="e.g. My Team" required>
-      <button type="submit" id="submit-btn">Create Room</button>
-    </form>
-    <div id="error"></div>
-    <div id="result">
-      <div class="field-label">Dashboard</div>
-      <div><a id="res-dashboard" href="#" target="_blank"></a></div>
-      <div class="field-label">Install command (run in each repo)</div>
-      <div class="value" id="res-install" onclick="copyText(this)"></div>
-      <div class="field-label">Room ID</div>
-      <div class="value" id="res-room-id" onclick="copyText(this)"></div>
-      <div class="field-label">Secret</div>
-      <div class="value" id="res-secret" onclick="copyText(this)"></div>
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-title">How It Works</span>
+    </div>
+    <div class="panel-body">
+      <ol class="steps">
+        <li>Create a room for your team</li>
+        <li>Run the install command in each developer's repo</li>
+        <li>AI agents (<code>Claude Code</code>, <code>Codex</code>) automatically report progress as they work</li>
+        <li>Watch it all on a live dashboard</li>
+      </ol>
     </div>
   </div>
 
-  <div class="footer">
-    <a href="https://github.com/Sofianel5/supermanager">GitHub</a>
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-title">Create a Room</span>
+    </div>
+    <div class="panel-body">
+      <form id="create-form">
+        <label for="room-name">Team / Room Name</label>
+        <input type="text" id="room-name" name="name" placeholder="e.g. My Team" required>
+        <button type="submit" id="submit-btn">Create Room</button>
+      </form>
+      <div id="error"></div>
+      <div id="result">
+        <div class="field-label">Dashboard</div>
+        <div><a id="res-dashboard" class="field-link" href="#" target="_blank"></a></div>
+        <div class="field-label">Install command</div>
+        <div class="field-value" id="res-install"></div>
+        <div class="field-label">Room ID</div>
+        <div class="field-value" id="res-room-id"></div>
+        <div class="field-label">Secret</div>
+        <div class="field-value" id="res-secret"></div>
+      </div>
+    </div>
   </div>
+
+  <div class="footer">supermanager &middot; real-time ai coordination</div>
 </div>
 
 <script>
-var form = document.getElementById('create-form');
-var btn = document.getElementById('submit-btn');
-var errorEl = document.getElementById('error');
-var resultEl = document.getElementById('result');
+(function(){{
+  var form = document.getElementById('create-form');
+  var btn = document.getElementById('submit-btn');
+  var errorEl = document.getElementById('error');
+  var resultEl = document.getElementById('result');
 
-form.addEventListener('submit', function(e) {{
-  e.preventDefault();
-  errorEl.style.display = 'none';
-  resultEl.style.display = 'none';
-  btn.disabled = true;
-  btn.textContent = 'Creating\u2026';
+  form.addEventListener('submit', function(e) {{
+    e.preventDefault();
+    errorEl.style.display = 'none';
+    resultEl.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'CREATING\u2026';
 
-  var name = document.getElementById('room-name').value.trim();
-  fetch('{base}/v1/rooms', {{
-    method: 'POST',
-    headers: {{ 'Content-Type': 'application/json' }},
-    body: JSON.stringify({{ name: name }})
-  }})
-  .then(function(r) {{
-    if (!r.ok) throw new Error('Server returned ' + r.status);
-    return r.json();
-  }})
-  .then(function(data) {{
-    document.getElementById('res-dashboard').href = data.dashboard_url;
-    document.getElementById('res-dashboard').textContent = data.dashboard_url;
-    document.getElementById('res-install').textContent = data.join_command;
-    document.getElementById('res-room-id').textContent = data.room_id;
-    document.getElementById('res-secret').textContent = data.secret;
-    resultEl.style.display = 'block';
-  }})
-  .catch(function(err) {{
-    errorEl.textContent = 'Error: ' + err.message;
-    errorEl.style.display = 'block';
-  }})
-  .finally(function() {{
-    btn.disabled = false;
-    btn.textContent = 'Create Room';
+    var name = document.getElementById('room-name').value.trim();
+    fetch('{base}/v1/rooms', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ name: name }})
+    }})
+    .then(function(r) {{
+      if (!r.ok) throw new Error('Server returned ' + r.status);
+      return r.json();
+    }})
+    .then(function(data) {{
+      document.getElementById('res-dashboard').href = data.dashboard_url;
+      document.getElementById('res-dashboard').textContent = data.dashboard_url;
+      document.getElementById('res-install').textContent = data.join_command;
+      document.getElementById('res-room-id').textContent = data.room_id;
+      document.getElementById('res-secret').textContent = data.secret;
+      resultEl.style.display = 'block';
+    }})
+    .catch(function(err) {{
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+    }})
+    .finally(function() {{
+      btn.disabled = false;
+      btn.textContent = 'CREATE ROOM';
+    }});
   }});
-}});
 
-function copyText(el) {{
-  navigator.clipboard.writeText(el.textContent).then(function() {{
-    var orig = el.getAttribute('data-orig') || el.style.borderColor;
-    el.style.borderColor = '#3fb950';
-    setTimeout(function() {{ el.style.borderColor = ''; }}, 600);
+  document.addEventListener('click', function(e) {{
+    var el = e.target.closest('.field-value');
+    if (!el) return;
+    navigator.clipboard.writeText(el.textContent).then(function() {{
+      el.classList.add('copied');
+      setTimeout(function() {{ el.classList.remove('copied'); }}, 2000);
+    }});
   }});
-}}
+}})();
 </script>
 </body>
 </html>"##,
