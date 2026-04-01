@@ -564,6 +564,16 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 
   <div class="panel">
     <div class="panel-head">
+      <span class="panel-title">Task List</span>
+      <span id="task-count" class="panel-badge">0 tasks</span>
+    </div>
+    <div class="panel-body">
+      <div id="task-list" class="task-list-container"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
       <span class="panel-title">Manager Summary</span>
     </div>
     <div class="panel-body">
@@ -579,16 +589,6 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
     <div class="panel-body">
       <div id="feed" class="timeline"></div>
       <button id="toggle-feed" class="toggle-btn"></button>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <span class="panel-title">Task List</span>
-      <span id="task-count" class="panel-badge">0 tasks</span>
-    </div>
-    <div class="panel-body">
-      <div id="task-list" class="task-list-container"></div>
     </div>
   </div>
 
