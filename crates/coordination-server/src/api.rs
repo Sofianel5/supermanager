@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
-use crate::store::{Db, LOCAL_ROOM_ID};
+use crate::store::Db;
 
 // ── Shared state ────────────────────────────────────────────
 
@@ -1916,124 +1916,6 @@ async fn mcp_ask(state: &AppState, room_id: &str, req: &Value) -> Value {
         "You are a project assistant. Answer the question based ONLY on the progress log below. Be specific — cite timestamps and names. If the answer isn't in the log, say so clearly.",
         &format!("Question: {question}\n\nProgress log:\n{context}"),
     ).await
-}
-
-// ── Legacy (non-room) routes ────────────────────────────────
-// These delegate to the "__local" default room for backwards compat.
-
-pub async fn legacy_ingest_progress(
-    State(state): State<AppState>,
-    Json(note): Json<ProgressNote>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let stored = state
-        .db
-        .insert_note(LOCAL_ROOM_ID, &note)
-        .map_err(internal_error)?;
-    let note_id = stored.note_id;
-    let received_at = stored.received_at.clone();
-
-    let _ = state.note_events.send(NoteEvent {
-        room_id: LOCAL_ROOM_ID.to_owned(),
-        note: stored,
-    });
-
-    // Spawn background auto-summarize
-    let bg_state = state.clone();
-    tokio::spawn(async move {
-        auto_summarize(&bg_state, LOCAL_ROOM_ID).await;
-    });
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(IngestResponse {
-            note_id,
-            received_at,
-        }),
-    ))
-}
-
-pub async fn legacy_get_feed(
-    State(state): State<AppState>,
-) -> Result<Json<FeedResponse>, (StatusCode, String)> {
-    let notes = state
-        .db
-        .get_notes(LOCAL_ROOM_ID)
-        .map_err(internal_error)?;
-    Ok(Json(FeedResponse { notes }))
-}
-
-pub async fn legacy_stream_feed(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
-{
-    let replay = headers
-        .get("last-event-id")
-        .and_then(|value| value.to_str().ok())
-        .map(|note_id| state.db.get_notes_after(LOCAL_ROOM_ID, note_id))
-        .transpose()
-        .map_err(internal_error)?
-        .unwrap_or_default();
-
-    let mut receiver = state.note_events.subscribe();
-
-    let event_stream = stream! {
-        for note in replay {
-            yield Ok(progress_event(&note));
-        }
-
-        loop {
-            match receiver.recv().await {
-                Ok(evt) => {
-                    if evt.room_id == LOCAL_ROOM_ID {
-                        yield Ok(progress_event(&evt.note));
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    yield Ok(Event::default()
-                        .event("warning")
-                        .data(format!("lagged:{skipped}")));
-                }
-                Err(broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    };
-
-    Ok(Sse::new(event_stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("keep-alive"),
-    ))
-}
-
-pub async fn legacy_get_manager_summary(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let summary = state
-        .db
-        .get_summary(LOCAL_ROOM_ID)
-        .map_err(internal_error)?;
-    Ok((
-        [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-        summary,
-    ))
-}
-
-
-
-pub async fn legacy_handle_mcp(
-    state: State<AppState>,
-    headers: HeaderMap,
-    json: Json<Value>,
-) -> impl IntoResponse {
-    handle_mcp(
-        state,
-        Path(LOCAL_ROOM_ID.to_owned()),
-        Query(SecretQuery { secret: None }),
-        headers,
-        json,
-    )
-    .await
 }
 
 // ── Helpers ─────────────────────────────────────────────────

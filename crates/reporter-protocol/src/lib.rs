@@ -18,16 +18,6 @@ pub struct StoredProgressNote {
     pub note: ProgressNote,
 }
 
-impl StoredProgressNote {
-    pub fn new(note: ProgressNote, received_at: String) -> Self {
-        Self {
-            note_id: Uuid::new_v4(),
-            received_at,
-            note,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestResponse {
     pub note_id: Uuid,

@@ -1,122 +1,96 @@
 # Supermanager
 
-Real-time visibility into what your coding agents are doing. Supermanager is a coordination server that collects progress updates from Claude Code and Codex sessions across your team, and serves them as a feed.
-
-## How it works
-
-Coding agents (Claude Code, Codex) are instructed to call `submit_progress` throughout their work — when they start a task, make progress, hit a blocker, or finish. The coordination server stores these updates and serves them as a feed.
-
-The agents connect to the server via MCP (Model Context Protocol). No polling, no cron jobs — the agent reports as it works.
+Supermanager is a room-based coordination server for coding agents. It creates per-team rooms, gives each room its own MCP endpoint and installer, stores progress updates in SQLite, and renders a live dashboard plus an auto-generated summary.
 
 ## Setup
 
 ### 1. Start the server
 
-```
+```sh
 cargo run -p coordination-server
 ```
 
-Listens on `http://127.0.0.1:8787` by default. Use `--bind` to change.
+By default it listens on `http://127.0.0.1:8787` and writes to `supermanager.db`.
 
-### 2. Install the employee plugins
+### 2. Create a room
 
-```
-./install.sh
-```
-
-This configures both Claude Code and Codex (whichever are installed):
-
-- Registers the MCP server
-- Installs the employee-side Claude Code plugin (which includes agent instructions via `CLAUDE.md`)
-- Appends agent instructions to `~/.codex/AGENTS.md` for Codex
-
-### 3. Run the centralized Claude observer with channels
-
-The centralized observer is a separate Claude plugin from the employee plugin. It subscribes to the coordination server's SSE feed and forwards each incoming note into a Claude Code session through a Claude channel.
-
-That centralized observer is also expected to maintain a manager-facing Markdown summary on the coordination server at `data/manager-summary.md`, using the `get_manager_summary` and `update_manager_summary` MCP tools.
-
-Requirements:
-
-- Node.js 18+ on the machine running the centralized Claude session
-- Claude Code signed in with `claude.ai`, since channels currently require that mode
+Open `http://127.0.0.1:8787` in a browser and create a room, or call the API directly:
 
 ```sh
-./run-observer.sh
+curl -sS http://127.0.0.1:8787/v1/rooms \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"My Team"}'
 ```
 
-This launcher pre-approves the `supermanager` tools the centralized observer needs to maintain the manager summary, so Claude should not prompt on `get_feed`, `get_manager_summary`, or `update_manager_summary`.
+The response includes:
 
-Equivalent manual launch:
+- `dashboard_url`
+- `room_id`
+- `secret`
+- `join_command`
+
+### 3. Join repos to the room
+
+Run the returned installer inside each repo you want connected:
 
 ```sh
-claude \
-  --plugin-dir "$PWD/plugins/supermanager-channel" \
-  --allowedTools "mcp__supermanager__get_feed,mcp__supermanager__get_manager_summary,mcp__supermanager__update_manager_summary" \
-  --dangerously-load-development-channels server:supermanager_channel
+curl -sSf "http://127.0.0.1:8787/r/<room-id>/install?secret=<room-secret>" | sh
 ```
 
-By default the plugin reads from `http://127.0.0.1:8787/v1/feed/stream`. Override that with `SUPERMANAGER_SSE_URL` if needed.
+That installer writes the room-specific MCP config and injects the reporting instructions into local `CLAUDE.md` and `AGENTS.md` files.
 
-### 4. Use it
+### 4. Use the dashboard
 
-Start a Claude Code or Codex session and give it a task. The agent will automatically report progress to the server. Check the feed:
-
-```
-curl http://127.0.0.1:8787/v1/feed | jq
-```
-
-Or tail the live SSE stream:
+Open the room dashboard:
 
 ```sh
-curl -N http://127.0.0.1:8787/v1/feed/stream
+open "http://127.0.0.1:8787/r/<room-id>"
 ```
 
-Read the current manager summary:
-
-```sh
-curl http://127.0.0.1:8787/v1/manager-summary
-```
+The dashboard reads the room feed, shows task state, and watches summary generation status over SSE.
 
 ## API
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/health` | GET | Health check |
-| `/v1/progress` | POST | Submit a progress note |
-| `/v1/feed` | GET | Get all notes, newest first |
-| `/v1/feed/stream` | GET | Server-Sent Events stream of new notes, with replay support via `Last-Event-ID` |
-| `/v1/manager-summary` | GET | Read the current manager-facing Markdown summary |
-| `/v1/manager-summary` | PUT | Replace the manager-facing Markdown summary |
-| `/mcp` | POST | MCP endpoint for agent tool calls |
+| `/` | GET | Landing page for room creation |
+| `/v1/rooms` | POST | Create a room |
+| `/r/{room_id}` | GET | Room dashboard |
+| `/r/{room_id}/feed` | GET | Get room notes, newest first |
+| `/r/{room_id}/feed/stream` | GET | SSE stream of room note and summary-status events |
+| `/r/{room_id}/progress` | POST | Submit a room-scoped progress note |
+| `/r/{room_id}/summary` | GET | Read the current room summary |
+| `/r/{room_id}/tasks` | GET | Read the current room task list |
+| `/r/{room_id}/mcp` | POST | Room-scoped MCP endpoint |
+| `/r/{room_id}/install` | GET | Generate the room installer |
+| `/r/{room_id}/uninstall` | GET | Generate a room-specific uninstall script |
+| `/uninstall` | GET | Generate a generic uninstall script |
 
-## MCP Tools
+## MCP tools
 
 | Tool | Description |
 |---|---|
-| `submit_progress` | Submit a progress update (employee_name, repo, branch, progress_text) |
-| `get_feed` | Get all progress updates |
-| `get_manager_summary` | Read the persisted manager-facing Markdown summary |
-| `update_manager_summary` | Replace the persisted manager-facing Markdown summary |
+| `submit_progress` | Submit a progress update |
+| `get_feed` | Read the room feed |
+| `get_manager_summary` | Read the persisted room summary |
+| `get_summary` | Ask OpenAI for a summary of filtered updates |
+| `ask` | Ask a question against the progress log |
+| `create_task` | Add a task to the room task list |
+| `get_tasks` | Read the room task list |
+| `update_task` | Update a task title, status, or assignee |
 
 ## Project structure
 
-```
+```text
 crates/
-  coordination-server/    # HTTP + MCP server
-  reporter-protocol/      # Shared types (ProgressNote, etc.)
-plugins/
-  claude-reporter/        # Employee Claude Code plugin (CLAUDE.md + MCP config)
-  codex-reporter/         # Codex plugin (MCP config)
-  supermanager-channel/   # Centralized Claude channel plugin backed by SSE and summary-maintenance instructions
-INSTRUCTIONS.md           # Agent instructions (single source of truth)
-install.sh                # One-step setup for both Claude Code and Codex
-run-observer.sh           # Centralized Claude observer launcher with summary-tool allowlist
+  coordination-server/    # HTTP server, dashboard, MCP endpoint, installers
+  reporter-protocol/      # Shared room and note types
+Dockerfile                # Production image
+fly.toml                  # Fly deployment config
 ```
 
-## Customizing agent instructions
+## Notes
 
-Edit `INSTRUCTIONS.md` at the repo root. Both plugins read from this file:
-
-- The Claude Code plugin imports it via `@../../INSTRUCTIONS.md` in its `CLAUDE.md`
-- The install script copies it into `~/.codex/AGENTS.md` for Codex
+- Agent-install instructions now live in `crates/coordination-server/src/supermanager_instructions.md`.
+- Summary generation runs on the server after new notes arrive.
