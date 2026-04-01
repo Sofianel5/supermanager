@@ -66,6 +66,165 @@ pub async fn health() -> &'static str {
     "ok"
 }
 
+// ── Landing page ───────────────────────────────────────────
+
+pub async fn landing_page(State(state): State<AppState>) -> impl IntoResponse {
+    let base = html_escape(&state.base_url);
+    let html = format!(
+        r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supermanager</title>
+<style>
+*,*::before,*::after{{box-sizing:border-box}}
+body{{
+  margin:0;padding:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:#0d1117;color:#c9d1d9;line-height:1.6;
+}}
+.container{{max-width:720px;margin:0 auto;padding:48px 16px}}
+h1{{color:#f0f6fc;margin:0 0 8px 0;font-size:2.4rem;font-weight:700;letter-spacing:-0.02em}}
+h1 span{{color:#58a6ff}}
+.tagline{{color:#8b949e;font-size:1.1rem;margin:0 0 40px 0}}
+.section{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:24px;margin-bottom:20px}}
+.section h2{{color:#f0f6fc;margin:0 0 12px 0;font-size:1.2rem;border-bottom:1px solid #21262d;padding-bottom:8px}}
+.how-it-works ol{{margin:0;padding-left:20px;color:#c9d1d9}}
+.how-it-works li{{margin-bottom:8px}}
+.how-it-works code{{background:#21262d;padding:2px 8px;border-radius:4px;font-size:0.85rem;color:#f0f6fc}}
+label{{display:block;color:#c9d1d9;font-size:0.9rem;margin-bottom:6px;font-weight:500}}
+input[type="text"]{{
+  width:100%;padding:10px 12px;
+  background:#0d1117;border:1px solid #30363d;border-radius:6px;
+  color:#f0f6fc;font-size:1rem;outline:none;
+}}
+input[type="text"]:focus{{border-color:#58a6ff}}
+input[type="text"]::placeholder{{color:#484f58}}
+button{{
+  margin-top:16px;padding:10px 24px;
+  background:#238636;border:1px solid #2ea043;border-radius:6px;
+  color:#fff;font-size:1rem;font-weight:600;cursor:pointer;
+}}
+button:hover{{background:#2ea043}}
+button:disabled{{opacity:0.5;cursor:not-allowed}}
+#result{{display:none;margin-top:20px}}
+#result .field-label{{color:#8b949e;font-size:0.8rem;margin:12px 0 4px 0}}
+#result .field-label:first-child{{margin-top:0}}
+#result .value{{
+  background:#0d1117;border:1px solid #30363d;border-radius:6px;
+  padding:12px;font-family:monospace;font-size:0.85rem;color:#f0f6fc;
+  word-break:break-all;white-space:pre-wrap;position:relative;cursor:pointer;
+}}
+#result .value:hover{{border-color:#58a6ff}}
+#result .value::after{{
+  content:'click to copy';position:absolute;right:8px;top:8px;
+  font-size:0.7rem;color:#484f58;font-family:sans-serif;
+}}
+#result a{{color:#58a6ff;text-decoration:none}}
+#result a:hover{{text-decoration:underline}}
+#error{{display:none;margin-top:12px;color:#f85149;font-size:0.9rem}}
+.footer{{color:#484f58;font-size:0.8rem;text-align:center;margin-top:40px}}
+.footer a{{color:#58a6ff;text-decoration:none}}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1><span>super</span>manager</h1>
+  <p class="tagline">Real-time visibility into what your AI coding agents are working on.</p>
+
+  <div class="section how-it-works">
+    <h2>How it works</h2>
+    <ol>
+      <li>Create a room for your team</li>
+      <li>Run the install command in each developer's repo</li>
+      <li>AI agents (Claude Code, Codex) automatically report progress as they work</li>
+      <li>Watch it all on a live dashboard</li>
+    </ol>
+  </div>
+
+  <div class="section">
+    <h2>Create a Room</h2>
+    <form id="create-form">
+      <label for="room-name">Team / Room Name</label>
+      <input type="text" id="room-name" name="name" placeholder="e.g. My Team" required>
+      <button type="submit" id="submit-btn">Create Room</button>
+    </form>
+    <div id="error"></div>
+    <div id="result">
+      <div class="field-label">Dashboard</div>
+      <div><a id="res-dashboard" href="#" target="_blank"></a></div>
+      <div class="field-label">Install command (run in each repo)</div>
+      <div class="value" id="res-install" onclick="copyText(this)"></div>
+      <div class="field-label">Room ID</div>
+      <div class="value" id="res-room-id" onclick="copyText(this)"></div>
+      <div class="field-label">Secret</div>
+      <div class="value" id="res-secret" onclick="copyText(this)"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="https://github.com/Sofianel5/supermanager">GitHub</a>
+  </div>
+</div>
+
+<script>
+var form = document.getElementById('create-form');
+var btn = document.getElementById('submit-btn');
+var errorEl = document.getElementById('error');
+var resultEl = document.getElementById('result');
+
+form.addEventListener('submit', function(e) {{
+  e.preventDefault();
+  errorEl.style.display = 'none';
+  resultEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Creating\u2026';
+
+  var name = document.getElementById('room-name').value.trim();
+  fetch('{base}/v1/rooms', {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify({{ name: name }})
+  }})
+  .then(function(r) {{
+    if (!r.ok) throw new Error('Server returned ' + r.status);
+    return r.json();
+  }})
+  .then(function(data) {{
+    document.getElementById('res-dashboard').href = data.dashboard_url;
+    document.getElementById('res-dashboard').textContent = data.dashboard_url;
+    document.getElementById('res-install').textContent = data.join_command;
+    document.getElementById('res-room-id').textContent = data.room_id;
+    document.getElementById('res-secret').textContent = data.secret;
+    resultEl.style.display = 'block';
+  }})
+  .catch(function(err) {{
+    errorEl.textContent = 'Error: ' + err.message;
+    errorEl.style.display = 'block';
+  }})
+  .finally(function() {{
+    btn.disabled = false;
+    btn.textContent = 'Create Room';
+  }});
+}});
+
+function copyText(el) {{
+  navigator.clipboard.writeText(el.textContent).then(function() {{
+    var orig = el.getAttribute('data-orig') || el.style.borderColor;
+    el.style.borderColor = '#3fb950';
+    setTimeout(function() {{ el.style.borderColor = ''; }}, 600);
+  }});
+}}
+</script>
+</body>
+</html>"##,
+        base = base,
+    );
+
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html)
+}
+
 // ── Room management ─────────────────────────────────────────
 
 pub async fn create_room(
