@@ -457,10 +457,6 @@ pre {
   border-top: 1px solid var(--border);
 }
 
-.summary-copy--generating {
-  color: var(--accent);
-}
-
 .summary-copy--error {
   color: var(--danger);
 }

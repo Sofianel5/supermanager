@@ -396,14 +396,7 @@ function SummaryContent({
   summary: string;
   summaryStatus: SummaryStatus;
 }) {
-  if (summaryStatus === "generating") {
-    return (
-      <p className="summary-copy summary-copy--generating">
-        Generating summary...
-      </p>
-    );
-  }
-  if (summaryStatus === "error") {
+  if (summaryStatus === "error" && !summary.trim()) {
     return (
       <p className="summary-copy summary-copy--error">
         Summary generation failed.
