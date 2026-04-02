@@ -71,7 +71,7 @@ export function LandingPage() {
       <section className="landing-hero">
         <div className="hero-copy">
           <div className="eyebrow">supermanager</div>
-          <h1>real-time visibility into your team's ai productiviy</h1>
+          <h1>Real-time visibility into your team's AI productivity.</h1>
           <p className="hero-text">
             Create a room, connect the repos that matter, and watch a live feed
             and manager summary update as work lands.
