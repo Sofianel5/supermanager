@@ -92,7 +92,7 @@ pub async fn create_room(
     let room = state.db.create_room(&req.name).map_err(internal_error)?;
     let resp = CreateRoomResponse {
         install_command: state.cli_install_command.clone(),
-        dashboard_url: format!("{}/r/{}", trim_url(&state.public_app_url), room.room_id),
+        dashboard_url: dashboard_url(&state.public_app_url, &room.room_id, &room.secret),
         join_command: cli_join_command(
             &state.public_api_url,
             &state.public_app_url,
@@ -107,6 +107,26 @@ pub async fn create_room(
 
 // ── Room-scoped routes ──────────────────────────────────────
 
+fn require_room_access(
+    state: &AppState,
+    room_id: &str,
+    headers: &HeaderMap,
+    query: &SecretQuery,
+) -> Result<(), (StatusCode, String)> {
+    let secret = extract_secret(headers, query)
+        .ok_or((StatusCode::UNAUTHORIZED, "missing secret".to_owned()))?;
+
+    let valid = state
+        .db
+        .verify_room_secret(room_id, &secret)
+        .map_err(internal_error)?;
+    if !valid {
+        return Err((StatusCode::UNAUTHORIZED, "invalid secret".to_owned()));
+    }
+
+    Ok(())
+}
+
 pub async fn ingest_hook_turn(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
@@ -114,16 +134,7 @@ pub async fn ingest_hook_turn(
     Query(query): Query<SecretQuery>,
     Json(report): Json<HookTurnReport>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let secret = extract_secret(&headers, &query)
-        .ok_or((StatusCode::UNAUTHORIZED, "missing secret".to_owned()))?;
-
-    let valid = state
-        .db
-        .verify_room_secret(&room_id, &secret)
-        .map_err(internal_error)?;
-    if !valid {
-        return Err((StatusCode::UNAUTHORIZED, "invalid secret".to_owned()));
-    }
+    require_room_access(&state, &room_id, &headers, &query)?;
 
     let stored = state
         .db
@@ -151,7 +162,10 @@ pub async fn ingest_hook_turn(
 pub async fn get_room(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<SecretQuery>,
 ) -> Result<Json<RoomMetadataResponse>, (StatusCode, String)> {
+    require_room_access(&state, &room_id, &headers, &query)?;
     let room = state.db.get_room(&room_id).map_err(internal_error)?;
     match room {
         Some(room) => Ok(Json(RoomMetadataResponse {
@@ -166,11 +180,10 @@ pub async fn get_room(
 pub async fn get_feed(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<SecretQuery>,
 ) -> Result<Json<FeedResponse>, (StatusCode, String)> {
-    let room = state.db.get_room(&room_id).map_err(internal_error)?;
-    if room.is_none() {
-        return Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}")));
-    }
+    require_room_access(&state, &room_id, &headers, &query)?;
     let events = state.db.get_hook_events(&room_id).map_err(internal_error)?;
     Ok(Json(FeedResponse { events }))
 }
@@ -179,12 +192,10 @@ pub async fn stream_feed(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     headers: HeaderMap,
+    Query(query): Query<SecretQuery>,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
 {
-    let room = state.db.get_room(&room_id).map_err(internal_error)?;
-    if room.is_none() {
-        return Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}")));
-    }
+    require_room_access(&state, &room_id, &headers, &query)?;
 
     let replay = headers
         .get("last-event-id")
@@ -259,12 +270,10 @@ pub async fn stream_feed(
 pub async fn get_manager_summary(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<SecretQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let room = state.db.get_room(&room_id).map_err(internal_error)?;
-    if room.is_none() {
-        return Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}")));
-    }
-
+    require_room_access(&state, &room_id, &headers, &query)?;
     let summary = state.db.get_summary(&room_id).map_err(internal_error)?;
     Ok((
         [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
@@ -474,6 +483,10 @@ fn cli_join_command(api_url: &str, app_url: &str, room_id: &str, secret: &str) -
     )
 }
 
+fn dashboard_url(app_url: &str, room_id: &str, secret: &str) -> String {
+    format!("{}/r/{room_id}#secret={secret}", trim_url(app_url))
+}
+
 fn trim_url(url: &str) -> &str {
     url.trim_end_matches('/')
 }
@@ -507,5 +520,12 @@ mod tests {
             command,
             "supermanager join --server \"https://api.example.com\" --app-url \"https://app.example.com\" --room \"bright-fox-1\" --secret \"sm_sec_123\""
         );
+    }
+
+    #[test]
+    fn dashboard_url_uses_secret_fragment() {
+        let url = dashboard_url("https://app.example.com/", "bright-fox-1", "sm_sec_123");
+
+        assert_eq!(url, "https://app.example.com/r/bright-fox-1#secret=sm_sec_123");
     }
 }

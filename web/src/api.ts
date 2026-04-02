@@ -38,8 +38,17 @@ function normalizeBaseUrl(url: string) {
   return url.replace(/\/+$/, "");
 }
 
-function apiUrl(path: string) {
-  return `${API_BASE_URL}${path}`;
+function withSecret(path: string, secret?: string | null) {
+  if (!secret) {
+    return path;
+  }
+
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}secret=${encodeURIComponent(secret)}`;
+}
+
+function apiUrl(path: string, secret?: string | null) {
+  return `${API_BASE_URL}${withSecret(path, secret)}`;
 }
 
 async function readError(response: Response) {
@@ -47,16 +56,20 @@ async function readError(response: Response) {
   return body || `Request failed with ${response.status}`;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit) {
-  const response = await fetch(apiUrl(path), init);
+async function requestJson<T>(
+  path: string,
+  init?: RequestInit,
+  secret?: string | null,
+) {
+  const response = await fetch(apiUrl(path, secret), init);
   if (!response.ok) {
     throw new Error(await readError(response));
   }
   return (await response.json()) as T;
 }
 
-async function requestText(path: string) {
-  const response = await fetch(apiUrl(path));
+async function requestText(path: string, secret?: string | null) {
+  const response = await fetch(apiUrl(path, secret));
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -80,16 +93,26 @@ export const api = {
       body: JSON.stringify({ name }),
     });
   },
-  getRoom(roomId: string) {
-    return requestJson<RoomMetadataResponse>(`/r/${encodeURIComponent(roomId)}`);
+  getRoom(roomId: string, secret: string) {
+    return requestJson<RoomMetadataResponse>(
+      `/r/${encodeURIComponent(roomId)}`,
+      undefined,
+      secret,
+    );
   },
-  getFeed(roomId: string) {
-    return requestJson<FeedResponse>(`/r/${encodeURIComponent(roomId)}/feed`);
+  getFeed(roomId: string, secret: string) {
+    return requestJson<FeedResponse>(
+      `/r/${encodeURIComponent(roomId)}/feed`,
+      undefined,
+      secret,
+    );
   },
-  getSummary(roomId: string) {
-    return requestText(`/r/${encodeURIComponent(roomId)}/summary`);
+  getSummary(roomId: string, secret: string) {
+    return requestText(`/r/${encodeURIComponent(roomId)}/summary`, secret);
   },
-  openRoomStream(roomId: string) {
-    return new EventSource(apiUrl(`/r/${encodeURIComponent(roomId)}/feed/stream`));
+  openRoomStream(roomId: string, secret: string) {
+    return new EventSource(
+      apiUrl(`/r/${encodeURIComponent(roomId)}/feed/stream`, secret),
+    );
   },
 };

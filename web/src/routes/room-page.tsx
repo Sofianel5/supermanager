@@ -1,10 +1,11 @@
 import {
   startTransition,
+  type FormEvent,
   useEffect,
   useEffectEvent,
   useState,
 } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   api,
   getApiBaseUrl,
@@ -12,7 +13,12 @@ import {
   RoomMetadataResponse,
   StoredHookEvent,
 } from "../api";
-import { resolveRoomSecret, stashRoomSecret } from "../room-credentials";
+import {
+  buildRoomHash,
+  clearRoomSecret,
+  resolveRoomSecret,
+  stashRoomSecret,
+} from "../room-credentials";
 
 const FEED_LIMIT = 10;
 
@@ -22,6 +28,7 @@ type ConnectionStatus = "connecting" | "live" | "reconnecting";
 export function RoomPage() {
   const { roomId = "" } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const [config, setConfig] = useState<PublicConfigResponse | null>(null);
   const [room, setRoom] = useState<RoomMetadataResponse | null>(null);
   const [events, setEvents] = useState<StoredHookEvent[]>([]);
@@ -34,6 +41,8 @@ export function RoomPage() {
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
   const [roomSecret, setRoomSecret] = useState<string | null>(null);
+  const [secretInput, setSecretInput] = useState("");
+  const [secretError, setSecretError] = useState<string | null>(null);
 
   const visibleEvents = expanded ? events : events.slice(0, FEED_LIMIT);
   const hiddenEvents = Math.max(events.length - FEED_LIMIT, 0);
@@ -41,7 +50,7 @@ export function RoomPage() {
   const joinCommand = `supermanager join --server "${getApiBaseUrl()}" --app-url "${window.location.origin}" --room "${roomId}" --secret "${joinSecret}"`;
 
   useEffect(() => {
-    const nextSecret = resolveRoomSecret(roomId, location.state);
+    const nextSecret = resolveRoomSecret(roomId, location.hash, location.state);
     if (!nextSecret) {
       setRoomSecret(null);
       return;
@@ -49,7 +58,8 @@ export function RoomPage() {
 
     stashRoomSecret(roomId, nextSecret);
     setRoomSecret(nextSecret);
-  }, [location.state, roomId]);
+    setSecretInput(nextSecret);
+  }, [location.hash, location.state, roomId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -62,7 +72,11 @@ export function RoomPage() {
   }, []);
 
   const refreshSummary = useEffectEvent(async () => {
-    const nextSummary = await api.getSummary(roomId);
+    if (!roomSecret) {
+      return;
+    }
+
+    const nextSummary = await api.getSummary(roomId, roomSecret);
     setSummary(nextSummary || "No summary yet.");
     setSummaryStatus("ready");
   });
@@ -90,16 +104,20 @@ export function RoomPage() {
       setError("Room not found.");
       return;
     }
+    if (!roomSecret) {
+      return;
+    }
 
     let cancelled = false;
     setConnectionStatus("connecting");
     setError(null);
+    setSecretError(null);
 
     Promise.all([
       api.getPublicConfig(),
-      api.getRoom(roomId),
-      api.getFeed(roomId),
-      api.getSummary(roomId),
+      api.getRoom(roomId, roomSecret),
+      api.getFeed(roomId, roomSecret),
+      api.getSummary(roomId, roomSecret),
     ])
       .then(([nextConfig, nextRoom, feed, nextSummary]) => {
         if (cancelled) {
@@ -116,11 +134,25 @@ export function RoomPage() {
       })
       .catch((loadError: unknown) => {
         if (!cancelled) {
-          setError(readMessage(loadError));
+          const message = readMessage(loadError);
+          if (message === "missing secret" || message === "invalid secret") {
+            clearRoomSecret(roomId);
+            setRoomSecret(null);
+            setSecretError("Invalid room secret.");
+            navigate(
+              {
+                pathname: `/r/${roomId}`,
+              },
+              { replace: true },
+            );
+            return;
+          }
+
+          setError(message);
         }
       });
 
-    const stream = api.openRoomStream(roomId);
+    const stream = api.openRoomStream(roomId, roomSecret);
 
     stream.onopen = () => {
       if (!cancelled) {
@@ -155,7 +187,7 @@ export function RoomPage() {
       cancelled = true;
       stream.close();
     };
-  }, [appendEvent, handleSummaryStatus, roomId]);
+  }, [navigate, roomId, roomSecret]);
 
   async function copy(label: string, value: string) {
     await navigator.clipboard.writeText(value);
@@ -165,12 +197,60 @@ export function RoomPage() {
     }, 1800);
   }
 
+  function submitSecret(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextSecret = secretInput.trim();
+    if (!nextSecret) {
+      setSecretError("Enter the room secret.");
+      return;
+    }
+
+    stashRoomSecret(roomId, nextSecret);
+    setSecretError(null);
+    setRoomSecret(nextSecret);
+    navigate(
+      {
+        pathname: `/r/${roomId}`,
+        hash: buildRoomHash(nextSecret),
+      },
+      { replace: true },
+    );
+  }
+
   if (error) {
     return (
       <main className="room-page room-page--error">
         <div className="section-label">Room</div>
         <h1>{roomId || "unknown"}</h1>
         <p className="message message--error">{error}</p>
+        <Link className="inline-link" to="/">
+          Back to room creation
+        </Link>
+      </main>
+    );
+  }
+
+  if (!roomSecret) {
+    return (
+      <main className="room-page room-page--error">
+        <div className="section-label">Room access</div>
+        <h1>{roomId || "unknown"}</h1>
+        <p className="message">
+          This room now requires its secret before the dashboard will load.
+        </p>
+        <form className="room-form room-form--gate" onSubmit={submitSecret}>
+          <label htmlFor="room-secret">Room secret</label>
+          <input
+            id="room-secret"
+            type="password"
+            value={secretInput}
+            onChange={(event) => setSecretInput(event.target.value)}
+            placeholder="sm_sec_..."
+            autoComplete="off"
+          />
+          <button type="submit">Open room</button>
+        </form>
+        {secretError && <p className="message message--error">{secretError}</p>}
         <Link className="inline-link" to="/">
           Back to room creation
         </Link>

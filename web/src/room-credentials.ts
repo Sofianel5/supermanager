@@ -22,10 +22,29 @@ export function stashRoomSecret(roomId: string, secret: string) {
   window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(secrets));
 }
 
-export function resolveRoomSecret(roomId: string, state: unknown) {
+export function clearRoomSecret(roomId: string) {
+  if (!roomId || typeof window === "undefined") {
+    return;
+  }
+
+  const secrets = readStoredSecrets();
+  delete secrets[roomId];
+  window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(secrets));
+}
+
+export function buildRoomHash(secret: string) {
+  return `#secret=${encodeURIComponent(secret)}`;
+}
+
+export function resolveRoomSecret(roomId: string, hash: string, state?: unknown) {
   const stateSecret = readStateSecret(roomId, state);
   if (stateSecret) {
     return stateSecret;
+  }
+
+  const hashSecret = readHashSecret(hash);
+  if (hashSecret) {
+    return hashSecret;
   }
 
   return readStoredSecrets()[roomId] ?? null;
@@ -42,6 +61,16 @@ function readStateSecret(roomId: string, state: unknown) {
   }
 
   const secret = candidate.secret.trim();
+  return secret || null;
+}
+
+function readHashSecret(hash: string) {
+  if (!hash.startsWith("#")) {
+    return null;
+  }
+
+  const params = new URLSearchParams(hash.slice(1));
+  const secret = params.get("secret")?.trim();
   return secret || null;
 }
 
