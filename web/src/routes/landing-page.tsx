@@ -1,12 +1,14 @@
-import { FormEvent, startTransition, useEffect, useState } from "react";
-import { api, CreateRoomResponse, PublicConfigResponse } from "../api";
+import { FormEvent, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { api, PublicConfigResponse } from "../api";
+import { buildCreatedRoomState, stashRoomSecret } from "../room-credentials";
 
 export function LandingPage() {
+  const navigate = useNavigate();
   const [config, setConfig] = useState<PublicConfigResponse | null>(null);
   const [name, setName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [room, setRoom] = useState<CreateRoomResponse | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,8 +46,9 @@ export function LandingPage() {
 
     try {
       const createdRoom = await api.createRoom(trimmedName);
-      startTransition(() => {
-        setRoom(createdRoom);
+      stashRoomSecret(createdRoom.room_id, createdRoom.secret);
+      navigate(`/r/${createdRoom.room_id}`, {
+        state: buildCreatedRoomState(createdRoom.room_id, createdRoom.secret),
       });
     } catch (requestError) {
       setError(readMessage(requestError));
@@ -133,64 +136,7 @@ export function LandingPage() {
           {error && <p className="message message--error">{error}</p>}
         </div>
       </section>
-
-      <section className="result-sheet">
-        <div className="section-label">Room output</div>
-        {room ? (
-          <div className="result-grid">
-            <CopyRow
-              copiedValue={copiedValue}
-              label="Dashboard"
-              onCopy={copy}
-              value={room.dashboard_url}
-            />
-            <CopyRow
-              copiedValue={copiedValue}
-              label="Join command"
-              onCopy={copy}
-              value={room.join_command}
-            />
-            <CopyRow
-              copiedValue={copiedValue}
-              label="Room ID"
-              onCopy={copy}
-              value={room.room_id}
-            />
-            <CopyRow
-              copiedValue={copiedValue}
-              label="Secret"
-              onCopy={copy}
-              value={room.secret}
-            />
-          </div>
-        ) : (
-          <p className="message">
-            Room credentials and the exact join command appear here after you create one.
-          </p>
-        )}
-      </section>
     </main>
-  );
-}
-
-function CopyRow({
-  copiedValue,
-  label,
-  onCopy,
-  value,
-}: {
-  copiedValue: string | null;
-  label: string;
-  onCopy: (label: string, value: string) => Promise<void>;
-  value: string;
-}) {
-  return (
-    <button className="copy-sheet" type="button" onClick={() => onCopy(label, value)}>
-      <span className="copy-label">
-        {label} {copiedValue === label ? "copied" : "click to copy"}
-      </span>
-      <code>{value}</code>
-    </button>
   );
 }
 

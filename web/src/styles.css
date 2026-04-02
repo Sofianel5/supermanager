@@ -140,7 +140,6 @@ pre {
 
 .hero-stat,
 .room-section,
-.result-sheet,
 .landing-column {
   border: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(17, 24, 37, 0.72), rgba(8, 12, 19, 0.88));
@@ -184,8 +183,7 @@ pre {
 }
 
 .landing-column,
-.room-section,
-.result-sheet {
+.room-section {
   padding: 22px;
 }
 
@@ -315,15 +313,6 @@ pre {
 
 .message--error {
   color: var(--danger);
-}
-
-.result-sheet {
-  margin-top: 20px;
-}
-
-.result-grid {
-  display: grid;
-  gap: 16px;
 }
 
 .room-header {
@@ -527,8 +516,7 @@ pre {
   }
 
   .landing-column,
-  .room-section,
-  .result-sheet {
+  .room-section {
     padding: 18px;
   }
 

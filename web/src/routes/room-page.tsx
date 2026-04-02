@@ -4,7 +4,7 @@ import {
   useEffectEvent,
   useState,
 } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import {
   api,
   getApiBaseUrl,
@@ -12,6 +12,7 @@ import {
   RoomMetadataResponse,
   StoredHookEvent,
 } from "../api";
+import { resolveRoomSecret, stashRoomSecret } from "../room-credentials";
 
 const FEED_LIMIT = 10;
 
@@ -20,6 +21,7 @@ type ConnectionStatus = "connecting" | "live" | "reconnecting";
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
+  const location = useLocation();
   const [config, setConfig] = useState<PublicConfigResponse | null>(null);
   const [room, setRoom] = useState<RoomMetadataResponse | null>(null);
   const [events, setEvents] = useState<StoredHookEvent[]>([]);
@@ -31,10 +33,23 @@ export function RoomPage() {
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
+  const [roomSecret, setRoomSecret] = useState<string | null>(null);
 
   const visibleEvents = expanded ? events : events.slice(0, FEED_LIMIT);
   const hiddenEvents = Math.max(events.length - FEED_LIMIT, 0);
-  const joinCommand = `supermanager join --server "${getApiBaseUrl()}" --app-url "${window.location.origin}" --room "${roomId}" --secret "YOUR_SECRET"`;
+  const joinSecret = roomSecret ?? "YOUR_SECRET";
+  const joinCommand = `supermanager join --server "${getApiBaseUrl()}" --app-url "${window.location.origin}" --room "${roomId}" --secret "${joinSecret}"`;
+
+  useEffect(() => {
+    const nextSecret = resolveRoomSecret(roomId, location.state);
+    if (!nextSecret) {
+      setRoomSecret(null);
+      return;
+    }
+
+    stashRoomSecret(roomId, nextSecret);
+    setRoomSecret(nextSecret);
+  }, [location.state, roomId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -238,13 +253,23 @@ export function RoomPage() {
 
         <aside className="room-rail">
           <div className="room-section">
-            <div className="section-label">Connect agents</div>
+            <div className="section-label">
+              {roomSecret ? "Room created" : "Connect agents"}
+            </div>
             {config && (
               <CopyPanel
                 copiedValue={copiedValue}
                 label="Install CLI"
                 onCopy={copy}
                 value={config.install_command}
+              />
+            )}
+            {roomSecret && (
+              <CopyPanel
+                copiedValue={copiedValue}
+                label="Secret"
+                onCopy={copy}
+                value={roomSecret}
               />
             )}
             <CopyPanel
@@ -254,7 +279,9 @@ export function RoomPage() {
               value={joinCommand}
             />
             <p className="message">
-              Share the room secret separately. The dashboard only exposes the room URL.
+              {roomSecret
+                ? "Copy the secret and the exact join command now, then run it in each repo you want connected."
+                : "Add the room secret to the join command before running it in a repo."}
             </p>
           </div>
         </aside>

@@ -8,6 +8,10 @@ primary_region = 'sjc'
 
 [build]
 
+[env]
+  SUPERMANAGER_PUBLIC_API_URL = "https://supermanager.fly.dev"
+  SUPERMANAGER_PUBLIC_APP_URL = "https://supermanager.pages.dev"
+
 [[mounts]]
   source = 'supermanager_data'
   destination = '/data'
