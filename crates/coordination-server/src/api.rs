@@ -426,17 +426,6 @@ pub async fn get_manager_summary(
     ))
 }
 
-pub async fn get_tasks_http(
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let tasks = state
-        .db
-        .get_tasks(&room_id, false)
-        .map_err(internal_error)?;
-    Ok(Json(json!({ "tasks": tasks })))
-}
-
 // ── Dashboard ───────────────────────────────────────────────
 
 pub async fn dashboard(
@@ -506,14 +495,6 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 .summary-content{{font-family:var(--sans);font-size:0.92rem;color:var(--text-secondary);white-space:pre-wrap;line-height:1.7;}}
 .empty{{color:var(--text-muted);font-style:italic;font-size:0.88rem}}
 .generating{{color:var(--accent);font-style:italic;font-size:0.88rem;animation:pulse 1.5s ease-in-out infinite}}
-.task-item{{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-family:var(--sans);font-size:0.88rem;color:var(--text-secondary)}}
-.task-item:last-child{{border-bottom:none}}
-.task-status{{font-family:var(--mono);font-size:0.72rem;font-weight:600;padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:0.03em}}
-.task-status.todo{{color:var(--text-muted);border:1px solid var(--border)}}
-.task-status.in_progress{{color:var(--accent);border:1px solid var(--accent)}}
-.task-status.done{{color:var(--emerald);border:1px solid var(--emerald)}}
-.task-assignee{{color:var(--text-muted);font-size:0.78rem}}
-.task-list-empty{{color:var(--text-muted);font-style:italic;font-size:0.88rem}}
 @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.5}}}}
 .timeline{{position:relative;padding-left:24px}}
 .timeline::before{{content:'';position:absolute;left:7px;top:8px;bottom:8px;width:1px;background:var(--border);}}
@@ -574,16 +555,6 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 
   <div class="panel">
     <div class="panel-head">
-      <span class="panel-title">Task List</span>
-      <span id="task-count" class="panel-badge">0 tasks</span>
-    </div>
-    <div class="panel-body">
-      <div id="task-list" class="task-list-container"></div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
       <span class="panel-title">Manager Summary</span>
     </div>
     <div class="panel-body">
@@ -611,8 +582,6 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
   var statusEl = document.getElementById('connection-status');
   var liveText = statusEl.querySelector('.live-text');
   var countEl = document.getElementById('note-count');
-  var taskList = document.getElementById('task-list');
-  var taskCount = document.getElementById('task-count');
   var summaryEl = document.getElementById('summary');
   var events = [];
   var expanded = false;
@@ -731,41 +700,6 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
       .catch(function() {{}});
   }}
   loadSummary();
-
-  function loadTasks() {{
-    fetch(base + '/tasks')
-      .then(function(r) {{ return r.json(); }})
-      .then(function(data) {{
-        var tasks = data.tasks || [];
-        taskCount.textContent = tasks.length + ' task' + (tasks.length !== 1 ? 's' : '');
-        if (tasks.length === 0) {{
-          taskList.innerHTML = '<div class="task-list-empty">No tasks yet.</div>';
-          return;
-        }}
-        taskList.innerHTML = '';
-        tasks.forEach(function(t) {{
-          var item = document.createElement('div');
-          item.className = 'task-item';
-          var badge = document.createElement('span');
-          badge.className = 'task-status ' + t.status;
-          badge.textContent = t.status.replace('_', ' ');
-          item.appendChild(badge);
-          var title = document.createElement('span');
-          title.textContent = t.title;
-          title.style.flex = '1';
-          item.appendChild(title);
-          if (t.assignee) {{
-            var assignee = document.createElement('span');
-            assignee.className = 'task-assignee';
-            assignee.textContent = '@' + t.assignee;
-            item.appendChild(assignee);
-          }}
-          taskList.appendChild(item);
-        }});
-      }})
-      .catch(function() {{}});
-  }}
-  loadTasks();
 
   var es = new EventSource(base + '/feed/stream');
   es.onopen = function() {{

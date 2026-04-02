@@ -57,7 +57,6 @@ async fn main() -> Result<()> {
         .route("/r/{room_id}/feed/stream", get(api::stream_feed))
         .route("/r/{room_id}/hooks/turn", post(api::ingest_hook_turn))
         .route("/r/{room_id}/summary", get(api::get_manager_summary))
-        .route("/r/{room_id}/tasks", get(api::get_tasks_http))
         // ── Landing page ────────────────────────────────
         .route("/", get(api::landing_page))
         // ── Health ───────────────────────────────────────

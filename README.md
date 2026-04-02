@@ -89,7 +89,6 @@ The dashboard reads the room feed, shows task state, and watches summary generat
 | `/r/{room_id}/feed/stream` | GET | SSE stream of hook-event and summary-status events |
 | `/r/{room_id}/hooks/turn` | POST | Submit a hook-captured turn event |
 | `/r/{room_id}/summary` | GET | Read the current room summary |
-| `/r/{room_id}/tasks` | GET | Read the current room task list |
 
 ## Project structure
 
