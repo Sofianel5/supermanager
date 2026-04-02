@@ -51,7 +51,21 @@ cargo install --git https://github.com/Sofianel5/supermanager.git supermanager
 
 ### 4. Create a room
 
-Open `http://127.0.0.1:5173` in a browser and create a room, or call the API directly:
+Create the room from the CLI:
+
+```sh
+supermanager create room
+```
+
+That uses the current repo or directory name as the room name by default. To pick one explicitly:
+
+```sh
+supermanager create room "My Team"
+```
+
+The command prints the room code, the join command, the dashboard URL, and copies the dashboard URL to your clipboard.
+
+You can still create a room in the browser or call the API directly:
 
 ```sh
 curl -sS http://127.0.0.1:8787/v1/rooms \
@@ -68,11 +82,13 @@ The response includes:
 
 ### 5. Join repos to the room
 
-Run the returned join command inside each repo you want connected:
+Run the join command inside each repo you want connected:
 
 ```sh
 supermanager join <room-code>
 ```
+
+That command verifies the room exists, configures the repo hooks, prints the dashboard URL, and copies the dashboard URL to your clipboard.
 
 For local development or custom deployments, override the API and app origins explicitly:
 
