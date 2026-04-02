@@ -279,94 +279,90 @@ export function RoomPage() {
       </header>
 
       <section className="room-layout">
-        <div className="room-main">
-          <div className="room-section">
-            <div className="room-section__head">
-              <span className="section-label">Manager summary</span>
-              <span className={`summary-pill summary-pill--${summaryStatus}`}>
-                {summaryStatus === "idle" ? "loading" : summaryStatus}
-              </span>
-            </div>
-            <SummaryContent summary={summary} summaryStatus={summaryStatus} />
+        <div className="room-section">
+          <div className="room-section__head">
+            <span className="section-label">Manager summary</span>
+            <span className={`summary-pill summary-pill--${summaryStatus}`}>
+              {summaryStatus === "idle" ? "loading" : summaryStatus}
+            </span>
           </div>
-
-          <div className="room-section">
-            <div className="room-section__head">
-              <span className="section-label">Activity feed</span>
-              <span className="section-count">
-                {events.length} update{events.length === 1 ? "" : "s"}
-              </span>
-            </div>
-
-            <div className="feed-list">
-              {visibleEvents.length > 0 ? (
-                visibleEvents.map((event) => (
-                  <article className="feed-item" key={event.event_id}>
-                    <div className="feed-item__head">
-                      <strong>{event.employee_name}</strong>
-                      <time dateTime={event.received_at}>
-                        {formatRelativeTime(event.received_at, clock)}
-                      </time>
-                    </div>
-                    <p className="feed-item__meta">
-                      <span>{event.repo_root}</span>
-                      {event.branch && <span>{event.branch}</span>}
-                      <span>{event.client}</span>
-                    </p>
-                    <pre>{formatPayload(event.payload)}</pre>
-                  </article>
-                ))
-              ) : (
-                <p className="message">No hook updates have landed yet.</p>
-              )}
-            </div>
-
-            {hiddenEvents > 0 && (
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => setExpanded((current) => !current)}
-              >
-                {expanded ? "Show less" : `Show ${hiddenEvents} more`}
-              </button>
-            )}
-          </div>
+          <SummaryContent summary={summary} summaryStatus={summaryStatus} />
         </div>
 
-        <aside className="room-rail">
-          <div className="room-section">
-            <div className="section-label">
-              {roomSecret ? "Room created" : "Connect agents"}
-            </div>
-            {config && (
-              <CopyPanel
-                copiedValue={copiedValue}
-                label="Install CLI"
-                onCopy={copy}
-                value={config.install_command}
-              />
-            )}
-            {roomSecret && (
-              <CopyPanel
-                copiedValue={copiedValue}
-                label="Secret"
-                onCopy={copy}
-                value={roomSecret}
-              />
-            )}
+        <div className="room-section">
+          <div className="section-label">
+            {roomSecret ? "Room created" : "Connect agents"}
+          </div>
+          {config && (
             <CopyPanel
               copiedValue={copiedValue}
-              label="Join command"
+              label="Install CLI"
               onCopy={copy}
-              value={joinCommand}
+              value={config.install_command}
             />
-            <p className="message">
-              {roomSecret
-                ? "Copy the secret and the exact join command now, then run it in each repo you want connected."
-                : "Add the room secret to the join command before running it in a repo."}
-            </p>
+          )}
+          {roomSecret && (
+            <CopyPanel
+              copiedValue={copiedValue}
+              label="Secret"
+              onCopy={copy}
+              value={roomSecret}
+            />
+          )}
+          <CopyPanel
+            copiedValue={copiedValue}
+            label="Join command"
+            onCopy={copy}
+            value={joinCommand}
+          />
+          <p className="message">
+            {roomSecret
+              ? "Copy the secret and the exact join command now, then run it in each repo you want connected."
+              : "Add the room secret to the join command before running it in a repo."}
+          </p>
+        </div>
+
+        <div className="room-section">
+          <div className="room-section__head">
+            <span className="section-label">Activity feed</span>
+            <span className="section-count">
+              {events.length} update{events.length === 1 ? "" : "s"}
+            </span>
           </div>
-        </aside>
+
+          <div className="feed-list">
+            {visibleEvents.length > 0 ? (
+              visibleEvents.map((event) => (
+                <article className="feed-item" key={event.event_id}>
+                  <div className="feed-item__head">
+                    <strong>{event.employee_name}</strong>
+                    <time dateTime={event.received_at}>
+                      {formatRelativeTime(event.received_at, clock)}
+                    </time>
+                  </div>
+                  <p className="feed-item__meta">
+                    <span>{event.repo_root}</span>
+                    {event.branch && <span>{event.branch}</span>}
+                    <span>{event.client}</span>
+                  </p>
+                  <pre>{formatPayload(event.payload)}</pre>
+                </article>
+              ))
+            ) : (
+              <p className="message">No hook updates have landed yet.</p>
+            )}
+          </div>
+
+          {hiddenEvents > 0 && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setExpanded((current) => !current)}
+            >
+              {expanded ? "Show less" : `Show ${hiddenEvents} more`}
+            </button>
+          )}
+        </div>
       </section>
     </main>
   );
