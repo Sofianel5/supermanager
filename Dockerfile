@@ -8,4 +8,4 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/coordination-server /usr/local/bin/
 EXPOSE 8787
-CMD ["coordination-server", "--bind", "0.0.0.0:8787", "--db-path", "/data/supermanager.db", "--base-url", "https://supermanager.fly.dev"]
+CMD ["coordination-server", "--bind", "0.0.0.0:8787", "--db-path", "/data/supermanager.db"]

@@ -29,6 +29,7 @@ const REPORT_TIMEOUT_SECONDS: u64 = 5;
 
 pub struct JoinConfig {
     pub server_url: String,
+    pub app_url: String,
     pub room_id: String,
     pub secret: String,
     pub repo_dir: PathBuf,
@@ -73,11 +74,12 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     }
 
     let employee_name = detect_employee_name(&repo_dir)?;
-    let base_url = normalize_base_url(&config.server_url);
-    let dashboard_url = format!("{}/r/{}", base_url, config.room_id);
+    let server_url = normalize_url(&config.server_url);
+    let app_url = normalize_url(&config.app_url);
+    let dashboard_url = format!("{}/r/{}", app_url, config.room_id);
 
     let room_config = RepoRoomConfig {
-        server_url: base_url,
+        server_url,
         room_id: config.room_id.clone(),
         secret: config.secret,
     };
@@ -232,19 +234,19 @@ fn detect_employee_name(repo_dir: &Path) -> Result<String> {
     }
 
     let whoami = Command::new("whoami").current_dir(repo_dir).output();
-    if let Ok(output) = whoami {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !text.is_empty() {
-                return Ok(text);
-            }
+    if let Ok(output) = whoami
+        && output.status.success()
+    {
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !text.is_empty() {
+            return Ok(text);
         }
     }
 
     bail!("could not detect employee name; set git user.name first")
 }
 
-fn normalize_base_url(url: &str) -> String {
+fn normalize_url(url: &str) -> String {
     url.trim_end_matches('/').to_owned()
 }
 
@@ -505,12 +507,12 @@ fn strip_managed_toml_markers(text: &str) -> String {
 }
 
 fn remove_legacy_supermanager_mcp(doc: &mut DocumentMut) {
-    if let Some(mcp_servers) = doc.get_mut("mcp_servers") {
-        if let Some(table) = mcp_servers.as_table_like_mut() {
-            table.remove("supermanager");
-            if table.is_empty() {
-                *mcp_servers = Item::None;
-            }
+    if let Some(mcp_servers) = doc.get_mut("mcp_servers")
+        && let Some(table) = mcp_servers.as_table_like_mut()
+    {
+        table.remove("supermanager");
+        if table.is_empty() {
+            *mcp_servers = Item::None;
         }
     }
 }
@@ -618,8 +620,9 @@ mod tests {
         )
         .unwrap();
 
-        join_repo(JoinConfig {
+        let outcome = join_repo(JoinConfig {
             server_url: "http://127.0.0.1:8787/".to_owned(),
+            app_url: "https://app.supermanager.test/".to_owned(),
             room_id: "bright-fox".to_owned(),
             secret: "secret123".to_owned(),
             repo_dir: repo_dir.clone(),
@@ -635,6 +638,10 @@ mod tests {
 
         let hooks = fs::read_to_string(repo_dir.join(CODEX_HOOKS_JSON)).unwrap();
         assert!(hooks.contains(CODEX_HOOK_COMMAND));
+        assert_eq!(
+            outcome.dashboard_url,
+            "https://app.supermanager.test/r/bright-fox"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -5,7 +5,7 @@ use async_stream::stream;
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{
         IntoResponse,
         sse::{Event, KeepAlive, Sse},
@@ -13,7 +13,7 @@ use axum::{
 };
 use reporter_protocol::{
     CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse,
-    StoredHookEvent,
+    PublicConfigResponse, RoomMetadataResponse, StoredHookEvent,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -40,7 +40,8 @@ pub struct AppState {
     pub db: Arc<Db>,
     pub hook_events: broadcast::Sender<HookFeedEvent>,
     pub summary_events: broadcast::Sender<SummaryStatusEvent>,
-    pub base_url: String,
+    pub public_api_url: String,
+    pub public_app_url: String,
     pub cli_install_command: String,
     pub http: reqwest::Client,
     pub openai_api_key: Option<String>,
@@ -57,14 +58,13 @@ pub struct SecretQuery {
 
 fn extract_secret(headers: &HeaderMap, query: &SecretQuery) -> Option<String> {
     // Try Authorization: Bearer <secret> first
-    if let Some(auth) = headers.get(header::AUTHORIZATION) {
-        if let Ok(val) = auth.to_str() {
-            if let Some(token) = val.strip_prefix("Bearer ") {
-                let token = token.trim();
-                if !token.is_empty() {
-                    return Some(token.to_owned());
-                }
-            }
+    if let Some(auth) = headers.get(header::AUTHORIZATION)
+        && let Ok(val) = auth.to_str()
+        && let Some(token) = val.strip_prefix("Bearer ")
+    {
+        let token = token.trim();
+        if !token.is_empty() {
+            return Some(token.to_owned());
         }
     }
     // Fall back to query param
@@ -77,194 +77,10 @@ pub async fn health() -> &'static str {
     "ok"
 }
 
-// ── Landing page ───────────────────────────────────────────
-
-pub async fn landing_page(State(state): State<AppState>) -> impl IntoResponse {
-    let base = html_escape(&state.base_url);
-    let cli_install_command = html_escape(&state.cli_install_command);
-    let html = format!(
-        r##"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>supermanager</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;700;800&display=swap" rel="stylesheet">
-<style>
-*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
-:root{{--bg-deep:#06080d;--bg-primary:#0a0e17;--bg-surface:#0f1420;--bg-elevated:#141a27;--border:#1a2235;--border-hover:#243049;--text-primary:#e2e8f0;--text-secondary:#7a8ba8;--text-muted:#4a5568;--amber:#f59e0b;--amber-dim:#b27308;--amber-glow:rgba(245,158,11,0.12);--emerald:#10b981;--emerald-dim:#0a7c56;--red:#ef4444;--mono:'JetBrains Mono',monospace;--sans:'Outfit',sans-serif;}}
-body{{background:var(--bg-deep);color:var(--text-primary);font-family:var(--sans);line-height:1.6;min-height:100vh;position:relative;overflow-x:hidden;}}
-body::before{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(245,158,11,0.06) 0%,transparent 60%),radial-gradient(ellipse 60% 40% at 80% 100%,rgba(16,185,129,0.04) 0%,transparent 50%);}}
-body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.035;background-image:url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cpattern id='g' width='60' height='60' patternUnits='userSpaceOnUse'%3E%3Cpath d='M60 0H0v60' fill='none' stroke='%23fff' stroke-width='0.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E");}}
-.shell{{position:relative;z-index:1;max-width:720px;margin:0 auto;padding:48px 20px 80px}}
-.header{{margin-bottom:40px;text-align:center}}
-.logo{{display:inline-block;font-family:var(--mono);font-weight:700;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--amber);background:var(--amber-glow);border:1px solid rgba(245,158,11,0.2);padding:4px 10px;border-radius:4px;margin-bottom:14px;text-decoration:none;}}
-.logo:hover{{background:rgba(245,158,11,0.18);}}
-h1{{font-family:var(--sans);font-weight:800;font-size:2.6rem;letter-spacing:-0.03em;color:var(--text-primary);line-height:1.1;margin-bottom:10px;}}
-.tagline{{font-family:var(--sans);font-size:1.05rem;color:var(--text-secondary);}}
-.panel{{background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;margin-bottom:24px;overflow:hidden;transition:border-color 0.2s;}}
-.panel:hover{{border-color:var(--border-hover)}}
-.panel-head{{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--bg-elevated);}}
-.panel-title{{font-family:var(--mono);font-weight:600;font-size:0.8rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-secondary);}}
-.panel-body{{padding:20px}}
-.steps{{list-style:none;padding:0;counter-reset:step;}}
-.steps li{{position:relative;padding-left:36px;margin-bottom:14px;font-family:var(--sans);font-size:0.92rem;color:var(--text-secondary);line-height:1.6;}}
-.steps li::before{{content:counter(step);counter-increment:step;position:absolute;left:0;top:1px;width:24px;height:24px;border-radius:50%;background:var(--amber-glow);border:1px solid rgba(245,158,11,0.25);color:var(--amber);font-family:var(--mono);font-size:0.72rem;font-weight:600;display:flex;align-items:center;justify-content:center;}}
-.steps li:last-child{{margin-bottom:0}}
-.steps code{{font-family:var(--mono);font-size:0.82rem;color:var(--amber);background:var(--bg-deep);padding:2px 6px;border-radius:4px;}}
-label{{display:block;font-family:var(--mono);font-weight:500;font-size:0.78rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px;}}
-input[type="text"]{{width:100%;padding:12px 14px;background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--sans);font-size:1rem;outline:none;transition:border-color 0.2s;}}
-input[type="text"]:focus{{border-color:var(--amber)}}
-input[type="text"]::placeholder{{color:var(--text-muted)}}
-button{{margin-top:16px;padding:12px 28px;background:var(--amber);border:none;border-radius:6px;color:var(--bg-deep);font-family:var(--mono);font-size:0.85rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;transition:background 0.2s, transform 0.1s;}}
-button:hover{{background:#d97706}}
-button:active{{transform:scale(0.98)}}
-button:disabled{{opacity:0.5;cursor:not-allowed}}
-#result{{display:none;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);}}
-.field-label{{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);margin:16px 0 6px 0;}}
-.field-label:first-child{{margin-top:0}}
-.field-value{{display:block;font-family:var(--mono);font-size:0.78rem;color:var(--amber);background:var(--bg-deep);border:1px solid var(--border);padding:12px 14px;border-radius:6px;white-space:pre-wrap;word-break:break-all;cursor:pointer;transition:border-color 0.2s;position:relative;}}
-.field-value:hover{{border-color:var(--amber-dim)}}
-.field-value::after{{content:'click to copy';position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:0.65rem;color:var(--text-muted);letter-spacing:0.04em;text-transform:uppercase;opacity:0;transition:opacity 0.2s;}}
-.field-value:hover::after{{opacity:1}}
-.field-value.copied{{border-color:var(--emerald)}}
-.field-value.copied::after{{content:'copied!';color:var(--emerald);opacity:1}}
-.field-link{{color:var(--cyan);text-decoration:none;font-family:var(--mono);font-size:0.85rem;}}
-.field-link:hover{{text-decoration:underline}}
-.field-value.val-roomid{{color:var(--emerald)}}
-.field-value.val-roomid:hover{{border-color:var(--emerald-dim)}}
-.field-value.val-secret{{color:var(--violet)}}
-.field-value.val-secret:hover{{border-color:var(--violet)}}
-#error{{display:none;margin-top:12px;color:var(--red);font-family:var(--mono);font-size:0.82rem;}}
-.footer{{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);text-align:center;font-family:var(--mono);font-size:0.68rem;color:var(--text-muted);letter-spacing:0.06em;}}
-.footer a{{color:var(--text-secondary);text-decoration:none}}
-.footer a:hover{{color:var(--text-primary)}}
-@media(max-width:600px){{.shell{{padding:32px 14px 60px}}h1{{font-size:2rem}}.panel-body{{padding:14px}}}}
-</style>
-</head>
-<body>
-<div class="shell">
-  <div class="header">
-    <a href="/" class="logo">supermanager</a>
-    <h1>supermanager</h1>
-    <p class="tagline">Real-time visibility into what your AI coding agents are working on.</p>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <span class="panel-title">How It Works</span>
-    </div>
-    <div class="panel-body">
-      <ol class="steps">
-        <li>Create a room for your team</li>
-        <li>Install the <code>supermanager</code> CLI once on each machine</li>
-        <li>Run the room join command in each repo you want connected</li>
-        <li>AI agents (<code>Claude Code</code>, <code>Codex</code>) automatically report progress as they work</li>
-        <li>Watch it all on a live dashboard</li>
-      </ol>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <span class="panel-title">Install The CLI Once</span>
-    </div>
-    <div class="panel-body">
-      <div class="field-value" id="cli-install-hint">{cli_install_command}</div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <span class="panel-title">Create a Room</span>
-    </div>
-    <div class="panel-body">
-      <form id="create-form">
-        <label for="room-name">Team / Room Name</label>
-        <input type="text" id="room-name" name="name" placeholder="e.g. My Team" required>
-        <button type="submit" id="submit-btn">Create Room</button>
-      </form>
-      <div id="error"></div>
-      <div id="result">
-        <div class="field-label">Dashboard</div>
-        <div><a id="res-dashboard" class="field-link" href="#" target="_blank"></a></div>
-        <div class="field-label">Install CLI</div>
-        <div class="field-value" id="res-cli-install"></div>
-        <div class="field-label">Join command</div>
-        <div class="field-value" id="res-join"></div>
-        <div class="field-label">Room ID</div>
-        <div class="field-value val-roomid" id="res-room-id"></div>
-        <div class="field-label">Secret</div>
-        <div class="field-value val-secret" id="res-secret"></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="footer">supermanager &middot; real-time ai coordination</div>
-</div>
-
-<script>
-(function(){{
-  var form = document.getElementById('create-form');
-  var btn = document.getElementById('submit-btn');
-  var errorEl = document.getElementById('error');
-  var resultEl = document.getElementById('result');
-
-  form.addEventListener('submit', function(e) {{
-    e.preventDefault();
-    errorEl.style.display = 'none';
-    resultEl.style.display = 'none';
-    btn.disabled = true;
-    btn.textContent = 'CREATING\u2026';
-
-    var name = document.getElementById('room-name').value.trim();
-    fetch('{base}/v1/rooms', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ name: name }})
-    }})
-    .then(function(r) {{
-      if (!r.ok) throw new Error('Server returned ' + r.status);
-      return r.json();
-    }})
-    .then(function(data) {{
-      document.getElementById('res-dashboard').href = data.dashboard_url;
-      document.getElementById('res-dashboard').textContent = data.dashboard_url;
-      document.getElementById('res-cli-install').textContent = data.install_command;
-      document.getElementById('res-join').textContent = data.join_command;
-      document.getElementById('res-room-id').textContent = data.room_id;
-      document.getElementById('res-secret').textContent = data.secret;
-      resultEl.style.display = 'block';
-    }})
-    .catch(function(err) {{
-      errorEl.textContent = err.message;
-      errorEl.style.display = 'block';
-    }})
-    .finally(function() {{
-      btn.disabled = false;
-      btn.textContent = 'CREATE ROOM';
-    }});
-  }});
-
-  document.addEventListener('click', function(e) {{
-    var el = e.target.closest('.field-value');
-    if (!el) return;
-    navigator.clipboard.writeText(el.textContent).then(function() {{
-      el.classList.add('copied');
-      setTimeout(function() {{ el.classList.remove('copied'); }}, 2000);
-    }});
-  }});
-}})();
-</script>
-</body>
-</html>"##,
-        base = base,
-        cli_install_command = cli_install_command,
-    );
-
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html)
+pub async fn public_config(State(state): State<AppState>) -> Json<PublicConfigResponse> {
+    Json(PublicConfigResponse {
+        install_command: state.cli_install_command.clone(),
+    })
 }
 
 // ── Room management ─────────────────────────────────────────
@@ -276,8 +92,13 @@ pub async fn create_room(
     let room = state.db.create_room(&req.name).map_err(internal_error)?;
     let resp = CreateRoomResponse {
         install_command: state.cli_install_command.clone(),
-        dashboard_url: format!("{}/r/{}", state.base_url, room.room_id),
-        join_command: cli_join_command(&state.base_url, &room.room_id, &room.secret),
+        dashboard_url: format!("{}/r/{}", trim_url(&state.public_app_url), room.room_id),
+        join_command: cli_join_command(
+            &state.public_api_url,
+            &state.public_app_url,
+            &room.room_id,
+            &room.secret,
+        ),
         room_id: room.room_id,
         secret: room.secret,
     };
@@ -327,6 +148,21 @@ pub async fn ingest_hook_turn(
     ))
 }
 
+pub async fn get_room(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> Result<Json<RoomMetadataResponse>, (StatusCode, String)> {
+    let room = state.db.get_room(&room_id).map_err(internal_error)?;
+    match room {
+        Some(room) => Ok(Json(RoomMetadataResponse {
+            room_id: room.room_id,
+            name: room.name,
+            created_at: room.created_at,
+        })),
+        None => Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}"))),
+    }
+}
+
 pub async fn get_feed(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
@@ -345,6 +181,11 @@ pub async fn stream_feed(
     headers: HeaderMap,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
 {
+    let room = state.db.get_room(&room_id).map_err(internal_error)?;
+    if room.is_none() {
+        return Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}")));
+    }
+
     let replay = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
@@ -419,332 +260,16 @@ pub async fn get_manager_summary(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let room = state.db.get_room(&room_id).map_err(internal_error)?;
+    if room.is_none() {
+        return Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}")));
+    }
+
     let summary = state.db.get_summary(&room_id).map_err(internal_error)?;
     Ok((
         [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
         summary,
     ))
-}
-
-// ── Dashboard ───────────────────────────────────────────────
-
-pub async fn dashboard(
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let room = state.db.get_room(&room_id).map_err(internal_error)?;
-    match room {
-        Some(r) => {
-            let base = &state.base_url;
-            let html = build_dashboard_html(&r.name, &r.room_id, base, &state.cli_install_command);
-            Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html))
-        }
-        None => Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}"))),
-    }
-}
-
-fn build_dashboard_html(
-    name: &str,
-    room_id: &str,
-    base_url: &str,
-    cli_install_command: &str,
-) -> String {
-    let safe_name = html_escape(name);
-    let safe_id = html_escape(room_id);
-    let safe_base = html_escape(base_url);
-    let safe_install_command = html_escape(cli_install_command);
-    let safe_join_command = html_escape(&cli_join_command(base_url, room_id, "YOUR_SECRET"));
-    format!(
-        r##"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{safe_name} — supermanager</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;700;800&display=swap" rel="stylesheet">
-<style>
-*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
-:root{{--bg-deep:#06080d;--bg-primary:#0a0e17;--bg-surface:#0f1420;--bg-elevated:#141a27;--border:#1a2235;--border-hover:#243049;--text-primary:#e2e8f0;--text-secondary:#7a8ba8;--text-muted:#4a5568;--amber:#f59e0b;--amber-dim:#b27308;--amber-glow:rgba(245,158,11,0.12);--emerald:#10b981;--emerald-dim:#0a7c56;--red:#ef4444;--cyan:#22d3ee;--violet:#a78bfa;--mono:'JetBrains Mono',monospace;--sans:'Outfit',sans-serif;}}
-html{{scroll-behavior:smooth}}
-body{{background:var(--bg-deep);color:var(--text-primary);font-family:var(--sans);line-height:1.6;min-height:100vh;position:relative;overflow-x:hidden;}}
-body::before{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(245,158,11,0.06) 0%,transparent 60%),radial-gradient(ellipse 60% 40% at 80% 100%,rgba(16,185,129,0.04) 0%,transparent 50%);}}
-body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.035;background-image:url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cpattern id='g' width='60' height='60' patternUnits='userSpaceOnUse'%3E%3Cpath d='M60 0H0v60' fill='none' stroke='%23fff' stroke-width='0.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect fill='url(%23g)' width='100%25' height='100%25'/%3E%3C/svg%3E");}}
-.shell{{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:32px 20px 80px}}
-.header{{margin-bottom:40px}}
-.header-top{{display:flex;align-items:center;gap:14px;margin-bottom:6px}}
-.logo{{font-family:var(--mono);font-weight:700;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--amber);background:var(--amber-glow);border:1px solid rgba(245,158,11,0.2);padding:4px 10px;border-radius:4px;white-space:nowrap;text-decoration:none;}}
-.logo:hover{{background:rgba(245,158,11,0.18);}}
-.room-name{{font-family:var(--sans);font-weight:800;font-size:2rem;letter-spacing:-0.03em;color:var(--text-primary);line-height:1.1;}}
-.header-meta{{display:flex;align-items:center;gap:16px;font-family:var(--mono);font-size:0.78rem;color:var(--text-muted);}}
-.room-id{{color:var(--text-secondary)}}
-.live-dot{{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-weight:600;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;}}
-.live-dot .dot{{width:7px;height:7px;border-radius:50%;background:var(--text-muted);box-shadow:0 0 0 0 transparent;transition:all 0.4s ease;}}
-.live-dot.connected .dot{{background:var(--emerald);box-shadow:0 0 8px 2px rgba(16,185,129,0.4);animation:pulse 2s ease-in-out infinite;}}
-.live-dot.connected{{color:var(--emerald)}}
-.live-dot.error .dot{{background:var(--red)}}
-.live-dot.error{{color:var(--red)}}
-@keyframes pulse{{0%,100%{{box-shadow:0 0 8px 2px rgba(16,185,129,0.4)}}50%{{box-shadow:0 0 14px 4px rgba(16,185,129,0.2)}}}}
-.panel{{background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;margin-bottom:24px;overflow:hidden;transition:border-color 0.2s;}}
-.panel:hover{{border-color:var(--border-hover)}}
-.panel-head{{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--bg-elevated);}}
-.panel-title{{font-family:var(--mono);font-weight:600;font-size:0.8rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-secondary);}}
-.panel-badge{{font-family:var(--mono);font-size:0.72rem;font-weight:500;color:var(--text-muted);background:var(--bg-primary);padding:2px 10px;border-radius:20px;border:1px solid var(--border);}}
-.panel-body{{padding:20px}}
-.summary-content{{font-family:var(--sans);font-size:0.92rem;color:var(--text-secondary);white-space:pre-wrap;line-height:1.7;}}
-.empty{{color:var(--text-muted);font-style:italic;font-size:0.88rem}}
-.generating{{color:var(--accent);font-style:italic;font-size:0.88rem;animation:pulse 1.5s ease-in-out infinite}}
-@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.5}}}}
-.timeline{{position:relative;padding-left:24px}}
-.timeline::before{{content:'';position:absolute;left:7px;top:8px;bottom:8px;width:1px;background:var(--border);}}
-.note{{position:relative;padding:16px 18px;margin-bottom:16px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;transition:border-color 0.2s, transform 0.2s;animation:noteIn 0.35s ease-out both;}}
-.note:hover{{border-color:var(--border-hover);transform:translateX(2px)}}
-.note::before{{content:'';position:absolute;left:-21px;top:22px;width:9px;height:9px;border-radius:50%;background:var(--bg-surface);border:2px solid var(--amber-dim);z-index:1;}}
-.note:first-child::before{{background:var(--amber);border-color:var(--amber);box-shadow:0 0 10px 2px var(--amber-glow);}}
-@keyframes noteIn{{from{{opacity:0;transform:translateY(8px) translateX(-4px)}}to{{opacity:1;transform:translateY(0) translateX(0)}}}}
-.note-row-top{{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap;}}
-.note-author{{font-family:var(--sans);font-weight:700;font-size:0.95rem;color:var(--text-primary);}}
-.note-time{{font-family:var(--mono);font-size:0.72rem;color:var(--text-muted);letter-spacing:0.02em;cursor:default;}}
-.note-time:hover{{color:var(--text-secondary)}}
-.note-repo-line{{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:0.76rem;margin-bottom:8px;flex-wrap:wrap;}}
-.note-repo{{color:var(--cyan);font-weight:500}}
-.note-branch{{color:var(--violet);font-weight:400}}
-.note-sep{{color:var(--text-muted);font-size:0.7rem}}
-.note-text{{color:var(--text-secondary);font-family:var(--mono);font-size:0.78rem;white-space:pre-wrap;line-height:1.6;overflow-x:auto;}}
-.join-label{{font-family:var(--sans);font-size:0.85rem;color:var(--text-muted);margin-bottom:10px;}}
-.join-cmd{{display:block;font-family:var(--mono);font-size:0.78rem;color:var(--amber);background:var(--bg-deep);border:1px solid var(--border);padding:14px 16px;border-radius:6px;white-space:pre-wrap;word-break:break-all;cursor:pointer;transition:border-color 0.2s, background 0.2s;position:relative;}}
-.join-cmd:hover{{border-color:var(--amber-dim);background:rgba(245,158,11,0.04)}}
-.join-cmd::after{{content:'click to copy';position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:0.65rem;color:var(--text-muted);letter-spacing:0.04em;text-transform:uppercase;opacity:0;transition:opacity 0.2s;}}
-.join-cmd:hover::after{{opacity:1}}
-.join-cmd.copied{{border-color:var(--emerald)}}
-.join-cmd.copied::after{{content:'copied!';color:var(--emerald);opacity:1}}
-.toggle-btn{{display:none;width:100%;margin-top:12px;padding:8px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;color:var(--text-muted);font-family:var(--mono);font-size:0.72rem;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;transition:color 0.2s,border-color 0.2s;}}
-.toggle-btn:hover{{color:var(--text-secondary);border-color:var(--border-hover)}}
-.footer{{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);text-align:center;font-family:var(--mono);font-size:0.68rem;color:var(--text-muted);letter-spacing:0.06em;}}
-@media(max-width:600px){{.shell{{padding:20px 14px 60px}}.room-name{{font-size:1.5rem}}.panel-body{{padding:14px}}.note{{padding:12px 14px}}.timeline{{padding-left:20px}}}}
-</style>
-</head>
-<body>
-<div class="shell">
-  <div class="header">
-    <div class="header-top">
-      <a href="/" class="logo">supermanager</a>
-    </div>
-    <h1 class="room-name">{safe_name}</h1>
-    <div class="header-meta">
-      <span class="room-id">{safe_id}</span>
-      <div id="connection-status" class="live-dot error">
-        <div class="dot"></div>
-        <span class="live-text">connecting</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <span class="panel-title">Connect Agents</span>
-    </div>
-    <div class="panel-body">
-      <p class="join-label">Install the CLI once on each machine, then run the room join command in every repo you want connected.</p>
-      <code id="install-cmd" class="join-cmd">{safe_install_command}</code>
-      <p class="join-label" style="margin-top:16px">The room creator has the full join command with the secret. Ask them for it if you only have the room URL.</p>
-      <code id="join-cmd" class="join-cmd">{safe_join_command}</code>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <span class="panel-title">Manager Summary</span>
-    </div>
-    <div class="panel-body">
-      <div id="summary" class="summary-content empty">No summary yet.</div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <span class="panel-title">Activity Feed</span>
-      <span id="note-count" class="panel-badge">0 updates</span>
-    </div>
-    <div class="panel-body">
-      <div id="feed" class="timeline"></div>
-      <button id="toggle-feed" class="toggle-btn"></button>
-    </div>
-  </div>
-
-  <div class="footer">supermanager &middot; real-time ai coordination</div>
-</div>
-
-<script>
-(function(){{
-  var feed = document.getElementById('feed');
-  var statusEl = document.getElementById('connection-status');
-  var liveText = statusEl.querySelector('.live-text');
-  var countEl = document.getElementById('note-count');
-  var summaryEl = document.getElementById('summary');
-  var events = [];
-  var expanded = false;
-  var FEED_LIMIT = 10;
-  var toggleBtn = document.getElementById('toggle-feed');
-
-  function el(tag, cls, text) {{
-    var e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text) e.textContent = text;
-    return e;
-  }}
-
-  function timeAgo(iso) {{
-    try {{
-      var d = new Date(iso);
-      var now = Date.now();
-      var diff = Math.floor((now - d.getTime()) / 1000);
-      if (diff < 5) return 'just now';
-      if (diff < 60) return diff + 's ago';
-      if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-      if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-      return Math.floor(diff / 86400) + 'd ago';
-    }} catch(e) {{
-      return iso;
-    }}
-  }}
-
-  function fullTime(iso) {{
-    try {{ return new Date(iso).toLocaleString(); }}
-    catch(e) {{ return iso; }}
-  }}
-
-  function formatPayload(payload) {{
-    try {{
-      return JSON.stringify(payload, null, 2);
-    }} catch (e) {{
-      return String(payload);
-    }}
-  }}
-
-  function buildEvent(n, i) {{
-    var card = el('div', 'note');
-    card.style.animationDelay = (i * 0.04) + 's';
-
-    var top = el('div', 'note-row-top');
-    top.appendChild(el('span', 'note-author', n.employee_name));
-    var time = el('span', 'note-time', timeAgo(n.received_at));
-    time.title = fullTime(n.received_at);
-    top.appendChild(time);
-    card.appendChild(top);
-
-    var repoLine = el('div', 'note-repo-line');
-    repoLine.appendChild(el('span', 'note-repo', n.repo_root));
-    if (n.branch) {{
-      repoLine.appendChild(el('span', 'note-sep', '/'));
-      repoLine.appendChild(el('span', 'note-branch', n.branch));
-    }}
-    repoLine.appendChild(el('span', 'note-sep', '/'));
-    repoLine.appendChild(el('span', 'note-branch', n.client));
-    card.appendChild(repoLine);
-    card.appendChild(el('pre', 'note-text', formatPayload(n.payload)));
-    return card;
-  }}
-
-  function renderFeed() {{
-    feed.textContent = '';
-    if (events.length === 0) {{
-      feed.appendChild(el('span', 'empty', 'No updates yet.'));
-      toggleBtn.style.display = 'none';
-    }} else {{
-      var visible = expanded ? events : events.slice(0, FEED_LIMIT);
-      visible.forEach(function(n, i) {{ feed.appendChild(buildEvent(n, i)); }});
-      if (events.length > FEED_LIMIT) {{
-        toggleBtn.style.display = 'block';
-        var hidden = events.length - FEED_LIMIT;
-        toggleBtn.textContent = expanded ? 'Show less' : 'Show ' + hidden + ' more';
-      }} else {{
-        toggleBtn.style.display = 'none';
-      }}
-    }}
-    var label = events.length === 1 ? '1 update' : events.length + ' updates';
-    countEl.textContent = label;
-  }}
-
-  toggleBtn.addEventListener('click', function() {{
-    expanded = !expanded;
-    renderFeed();
-  }});
-
-  setInterval(function() {{
-    var times = feed.querySelectorAll('.note-time');
-    var all = events;
-    times.forEach(function(t, i) {{
-      if (all[i]) t.textContent = timeAgo(all[i].received_at);
-    }});
-  }}, 30000);
-
-  var base = '{safe_base}/r/{safe_id}';
-  fetch(base + '/feed')
-    .then(function(r) {{ return r.json(); }})
-    .then(function(data) {{
-      if (data.events && data.events.length > 0) {{ events = data.events; }}
-      renderFeed();
-    }})
-    .catch(function() {{ renderFeed(); }});
-
-  function loadSummary() {{
-    fetch(base + '/summary')
-      .then(function(r) {{ return r.text(); }})
-      .then(function(text) {{
-        summaryEl.textContent = text || 'No summary yet.';
-        if (!text) summaryEl.className = 'summary-content empty';
-        else summaryEl.className = 'summary-content';
-      }})
-      .catch(function() {{}});
-  }}
-  loadSummary();
-
-  var es = new EventSource(base + '/feed/stream');
-  es.onopen = function() {{
-    liveText.textContent = 'live';
-    statusEl.className = 'live-dot connected';
-  }};
-  es.addEventListener('hook_event', function(e) {{
-    try {{
-      var event = JSON.parse(e.data);
-      events.unshift(event);
-      renderFeed();
-    }} catch(err) {{}}
-  }});
-  es.addEventListener('summary_status', function(e) {{
-    try {{
-      var data = JSON.parse(e.data);
-      if (data.status === 'generating') {{
-        summaryEl.textContent = 'Generating summary...';
-        summaryEl.className = 'summary-content generating';
-      }} else if (data.status === 'ready') {{
-        loadSummary();
-      }} else if (data.status === 'error') {{
-        summaryEl.textContent = 'Summary generation failed.';
-        summaryEl.className = 'summary-content error';
-      }}
-    }} catch(err) {{}}
-  }});
-  es.onerror = function() {{
-    liveText.textContent = 'reconnecting';
-    statusEl.className = 'live-dot error';
-  }};
-
-  document.addEventListener('click', function(e) {{
-    var copyTarget = e.target.closest('.join-cmd');
-    if (!copyTarget) return;
-    navigator.clipboard.writeText(copyTarget.textContent).then(function() {{
-      copyTarget.classList.add('copied');
-      setTimeout(function() {{ copyTarget.classList.remove('copied'); }}, 2000);
-    }});
-  }});
-}})();
-</script>
-</body>
-</html>"##,
-    )
 }
 
 /// Shared: resolve filter args → fetch hook events → format context string.
@@ -939,13 +464,34 @@ fn spawn_auto_summarize(state: &AppState, room_id: &str) {
     });
 }
 
-fn cli_join_command(base_url: &str, room_id: &str, secret: &str) -> String {
+fn cli_join_command(api_url: &str, app_url: &str, room_id: &str, secret: &str) -> String {
     format!(
-        "supermanager join --server \"{}\" --room \"{}\" --secret \"{}\"",
-        base_url.trim_end_matches('/'),
+        "supermanager join --server \"{}\" --app-url \"{}\" --room \"{}\" --secret \"{}\"",
+        trim_url(api_url),
+        trim_url(app_url),
         room_id,
         secret,
     )
+}
+
+pub fn cors_origin(app_url: &str) -> anyhow::Result<HeaderValue> {
+    let url = reqwest::Url::parse(app_url)
+        .with_context(|| format!("failed to parse public app URL: {app_url}"))?;
+    let host = url
+        .host_str()
+        .with_context(|| format!("public app URL must include a host: {app_url}"))?;
+    let mut origin = format!("{}://{}", url.scheme(), host);
+    if let Some(port) = url.port() {
+        origin.push(':');
+        origin.push_str(&port.to_string());
+    }
+
+    HeaderValue::from_str(&origin)
+        .with_context(|| format!("invalid CORS origin derived from public app URL: {origin}"))
+}
+
+fn trim_url(url: &str) -> &str {
+    url.trim_end_matches('/')
 }
 
 fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
@@ -960,9 +506,29 @@ fn hook_event(event: &StoredHookEvent) -> Event {
         .data(data)
 }
 
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_join_command_includes_app_url() {
+        let command = cli_join_command(
+            "https://api.example.com/",
+            "https://app.example.com/",
+            "bright-fox-1",
+            "sm_sec_123",
+        );
+
+        assert_eq!(
+            command,
+            "supermanager join --server \"https://api.example.com\" --app-url \"https://app.example.com\" --room \"bright-fox-1\" --secret \"sm_sec_123\""
+        );
+    }
+
+    #[test]
+    fn cors_origin_uses_only_scheme_host_and_port() {
+        let origin = cors_origin("https://app.example.com/r/room-1").unwrap();
+
+        assert_eq!(origin, HeaderValue::from_static("https://app.example.com"));
+    }
 }

@@ -21,6 +21,8 @@ enum Commands {
         #[arg(long)]
         server: String,
         #[arg(long)]
+        app_url: String,
+        #[arg(long)]
         room: String,
         #[arg(long)]
         secret: String,
@@ -46,6 +48,7 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Join {
             server,
+            app_url,
             room,
             secret,
             cwd,
@@ -53,6 +56,7 @@ fn main() -> Result<()> {
             let repo_dir = cwd.canonicalize().unwrap_or(cwd);
             let outcome = supermanager::join_repo(supermanager::JoinConfig {
                 server_url: server,
+                app_url,
                 room_id: room,
                 secret,
                 repo_dir,
