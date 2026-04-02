@@ -1,7 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, PublicConfigResponse } from "../api";
-import { buildRoomHash, stashRoomSecret } from "../room-credentials";
 
 export function LandingPage() {
   const navigate = useNavigate();
@@ -46,10 +45,8 @@ export function LandingPage() {
 
     try {
       const createdRoom = await api.createRoom(trimmedName);
-      stashRoomSecret(createdRoom.room_id, createdRoom.secret);
       navigate({
         pathname: `/r/${createdRoom.room_id}`,
-        hash: buildRoomHash(createdRoom.secret),
       });
     } catch (requestError) {
       setError(readMessage(requestError));

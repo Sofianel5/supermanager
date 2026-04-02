@@ -5,7 +5,6 @@ export type PublicConfigResponse = {
 export type CreateRoomResponse = {
   install_command: string;
   room_id: string;
-  secret: string;
   dashboard_url: string;
   join_command: string;
 };
@@ -38,17 +37,8 @@ function normalizeBaseUrl(url: string) {
   return url.replace(/\/+$/, "");
 }
 
-function withSecret(path: string, secret?: string | null) {
-  if (!secret) {
-    return path;
-  }
-
-  const separator = path.includes("?") ? "&" : "?";
-  return `${path}${separator}secret=${encodeURIComponent(secret)}`;
-}
-
-function apiUrl(path: string, secret?: string | null) {
-  return `${API_BASE_URL}${withSecret(path, secret)}`;
+function apiUrl(path: string) {
+  return `${API_BASE_URL}${path}`;
 }
 
 async function readError(response: Response) {
@@ -56,20 +46,16 @@ async function readError(response: Response) {
   return body || `Request failed with ${response.status}`;
 }
 
-async function requestJson<T>(
-  path: string,
-  init?: RequestInit,
-  secret?: string | null,
-) {
-  const response = await fetch(apiUrl(path, secret), init);
+async function requestJson<T>(path: string, init?: RequestInit) {
+  const response = await fetch(apiUrl(path), init);
   if (!response.ok) {
     throw new Error(await readError(response));
   }
   return (await response.json()) as T;
 }
 
-async function requestText(path: string, secret?: string | null) {
-  const response = await fetch(apiUrl(path, secret));
+async function requestText(path: string) {
+  const response = await fetch(apiUrl(path));
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -93,26 +79,16 @@ export const api = {
       body: JSON.stringify({ name }),
     });
   },
-  getRoom(roomId: string, secret: string) {
-    return requestJson<RoomMetadataResponse>(
-      `/r/${encodeURIComponent(roomId)}`,
-      undefined,
-      secret,
-    );
+  getRoom(roomId: string) {
+    return requestJson<RoomMetadataResponse>(`/r/${encodeURIComponent(roomId)}`);
   },
-  getFeed(roomId: string, secret: string) {
-    return requestJson<FeedResponse>(
-      `/r/${encodeURIComponent(roomId)}/feed`,
-      undefined,
-      secret,
-    );
+  getFeed(roomId: string) {
+    return requestJson<FeedResponse>(`/r/${encodeURIComponent(roomId)}/feed`);
   },
-  getSummary(roomId: string, secret: string) {
-    return requestText(`/r/${encodeURIComponent(roomId)}/summary`, secret);
+  getSummary(roomId: string) {
+    return requestText(`/r/${encodeURIComponent(roomId)}/summary`);
   },
-  openRoomStream(roomId: string, secret: string) {
-    return new EventSource(
-      apiUrl(`/r/${encodeURIComponent(roomId)}/feed/stream`, secret),
-    );
+  openRoomStream(roomId: string) {
+    return new EventSource(apiUrl(`/r/${encodeURIComponent(roomId)}/feed/stream`));
   },
 };

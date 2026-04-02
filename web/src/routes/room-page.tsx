@@ -1,13 +1,12 @@
 import {
   startTransition,
-  type FormEvent,
   useEffect,
   useEffectEvent,
   useState,
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   api,
   getApiBaseUrl,
@@ -15,22 +14,16 @@ import {
   RoomMetadataResponse,
   StoredHookEvent,
 } from "../api";
-import {
-  buildRoomHash,
-  clearRoomSecret,
-  resolveRoomSecret,
-  stashRoomSecret,
-} from "../room-credentials";
 
 const FEED_LIMIT = 10;
+const DEFAULT_SERVER_URL = "https://supermanager.fly.dev";
+const DEFAULT_APP_URL = "https://supermanager.pages.dev";
 
 type SummaryStatus = "idle" | "ready" | "generating" | "error";
 type ConnectionStatus = "connecting" | "live" | "reconnecting";
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
-  const location = useLocation();
-  const navigate = useNavigate();
   const [config, setConfig] = useState<PublicConfigResponse | null>(null);
   const [room, setRoom] = useState<RoomMetadataResponse | null>(null);
   const [events, setEvents] = useState<StoredHookEvent[]>([]);
@@ -42,26 +35,11 @@ export function RoomPage() {
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
-  const [roomSecret, setRoomSecret] = useState<string | null>(null);
-  const [secretInput, setSecretInput] = useState("");
-  const [secretError, setSecretError] = useState<string | null>(null);
 
   const visibleEvents = expanded ? events : events.slice(0, FEED_LIMIT);
   const hiddenEvents = Math.max(events.length - FEED_LIMIT, 0);
-  const joinSecret = roomSecret ?? "YOUR_SECRET";
-  const joinCommand = `supermanager join --server "${getApiBaseUrl()}" --app-url "${window.location.origin}" --room "${roomId}" --secret "${joinSecret}"`;
-
-  useEffect(() => {
-    const nextSecret = resolveRoomSecret(roomId, location.hash, location.state);
-    if (!nextSecret) {
-      setRoomSecret(null);
-      return;
-    }
-
-    stashRoomSecret(roomId, nextSecret);
-    setRoomSecret(nextSecret);
-    setSecretInput(nextSecret);
-  }, [location.hash, location.state, roomId]);
+  const canonicalRoomId = room?.room_id || roomId;
+  const joinCommand = buildJoinCommand(canonicalRoomId);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -74,11 +52,7 @@ export function RoomPage() {
   }, []);
 
   const refreshSummary = useEffectEvent(async () => {
-    if (!roomSecret) {
-      return;
-    }
-
-    const nextSummary = await api.getSummary(roomId, roomSecret);
+    const nextSummary = await api.getSummary(roomId);
     setSummary(nextSummary || "No summary yet.");
     setSummaryStatus("ready");
   });
@@ -106,20 +80,16 @@ export function RoomPage() {
       setError("Room not found.");
       return;
     }
-    if (!roomSecret) {
-      return;
-    }
 
     let cancelled = false;
     setConnectionStatus("connecting");
     setError(null);
-    setSecretError(null);
 
     Promise.all([
       api.getPublicConfig(),
-      api.getRoom(roomId, roomSecret),
-      api.getFeed(roomId, roomSecret),
-      api.getSummary(roomId, roomSecret),
+      api.getRoom(roomId),
+      api.getFeed(roomId),
+      api.getSummary(roomId),
     ])
       .then(([nextConfig, nextRoom, feed, nextSummary]) => {
         if (cancelled) {
@@ -136,25 +106,11 @@ export function RoomPage() {
       })
       .catch((loadError: unknown) => {
         if (!cancelled) {
-          const message = readMessage(loadError);
-          if (message === "missing secret" || message === "invalid secret") {
-            clearRoomSecret(roomId);
-            setRoomSecret(null);
-            setSecretError("Invalid room secret.");
-            navigate(
-              {
-                pathname: `/r/${roomId}`,
-              },
-              { replace: true },
-            );
-            return;
-          }
-
-          setError(message);
+          setError(readMessage(loadError));
         }
       });
 
-    const stream = api.openRoomStream(roomId, roomSecret);
+    const stream = api.openRoomStream(roomId);
 
     stream.onopen = () => {
       if (!cancelled) {
@@ -189,7 +145,7 @@ export function RoomPage() {
       cancelled = true;
       stream.close();
     };
-  }, [navigate, roomId, roomSecret]);
+  }, [roomId]);
 
   async function copy(label: string, value: string) {
     await navigator.clipboard.writeText(value);
@@ -197,26 +153,6 @@ export function RoomPage() {
     window.setTimeout(() => {
       setCopiedValue((current) => (current === label ? null : current));
     }, 1800);
-  }
-
-  function submitSecret(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextSecret = secretInput.trim();
-    if (!nextSecret) {
-      setSecretError("Enter the room secret.");
-      return;
-    }
-
-    stashRoomSecret(roomId, nextSecret);
-    setSecretError(null);
-    setRoomSecret(nextSecret);
-    navigate(
-      {
-        pathname: `/r/${roomId}`,
-        hash: buildRoomHash(nextSecret),
-      },
-      { replace: true },
-    );
   }
 
   if (error) {
@@ -232,34 +168,6 @@ export function RoomPage() {
     );
   }
 
-  if (!roomSecret) {
-    return (
-      <main className="room-page room-page--error">
-        <div className="section-label">Room access</div>
-        <h1>{roomId || "unknown"}</h1>
-        <p className="message">
-          This room now requires its secret before the dashboard will load.
-        </p>
-        <form className="room-form room-form--gate" onSubmit={submitSecret}>
-          <label htmlFor="room-secret">Room secret</label>
-          <input
-            id="room-secret"
-            type="password"
-            value={secretInput}
-            onChange={(event) => setSecretInput(event.target.value)}
-            placeholder="sm_sec_..."
-            autoComplete="off"
-          />
-          <button type="submit">Open room</button>
-        </form>
-        {secretError && <p className="message message--error">{secretError}</p>}
-        <Link className="inline-link" to="/">
-          Back to room creation
-        </Link>
-      </main>
-    );
-  }
-
   return (
     <main className="room-page">
       <header className="room-header">
@@ -267,7 +175,7 @@ export function RoomPage() {
           <div className="section-label">supermanager</div>
           <h1>{room?.name || roomId}</h1>
           <p className="room-meta">
-            <span>{roomId}</span>
+            <span>{canonicalRoomId}</span>
             <span className={`connection-pill connection-pill--${connectionStatus}`}>
               {connectionStatus}
             </span>
@@ -301,9 +209,9 @@ export function RoomPage() {
           )}
           <CopyPanel
             copiedValue={copiedValue}
-            label="Secret"
+            label="Room code"
             onCopy={copy}
-            value={roomSecret}
+            value={canonicalRoomId}
           />
           <CopyPanel
             copiedValue={copiedValue}
@@ -434,4 +342,14 @@ function formatRelativeTime(isoTimestamp: string, now: number) {
 
 function readMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
+}
+
+function buildJoinCommand(roomId: string) {
+  const apiBaseUrl = getApiBaseUrl();
+  const appUrl = window.location.origin;
+  if (apiBaseUrl === DEFAULT_SERVER_URL && appUrl === DEFAULT_APP_URL) {
+    return `supermanager join ${roomId}`;
+  }
+
+  return `supermanager join ${roomId} --server "${apiBaseUrl}" --app-url "${appUrl}"`;
 }

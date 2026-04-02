@@ -9,17 +9,8 @@ use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
-// ── Slug generation word lists ──────────────────────────────
-
-const ADJECTIVES: &[&str] = &[
-    "bright", "calm", "cool", "dark", "fast", "bold", "keen", "warm", "wild", "free", "swift",
-    "brave", "quiet", "sharp", "clear", "fresh", "grand", "prime", "true", "fair",
-];
-
-const NOUNS: &[&str] = &[
-    "fox", "owl", "bear", "wolf", "hawk", "deer", "lynx", "crow", "dove", "hare", "lion", "seal",
-    "wren", "orca", "puma", "swan", "moth", "frog", "newt", "mink",
-];
+const ROOM_CODE_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const ROOM_CODE_LENGTH: usize = 6;
 
 // ── Database wrapper ────────────────────────────────────────
 
@@ -39,7 +30,6 @@ impl Db {
             "CREATE TABLE IF NOT EXISTS rooms (
                 room_id    TEXT PRIMARY KEY,
                 name       TEXT NOT NULL,
-                secret     TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
 
@@ -63,6 +53,10 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_hook_events_room_received
                 ON hook_events(room_id, received_at);",
         )?;
+
+        if rooms_table_has_column(&conn, "secret")? {
+            conn.execute_batch("ALTER TABLE rooms DROP COLUMN secret;")?;
+        }
 
         // ── Migrations for existing DBs ────────────────────────
         // Add status column to summaries if missing
@@ -98,70 +92,55 @@ impl Db {
 
     // ── Rooms ───────────────────────────────────────────────
 
-    /// Create a new room with an auto-generated slug and secret.
+    /// Create a new room with an auto-generated 6-character code.
     pub fn create_room(&self, name: &str) -> Result<Room> {
         let conn = self.conn.lock().unwrap();
         let mut rng = rand::rng();
-        let secret = generate_secret(&mut rng);
         let created_at = now_rfc3339();
 
-        // Try generating a unique slug (retry on collision).
+        // Try generating a unique room code (retry on collision).
         let room_id = loop {
-            let slug = generate_slug(&mut rng);
+            let code = generate_room_code(&mut rng);
             let exists: bool = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM rooms WHERE room_id = ?1)",
-                params![slug],
+                "SELECT EXISTS(SELECT 1 FROM rooms WHERE room_id = ?1 COLLATE NOCASE)",
+                params![code],
                 |row| row.get(0),
             )?;
             if !exists {
-                break slug;
+                break code;
             }
         };
 
         conn.execute(
-            "INSERT INTO rooms (room_id, name, secret, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![room_id, name, secret, created_at],
+            "INSERT INTO rooms (room_id, name, created_at)
+             VALUES (?1, ?2, ?3)",
+            params![room_id, name, created_at],
         )?;
 
         Ok(Room {
             room_id,
             name: name.to_owned(),
-            secret,
             created_at,
         })
     }
 
-    /// Retrieve a room by its slug, or `None` if it does not exist.
+    /// Retrieve a room by its code, or `None` if it does not exist.
     pub fn get_room(&self, room_id: &str) -> Result<Option<Room>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt =
-            conn.prepare("SELECT room_id, name, secret, created_at FROM rooms WHERE room_id = ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT room_id, name, created_at FROM rooms WHERE room_id = ?1 COLLATE NOCASE",
+        )?;
         let mut rows = stmt.query_map(params![room_id], |row| {
             Ok(Room {
                 room_id: row.get(0)?,
                 name: row.get(1)?,
-                secret: row.get(2)?,
-                created_at: row.get(3)?,
+                created_at: row.get(2)?,
             })
         })?;
         match rows.next() {
             Some(row) => Ok(Some(row?)),
             None => Ok(None),
         }
-    }
-
-    /// Return `true` if the supplied secret matches the room's secret.
-    pub fn verify_room_secret(&self, room_id: &str, secret: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let result: Option<String> = conn
-            .query_row(
-                "SELECT secret FROM rooms WHERE room_id = ?1",
-                params![room_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(result.as_deref() == Some(secret))
     }
 
     /// Insert a raw hook turn event into a room.
@@ -422,17 +401,25 @@ impl<T> OptionalExt<T> for Result<T, rusqlite::Error> {
     }
 }
 
-fn generate_slug(rng: &mut impl Rng) -> String {
-    let adj = ADJECTIVES[rng.random_range(0..ADJECTIVES.len())];
-    let noun = NOUNS[rng.random_range(0..NOUNS.len())];
-    let num: u32 = rng.random_range(1..100);
-    format!("{adj}-{noun}-{num}")
+fn rooms_table_has_column(conn: &Connection, column: &str) -> Result<bool> {
+    let mut stmt = conn.prepare("PRAGMA table_info(rooms)")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
-fn generate_secret(rng: &mut impl Rng) -> String {
-    let bytes: [u8; 16] = rng.random();
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!("sm_sec_{hex}")
+fn generate_room_code(rng: &mut impl Rng) -> String {
+    (0..ROOM_CODE_LENGTH)
+        .map(|_| {
+            let idx = rng.random_range(0..ROOM_CODE_ALPHABET.len());
+            ROOM_CODE_ALPHABET[idx] as char
+        })
+        .collect()
 }
 
 pub fn now_rfc3339() -> String {

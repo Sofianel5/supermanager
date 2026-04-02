@@ -4,8 +4,8 @@ use anyhow::{Context, bail};
 use async_stream::stream;
 use axum::{
     Json,
-    extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    extract::{Path, State},
+    http::{StatusCode, header},
     response::{
         IntoResponse,
         sse::{Event, KeepAlive, Sse},
@@ -13,13 +13,15 @@ use axum::{
 };
 use reporter_protocol::{
     CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse,
-    PublicConfigResponse, RoomMetadataResponse, StoredHookEvent,
+    PublicConfigResponse, Room, RoomMetadataResponse, StoredHookEvent,
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 use crate::store::Db;
+
+const DEFAULT_PUBLIC_API_URL: &str = "https://supermanager.fly.dev";
+const DEFAULT_PUBLIC_APP_URL: &str = "https://supermanager.pages.dev";
 
 // ── Shared state ────────────────────────────────────────────
 
@@ -47,30 +49,6 @@ pub struct AppState {
     pub openai_api_key: Option<String>,
 }
 
-// ── Query params ────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct SecretQuery {
-    pub secret: Option<String>,
-}
-
-// ── Helper: extract secret from header or query ─────────────
-
-fn extract_secret(headers: &HeaderMap, query: &SecretQuery) -> Option<String> {
-    // Try Authorization: Bearer <secret> first
-    if let Some(auth) = headers.get(header::AUTHORIZATION)
-        && let Ok(val) = auth.to_str()
-        && let Some(token) = val.strip_prefix("Bearer ")
-    {
-        let token = token.trim();
-        if !token.is_empty() {
-            return Some(token.to_owned());
-        }
-    }
-    // Fall back to query param
-    query.secret.clone().filter(|s| !s.is_empty())
-}
-
 // ── Health ──────────────────────────────────────────────────
 
 pub async fn health() -> &'static str {
@@ -92,49 +70,22 @@ pub async fn create_room(
     let room = state.db.create_room(&req.name).map_err(internal_error)?;
     let resp = CreateRoomResponse {
         install_command: state.cli_install_command.clone(),
-        dashboard_url: dashboard_url(&state.public_app_url, &room.room_id, &room.secret),
-        join_command: cli_join_command(
-            &state.public_api_url,
-            &state.public_app_url,
-            &room.room_id,
-            &room.secret,
-        ),
+        dashboard_url: dashboard_url(&state.public_app_url, &room.room_id),
+        join_command: cli_join_command(&state.public_api_url, &state.public_app_url, &room.room_id),
         room_id: room.room_id,
-        secret: room.secret,
     };
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
 // ── Room-scoped routes ──────────────────────────────────────
 
-fn require_room_access(
-    state: &AppState,
-    room_id: &str,
-    headers: &HeaderMap,
-    query: &SecretQuery,
-) -> Result<(), (StatusCode, String)> {
-    let secret = extract_secret(headers, query)
-        .ok_or((StatusCode::UNAUTHORIZED, "missing secret".to_owned()))?;
-
-    let valid = state
-        .db
-        .verify_room_secret(room_id, &secret)
-        .map_err(internal_error)?;
-    if !valid {
-        return Err((StatusCode::UNAUTHORIZED, "invalid secret".to_owned()));
-    }
-
-    Ok(())
-}
-
 pub async fn ingest_hook_turn(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    headers: HeaderMap,
-    Query(query): Query<SecretQuery>,
     Json(report): Json<HookTurnReport>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    require_room_access(&state, &room_id, &headers, &query)?;
+    let room = resolve_room(&state, &room_id)?;
+    let room_id = room.room_id;
 
     let stored = state
         .db
@@ -162,28 +113,21 @@ pub async fn ingest_hook_turn(
 pub async fn get_room(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    headers: HeaderMap,
-    Query(query): Query<SecretQuery>,
 ) -> Result<Json<RoomMetadataResponse>, (StatusCode, String)> {
-    require_room_access(&state, &room_id, &headers, &query)?;
-    let room = state.db.get_room(&room_id).map_err(internal_error)?;
-    match room {
-        Some(room) => Ok(Json(RoomMetadataResponse {
-            room_id: room.room_id,
-            name: room.name,
-            created_at: room.created_at,
-        })),
-        None => Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}"))),
-    }
+    let room = resolve_room(&state, &room_id)?;
+    Ok(Json(RoomMetadataResponse {
+        room_id: room.room_id,
+        name: room.name,
+        created_at: room.created_at,
+    }))
 }
 
 pub async fn get_feed(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    headers: HeaderMap,
-    Query(query): Query<SecretQuery>,
 ) -> Result<Json<FeedResponse>, (StatusCode, String)> {
-    require_room_access(&state, &room_id, &headers, &query)?;
+    let room = resolve_room(&state, &room_id)?;
+    let room_id = room.room_id;
     let events = state.db.get_hook_events(&room_id).map_err(internal_error)?;
     Ok(Json(FeedResponse { events }))
 }
@@ -191,11 +135,11 @@ pub async fn get_feed(
 pub async fn stream_feed(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    headers: HeaderMap,
-    Query(query): Query<SecretQuery>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
 {
-    require_room_access(&state, &room_id, &headers, &query)?;
+    let room = resolve_room(&state, &room_id)?;
+    let room_id = room.room_id;
 
     let replay = headers
         .get("last-event-id")
@@ -270,10 +214,9 @@ pub async fn stream_feed(
 pub async fn get_manager_summary(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-    headers: HeaderMap,
-    Query(query): Query<SecretQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    require_room_access(&state, &room_id, &headers, &query)?;
+    let room = resolve_room(&state, &room_id)?;
+    let room_id = room.room_id;
     let summary = state.db.get_summary(&room_id).map_err(internal_error)?;
     Ok((
         [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
@@ -473,18 +416,26 @@ fn spawn_auto_summarize(state: &AppState, room_id: &str) {
     });
 }
 
-fn cli_join_command(api_url: &str, app_url: &str, room_id: &str, secret: &str) -> String {
-    format!(
-        "supermanager join --server \"{}\" --app-url \"{}\" --room \"{}\" --secret \"{}\"",
-        trim_url(api_url),
-        trim_url(app_url),
-        room_id,
-        secret,
-    )
+fn resolve_room(state: &AppState, room_id: &str) -> Result<Room, (StatusCode, String)> {
+    state
+        .db
+        .get_room(room_id)
+        .map_err(internal_error)?
+        .ok_or((StatusCode::NOT_FOUND, format!("room not found: {room_id}")))
 }
 
-fn dashboard_url(app_url: &str, room_id: &str, secret: &str) -> String {
-    format!("{}/r/{room_id}#secret={secret}", trim_url(app_url))
+fn cli_join_command(api_url: &str, app_url: &str, room_id: &str) -> String {
+    let api_url = trim_url(api_url);
+    let app_url = trim_url(app_url);
+    if api_url == DEFAULT_PUBLIC_API_URL && app_url == DEFAULT_PUBLIC_APP_URL {
+        return format!("supermanager join {room_id}");
+    }
+
+    format!("supermanager join {room_id} --server \"{api_url}\" --app-url \"{app_url}\"")
+}
+
+fn dashboard_url(app_url: &str, room_id: &str) -> String {
+    format!("{}/r/{room_id}", trim_url(app_url))
 }
 
 fn trim_url(url: &str) -> &str {
@@ -513,19 +464,29 @@ mod tests {
             "https://api.example.com/",
             "https://app.example.com/",
             "bright-fox-1",
-            "sm_sec_123",
         );
 
         assert_eq!(
             command,
-            "supermanager join --server \"https://api.example.com\" --app-url \"https://app.example.com\" --room \"bright-fox-1\" --secret \"sm_sec_123\""
+            "supermanager join bright-fox-1 --server \"https://api.example.com\" --app-url \"https://app.example.com\""
         );
     }
 
     #[test]
-    fn dashboard_url_uses_secret_fragment() {
-        let url = dashboard_url("https://app.example.com/", "bright-fox-1", "sm_sec_123");
+    fn cli_join_command_uses_short_form_for_default_deployment() {
+        let command = cli_join_command(
+            "https://supermanager.fly.dev/",
+            "https://supermanager.pages.dev/",
+            "ABC123",
+        );
 
-        assert_eq!(url, "https://app.example.com/r/bright-fox-1#secret=sm_sec_123");
+        assert_eq!(command, "supermanager join ABC123");
+    }
+
+    #[test]
+    fn dashboard_url_is_room_path() {
+        let url = dashboard_url("https://app.example.com/", "bright-fox-1");
+
+        assert_eq!(url, "https://app.example.com/r/bright-fox-1");
     }
 }

@@ -8,7 +8,7 @@ Supermanager reports work through Claude Code and Codex hooks rather than a sepa
 - Codex uses repo-local command hooks in `.codex/hooks.json`
 - Both tools run hooks for `UserPromptSubmit` and `Stop`
 - Both tools call `supermanager hook-report --client ...`
-- The CLI reads the raw hook payload from `stdin`, resolves repo metadata, and posts metadata plus the raw payload to `POST /r/{room_id}/hooks/turn?secret=...`
+- The CLI reads the raw hook payload from `stdin`, resolves repo metadata, and posts metadata plus the raw payload to `POST /r/{room_id}/hooks/turn`
 - The server stores the raw hook event, serves it directly in the feed, and forwards raw JSON updates to the summary model
 
 ## Why command hooks for both
@@ -56,7 +56,7 @@ It also removes the old repo-local supermanager MCP config and injected instruct
 
 When a hook event arrives:
 
-1. The room secret is verified
+1. The room code is resolved
 2. The raw event is stored in `hook_events`
 3. SSE subscribers receive the stored hook event
 4. The background summary job reruns
