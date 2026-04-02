@@ -5,6 +5,8 @@ import {
   useEffectEvent,
   useState,
 } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   api,
@@ -285,7 +287,7 @@ export function RoomPage() {
                 {summaryStatus === "idle" ? "loading" : summaryStatus}
               </span>
             </div>
-            <p className={`summary-copy summary-copy--${summaryStatus}`}>{summaryText(summaryStatus, summary)}</p>
+            <SummaryContent summary={summary} summaryStatus={summaryStatus} />
           </div>
 
           <div className="room-section">
@@ -391,14 +393,33 @@ function CopyPanel({
   );
 }
 
-function summaryText(summaryStatus: SummaryStatus, summary: string) {
+function SummaryContent({
+  summary,
+  summaryStatus,
+}: {
+  summary: string;
+  summaryStatus: SummaryStatus;
+}) {
   if (summaryStatus === "generating") {
-    return "Generating summary...";
+    return (
+      <p className="summary-copy summary-copy--generating">
+        Generating summary...
+      </p>
+    );
   }
   if (summaryStatus === "error") {
-    return "Summary generation failed.";
+    return (
+      <p className="summary-copy summary-copy--error">
+        Summary generation failed.
+      </p>
+    );
   }
-  return summary;
+
+  return (
+    <div className="summary-copy">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
+    </div>
+  );
 }
 
 function formatPayload(payload: unknown) {
