@@ -55,7 +55,17 @@ impl Db {
         )?;
 
         if rooms_table_has_column(&conn, "secret")? {
-            conn.execute_batch("ALTER TABLE rooms DROP COLUMN secret;")?;
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS rooms_new (
+                    room_id    TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO rooms_new (room_id, name, created_at)
+                    SELECT room_id, name, created_at FROM rooms;
+                DROP TABLE rooms;
+                ALTER TABLE rooms_new RENAME TO rooms;",
+            )?;
         }
 
         // ── Migrations for existing DBs ────────────────────────
@@ -99,16 +109,22 @@ impl Db {
         let created_at = now_rfc3339();
 
         // Try generating a unique room code (retry on collision).
-        let room_id = loop {
-            let code = generate_room_code(&mut rng);
-            let exists: bool = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM rooms WHERE room_id = ?1 COLLATE NOCASE)",
-                params![code],
-                |row| row.get(0),
-            )?;
-            if !exists {
-                break code;
+        let room_id = {
+            let max_attempts = 10;
+            let mut code = None;
+            for _ in 0..max_attempts {
+                let candidate = generate_room_code(&mut rng);
+                let exists: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM rooms WHERE room_id = ?1 COLLATE NOCASE)",
+                    params![candidate],
+                    |row| row.get(0),
+                )?;
+                if !exists {
+                    code = Some(candidate);
+                    break;
+                }
             }
+            code.ok_or_else(|| anyhow::anyhow!("failed to generate unique room code after {max_attempts} attempts"))?
         };
 
         conn.execute(
