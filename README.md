@@ -18,7 +18,7 @@ To customize the public URLs and one-time CLI install command:
 cargo run -p coordination-server -- \
   --public-api-url 'http://127.0.0.1:8787' \
   --public-app-url 'http://127.0.0.1:5173' \
-  --cli-install-command 'cargo install --git https://github.com/your-org/supermanager.git supermanager'
+  --cli-install-command 'curl -fsSL https://supermanager.dev/install.sh | sh'
 ```
 
 You can also configure these through environment variables:
@@ -46,8 +46,10 @@ cargo install --path crates/supermanager-cli
 Or directly from Git:
 
 ```sh
-cargo install --git https://github.com/Sofianel5/supermanager.git supermanager
+curl -fsSL https://supermanager.dev/install.sh | sh
 ```
+
+The installer downloads the latest GitHub Release for your platform, verifies the published SHA-256 checksum, and installs `supermanager` into `~/.local/bin` by default.
 
 ### 4. Create a room
 
@@ -181,8 +183,9 @@ The GitHub Actions assumed role needs permission to start the CodeBuild project 
 
 The workflow uses `aws-actions/configure-aws-credentials` with GitHub OIDC, so no long-lived AWS keys are required in GitHub.
 
-Set the backend runtime environment on Fly so the API can generate correct dashboard links and join commands:
+Set the backend runtime environment on Fly so the API can generate correct dashboard links and install/join commands:
 
+- `SUPERMANAGER_CLI_INSTALL_COMMAND`
 - `SUPERMANAGER_PUBLIC_API_URL`
 - `SUPERMANAGER_PUBLIC_APP_URL`
 - `OPENAI_API_KEY`
@@ -206,3 +209,18 @@ Add these repository secrets:
 - `CLOUDFLARE_ACCOUNT_ID`
 
 The workflow runs on pushes to `master` when `web/**` changes, builds the Vite app, and deploys `web/dist` to Pages.
+
+## CLI release distribution
+
+`install.sh` is served from `web/public/install.sh`, so the Pages deployment publishes it at `https://supermanager.dev/install.sh` once the custom domain points at the Pages project.
+
+Tagging a version like `v0.2.0` triggers `.github/workflows/release-cli.yml`, which:
+
+- builds release archives for macOS Apple Silicon, macOS Intel, and Linux x86_64
+- generates `supermanager-checksums.txt`
+- uploads the archives and checksums to the GitHub Release for that tag
+
+The installer downloads from the release endpoint:
+
+- `https://github.com/Sofianel5/supermanager/releases/latest/download/supermanager-<target>.tar.gz`
+- `https://github.com/Sofianel5/supermanager/releases/latest/download/supermanager-checksums.txt`

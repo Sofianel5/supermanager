@@ -31,7 +31,7 @@ const REPORT_TIMEOUT_SECONDS: u64 = 5;
 const API_TIMEOUT_SECONDS: u64 = 10;
 
 pub const DEFAULT_SERVER_URL: &str = "https://supermanager.fly.dev";
-pub const DEFAULT_APP_URL: &str = "https://supermanager.pages.dev";
+pub const DEFAULT_APP_URL: &str = "https://supermanager.dev";
 
 pub struct JoinConfig {
     pub server_url: String,

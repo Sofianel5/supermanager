@@ -21,7 +21,7 @@ use tokio::sync::broadcast;
 use crate::store::Db;
 
 const DEFAULT_PUBLIC_API_URL: &str = "https://supermanager.fly.dev";
-const DEFAULT_PUBLIC_APP_URL: &str = "https://supermanager.pages.dev";
+const DEFAULT_PUBLIC_APP_URL: &str = "https://supermanager.dev";
 
 // ── Shared state ────────────────────────────────────────────
 
@@ -476,7 +476,7 @@ mod tests {
     fn cli_join_command_uses_short_form_for_default_deployment() {
         let command = cli_join_command(
             "https://supermanager.fly.dev/",
-            "https://supermanager.pages.dev/",
+            "https://supermanager.dev/",
             "ABC123",
         );
 
