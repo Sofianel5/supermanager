@@ -1,0 +1,60 @@
+name: Deploy Web
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/deploy-web.yml
+      - web/**
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-web-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare Pages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      VITE_API_BASE_URL: ${{ vars.SUPERMANAGER_PUBLIC_API_URL }}
+      CLOUDFLARE_PAGES_PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+    steps:
+      - name: Validate required configuration
+        run: |
+          set -euo pipefail
+          for name in VITE_API_BASE_URL CLOUDFLARE_PAGES_PROJECT_NAME; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub Actions variable ${name}"
+              exit 1
+            fi
+          done
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install web dependencies
+        working-directory: web
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Build web app
+        working-directory: web
+        run: corepack pnpm build
+
+      - name: Deploy Pages site
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: web
+          command: pages deploy dist --project-name=${{ env.CLOUDFLARE_PAGES_PROJECT_NAME }}

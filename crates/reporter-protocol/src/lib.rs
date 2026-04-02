@@ -38,6 +38,18 @@ pub struct CreateRoomResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicConfigResponse {
+    pub install_command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomMetadataResponse {
+    pub room_id: String,
+    pub name: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookTurnReport {
     pub employee_name: String,
     pub client: String,

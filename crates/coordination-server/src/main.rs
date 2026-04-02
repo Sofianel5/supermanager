@@ -6,10 +6,12 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use anyhow::Result;
 use axum::{
     Router,
+    http::{HeaderName, Method, header},
     routing::{get, post},
 };
 use clap::Parser;
 use tokio::sync::broadcast;
+use tower_http::cors::CorsLayer;
 
 use api::AppState;
 use store::Db;
@@ -21,10 +23,21 @@ struct Cli {
     bind: SocketAddr,
     #[arg(long, default_value = "supermanager.db")]
     db_path: PathBuf,
-    #[arg(long, default_value = "http://127.0.0.1:8787")]
-    base_url: String,
     #[arg(
         long,
+        env = "SUPERMANAGER_PUBLIC_API_URL",
+        default_value = "http://127.0.0.1:8787"
+    )]
+    public_api_url: String,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_PUBLIC_APP_URL",
+        default_value = "http://127.0.0.1:5173"
+    )]
+    public_app_url: String,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_CLI_INSTALL_COMMAND",
         default_value = "cargo install --git https://github.com/Sofianel5/supermanager.git supermanager"
     )]
     cli_install_command: String,
@@ -34,6 +47,7 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let db = Arc::new(Db::open(&cli.db_path)?);
+    let allowed_origin = api::cors_origin(&cli.public_app_url)?;
 
     let (hook_events, _) = broadcast::channel(256);
     let (summary_events, _) = broadcast::channel(64);
@@ -42,25 +56,35 @@ async fn main() -> Result<()> {
         db,
         hook_events,
         summary_events,
-        base_url: cli.base_url,
+        public_api_url: cli.public_api_url,
+        public_app_url: cli.public_app_url,
         cli_install_command: cli.cli_install_command,
         http: reqwest::Client::new(),
         openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
     };
 
     let app = Router::new()
+        .route("/config", get(api::public_config))
         // ── Room management ──────────────────────────────
         .route("/v1/rooms", post(api::create_room))
         // ── Room-scoped routes ───────────────────────────
-        .route("/r/{room_id}", get(api::dashboard))
+        .route("/r/{room_id}", get(api::get_room))
         .route("/r/{room_id}/feed", get(api::get_feed))
         .route("/r/{room_id}/feed/stream", get(api::stream_feed))
         .route("/r/{room_id}/hooks/turn", post(api::ingest_hook_turn))
         .route("/r/{room_id}/summary", get(api::get_manager_summary))
-        // ── Landing page ────────────────────────────────
-        .route("/", get(api::landing_page))
         // ── Health ───────────────────────────────────────
         .route("/health", get(api::health))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(allowed_origin)
+                .allow_methods([Method::GET, Method::POST])
+                .allow_headers([
+                    header::CONTENT_TYPE,
+                    header::AUTHORIZATION,
+                    HeaderName::from_static("last-event-id"),
+                ]),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;
