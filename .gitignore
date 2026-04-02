@@ -11,3 +11,4 @@
 .env
 AGENTS.md
 CLAUDE.md
+web/dist/
