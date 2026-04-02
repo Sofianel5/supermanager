@@ -1,35 +1,13 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, PublicConfigResponse } from "../api";
+import { api } from "../api";
 
 export function LandingPage() {
   const navigate = useNavigate();
-  const [config, setConfig] = useState<PublicConfigResponse | null>(null);
   const [name, setName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    api
-      .getPublicConfig()
-      .then((nextConfig) => {
-        if (!cancelled) {
-          setConfig(nextConfig);
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) {
-          setError(readMessage(loadError));
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -88,6 +66,18 @@ export function LandingPage() {
         </div>
 
         <div className="landing-column landing-column--form">
+          <div className="section-label">Install</div>
+          <button
+            className="copy-sheet"
+            type="button"
+            onClick={() => copy("install", "curl -fsSL https://supermanager.dev/install.sh | sh")}
+          >
+            <span className="copy-label">
+              {copiedValue === "install" ? "copied" : "click to copy"}
+            </span>
+            <code>curl -fsSL https://supermanager.dev/install.sh | sh</code>
+          </button>
+
           <div className="section-label">Create from browser</div>
           <form className="room-form" onSubmit={handleSubmit}>
             <label htmlFor="room-name">Team or room name</label>
@@ -102,19 +92,6 @@ export function LandingPage() {
               {isCreating ? "Creating room..." : "Create room"}
             </button>
           </form>
-
-          {config && (
-            <button
-              className="copy-sheet"
-              type="button"
-              onClick={() => copy("install", config.install_command)}
-            >
-              <span className="copy-label">
-                Install CLI once {copiedValue === "install" ? "copied" : "click to copy"}
-              </span>
-              <code>{config.install_command}</code>
-            </button>
-          )}
 
           {error && <p className="message message--error">{error}</p>}
         </div>

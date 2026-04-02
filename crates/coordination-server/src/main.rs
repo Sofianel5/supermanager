@@ -35,12 +35,6 @@ struct Cli {
         default_value = "http://127.0.0.1:5173"
     )]
     public_app_url: String,
-    #[arg(
-        long,
-        env = "SUPERMANAGER_CLI_INSTALL_COMMAND",
-        default_value = "curl -fsSL https://supermanager.dev/install.sh | sh"
-    )]
-    cli_install_command: String,
 }
 
 #[tokio::main]
@@ -57,13 +51,11 @@ async fn main() -> Result<()> {
         summary_events,
         public_api_url: cli.public_api_url,
         public_app_url: cli.public_app_url,
-        cli_install_command: cli.cli_install_command,
         http: reqwest::Client::new(),
         openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
     };
 
     let app = Router::new()
-        .route("/config", get(api::public_config))
         // ── Room management ──────────────────────────────
         .route("/v1/rooms", post(api::create_room))
         // ── Room-scoped routes ───────────────────────────

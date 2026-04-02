@@ -13,7 +13,7 @@ use axum::{
 };
 use reporter_protocol::{
     CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse,
-    PublicConfigResponse, Room, RoomMetadataResponse, StoredHookEvent,
+    Room, RoomMetadataResponse, StoredHookEvent,
 };
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -44,7 +44,6 @@ pub struct AppState {
     pub summary_events: broadcast::Sender<SummaryStatusEvent>,
     pub public_api_url: String,
     pub public_app_url: String,
-    pub cli_install_command: String,
     pub http: reqwest::Client,
     pub openai_api_key: Option<String>,
 }
@@ -55,12 +54,6 @@ pub async fn health() -> &'static str {
     "ok"
 }
 
-pub async fn public_config(State(state): State<AppState>) -> Json<PublicConfigResponse> {
-    Json(PublicConfigResponse {
-        install_command: state.cli_install_command.clone(),
-    })
-}
-
 // ── Room management ─────────────────────────────────────────
 
 pub async fn create_room(
@@ -69,7 +62,6 @@ pub async fn create_room(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let room = state.db.create_room(&req.name).map_err(internal_error)?;
     let resp = CreateRoomResponse {
-        install_command: state.cli_install_command.clone(),
         dashboard_url: dashboard_url(&state.public_app_url, &room.room_id),
         join_command: cli_join_command(&state.public_api_url, &state.public_app_url, &room.room_id),
         room_id: room.room_id,

@@ -1,9 +1,4 @@
-export type PublicConfigResponse = {
-  install_command: string;
-};
-
 export type CreateRoomResponse = {
-  install_command: string;
   room_id: string;
   dashboard_url: string;
   join_command: string;
@@ -67,9 +62,6 @@ export function getApiBaseUrl() {
 }
 
 export const api = {
-  getPublicConfig() {
-    return requestJson<PublicConfigResponse>("/config");
-  },
   createRoom(name: string) {
     return requestJson<CreateRoomResponse>("/v1/rooms", {
       method: "POST",

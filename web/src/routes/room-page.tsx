@@ -10,7 +10,6 @@ import { Link, useParams } from "react-router-dom";
 import {
   api,
   getApiBaseUrl,
-  PublicConfigResponse,
   RoomMetadataResponse,
   StoredHookEvent,
 } from "../api";
@@ -24,7 +23,6 @@ type ConnectionStatus = "connecting" | "live" | "reconnecting";
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
-  const [config, setConfig] = useState<PublicConfigResponse | null>(null);
   const [room, setRoom] = useState<RoomMetadataResponse | null>(null);
   const [events, setEvents] = useState<StoredHookEvent[]>([]);
   const [summary, setSummary] = useState("No summary yet.");
@@ -86,18 +84,16 @@ export function RoomPage() {
     setError(null);
 
     Promise.all([
-      api.getPublicConfig(),
       api.getRoom(roomId),
       api.getFeed(roomId),
       api.getSummary(roomId),
     ])
-      .then(([nextConfig, nextRoom, feed, nextSummary]) => {
+      .then(([nextRoom, feed, nextSummary]) => {
         if (cancelled) {
           return;
         }
 
         startTransition(() => {
-          setConfig(nextConfig);
           setRoom(nextRoom);
           setEvents(feed.events);
           setSummary(nextSummary || "No summary yet.");
@@ -199,14 +195,12 @@ export function RoomPage() {
 
         <div className="room-section">
           <div className="section-label">Room info</div>
-          {config && (
-            <CopyPanel
-              copiedValue={copiedValue}
-              label="Install CLI"
-              onCopy={copy}
-              value={config.install_command}
-            />
-          )}
+          <CopyPanel
+            copiedValue={copiedValue}
+            label="Install CLI"
+            onCopy={copy}
+            value="curl -fsSL https://supermanager.dev/install.sh | sh"
+          />
           <CopyPanel
             copiedValue={copiedValue}
             label="Room code"

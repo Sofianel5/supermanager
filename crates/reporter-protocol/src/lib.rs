@@ -29,15 +29,9 @@ pub struct CreateRoomRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateRoomResponse {
-    pub install_command: String,
     pub room_id: String,
     pub dashboard_url: String,
     pub join_command: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PublicConfigResponse {
-    pub install_command: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
