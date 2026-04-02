@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use rand::Rng;
 use reporter_protocol::{HookTurnReport, Room, StoredHookEvent};
 use rusqlite::{Connection, params};
-use serde_json::{Value, json};
+use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
@@ -65,13 +65,8 @@ impl Db {
                 room_id        TEXT NOT NULL REFERENCES rooms(room_id),
                 employee_name  TEXT NOT NULL,
                 client         TEXT NOT NULL,
-                event_name     TEXT NOT NULL,
-                session_id     TEXT NOT NULL,
-                turn_id        TEXT,
                 repo_root      TEXT NOT NULL,
-                cwd            TEXT,
                 branch         TEXT,
-                content        TEXT NOT NULL,
                 payload_json   TEXT,
                 received_at    TEXT NOT NULL
             );
@@ -191,22 +186,17 @@ impl Db {
 
         conn.execute(
             "INSERT INTO hook_events (
-                event_id, room_id, employee_name, client, event_name, session_id, turn_id,
-                repo_root, cwd, branch, content, payload_json, received_at
+                event_id, room_id, employee_name, client, repo_root, branch, payload_json,
+                received_at
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 event_id.to_string(),
                 room_id,
                 report.employee_name,
                 report.client,
-                "",
-                "",
-                Option::<String>::None,
                 report.repo_root,
                 report.branch,
-                Option::<String>::None,
-                payload_json.clone(),
                 payload_json,
                 received_at,
             ],
@@ -227,8 +217,7 @@ impl Db {
     pub fn get_hook_events(&self, room_id: &str) -> Result<Vec<StoredHookEvent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT event_id, employee_name, client, repo_root, branch, payload_json,
-                    event_name, session_id, turn_id, cwd, content, received_at
+            "SELECT event_id, employee_name, client, repo_root, branch, payload_json, received_at
              FROM hook_events WHERE room_id = ?1
              ORDER BY received_at DESC",
         )?;
@@ -261,8 +250,7 @@ impl Db {
         };
 
         let mut stmt = conn.prepare(
-            "SELECT event_id, employee_name, client, repo_root, branch, payload_json,
-                    event_name, session_id, turn_id, cwd, content, received_at
+            "SELECT event_id, employee_name, client, repo_root, branch, payload_json, received_at
              FROM hook_events
              WHERE room_id = ?1 AND received_at > ?2
              ORDER BY received_at ASC",
@@ -327,8 +315,7 @@ impl Db {
 
         let where_clause = conditions.join(" AND ");
         let sql = format!(
-            "SELECT event_id, employee_name, client, repo_root, branch, payload_json,
-                    event_name, session_id, turn_id, cwd, content, received_at
+            "SELECT event_id, employee_name, client, repo_root, branch, payload_json, received_at
              FROM hook_events WHERE {where_clause}
              ORDER BY received_at DESC LIMIT ?{idx}"
         );
@@ -438,73 +425,20 @@ impl Db {
 
 fn map_stored_hook_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredHookEvent> {
     let event_id_str: String = row.get(0)?;
-    let payload_json: Option<String> = row.get(5)?;
-    let payload = parse_or_reconstruct_payload(
-        payload_json.as_deref(),
-        row.get::<_, String>(6)?.as_str(),
-        row.get::<_, String>(7)?.as_str(),
-        row.get::<_, Option<String>>(8)?,
-        row.get::<_, Option<String>>(9)?,
-        row.get::<_, String>(10)?.as_str(),
-    );
+    let payload = row
+        .get::<_, Option<String>>(5)?
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .unwrap_or(Value::Null);
 
     Ok(StoredHookEvent {
         event_id: Uuid::parse_str(&event_id_str).unwrap_or_else(|_| Uuid::nil()),
-        received_at: row.get(11)?,
+        received_at: row.get(6)?,
         employee_name: row.get(1)?,
         client: row.get(2)?,
         repo_root: row.get(3)?,
         branch: row.get(4)?,
         payload,
     })
-}
-
-fn parse_or_reconstruct_payload(
-    payload_json: Option<&str>,
-    event_name: &str,
-    session_id: &str,
-    turn_id: Option<String>,
-    cwd: Option<String>,
-    content: &str,
-) -> Value {
-    if let Some(raw) = payload_json {
-        if let Ok(value) = serde_json::from_str::<Value>(raw) {
-            return value;
-        }
-    }
-
-    let hook_event_name = match event_name {
-        "user_prompt_submit" => "UserPromptSubmit",
-        "stop" => "Stop",
-        other if !other.is_empty() => other,
-        _ => "Unknown",
-    };
-
-    let mut payload = json!({
-        "hook_event_name": hook_event_name,
-    });
-
-    if !session_id.is_empty() {
-        payload["session_id"] = Value::String(session_id.to_owned());
-    }
-    if let Some(turn_id) = turn_id {
-        payload["turn_id"] = Value::String(turn_id);
-    }
-    if let Some(cwd) = cwd {
-        payload["cwd"] = Value::String(cwd);
-    }
-    if !content.is_empty() {
-        let key = if event_name == "user_prompt_submit" {
-            "prompt"
-        } else if event_name == "stop" {
-            "last_assistant_message"
-        } else {
-            "content"
-        };
-        payload[key] = Value::String(content.to_owned());
-    }
-
-    payload
 }
 
 /// Extension trait so we can use `.optional()` on rusqlite single-row queries.
