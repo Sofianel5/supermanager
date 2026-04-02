@@ -5,6 +5,14 @@ on:
   push:
     branches:
       - master
+    paths:
+      - '.github/workflows/fly-deploy.yml'
+      - '.dockerignore'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Dockerfile'
+      - 'fly.toml'
+      - 'crates/**'
 jobs:
   deploy:
     name: Deploy app

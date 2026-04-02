@@ -11,7 +11,7 @@ use axum::{
 };
 use clap::Parser;
 use tokio::sync::broadcast;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{Any, CorsLayer};
 
 use api::AppState;
 use store::Db;
@@ -47,7 +47,6 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let db = Arc::new(Db::open(&cli.db_path)?);
-    let allowed_origin = api::cors_origin(&cli.public_app_url)?;
 
     let (hook_events, _) = broadcast::channel(256);
     let (summary_events, _) = broadcast::channel(64);
@@ -77,8 +76,8 @@ async fn main() -> Result<()> {
         .route("/health", get(api::health))
         .layer(
             CorsLayer::new()
-                .allow_origin(allowed_origin)
-                .allow_methods([Method::GET, Method::POST])
+                .allow_origin(Any)
+                .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
                 .allow_headers([
                     header::CONTENT_TYPE,
                     header::AUTHORIZATION,

@@ -5,7 +5,7 @@ use async_stream::stream;
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{
         IntoResponse,
         sse::{Event, KeepAlive, Sse},
@@ -474,22 +474,6 @@ fn cli_join_command(api_url: &str, app_url: &str, room_id: &str, secret: &str) -
     )
 }
 
-pub fn cors_origin(app_url: &str) -> anyhow::Result<HeaderValue> {
-    let url = reqwest::Url::parse(app_url)
-        .with_context(|| format!("failed to parse public app URL: {app_url}"))?;
-    let host = url
-        .host_str()
-        .with_context(|| format!("public app URL must include a host: {app_url}"))?;
-    let mut origin = format!("{}://{}", url.scheme(), host);
-    if let Some(port) = url.port() {
-        origin.push(':');
-        origin.push_str(&port.to_string());
-    }
-
-    HeaderValue::from_str(&origin)
-        .with_context(|| format!("invalid CORS origin derived from public app URL: {origin}"))
-}
-
 fn trim_url(url: &str) -> &str {
     url.trim_end_matches('/')
 }
@@ -523,12 +507,5 @@ mod tests {
             command,
             "supermanager join --server \"https://api.example.com\" --app-url \"https://app.example.com\" --room \"bright-fox-1\" --secret \"sm_sec_123\""
         );
-    }
-
-    #[test]
-    fn cors_origin_uses_only_scheme_host_and_port() {
-        let origin = cors_origin("https://app.example.com/r/room-1").unwrap();
-
-        assert_eq!(origin, HeaderValue::from_static("https://app.example.com"));
     }
 }
