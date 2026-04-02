@@ -70,8 +70,8 @@ export function LandingPage() {
           <div className="eyebrow">supermanager</div>
           <h1>Real-time visibility into your team's AI productivity.</h1>
           <p className="hero-text">
-            Create a room, connect the repos that matter, and watch a live feed
-            and manager summary update as work lands.
+            Install the CLI, create a room from the terminal, connect the repos
+            that matter, and watch a live feed and manager summary update as work lands.
           </p>
         </div>
       </section>
@@ -80,15 +80,15 @@ export function LandingPage() {
         <div className="landing-column">
           <div className="section-label">How it works</div>
           <ol className="workflow-list">
-            <li>Create a room for a team, project, or incident.</li>
             <li>Install the CLI once on each machine that should report in.</li>
-            <li>Run the generated join command inside each repo you want to connect.</li>
-            <li>Claude Code and Codex hook turns automatically flow into the room.</li>
+            <li>Run `supermanager create room` to get a room code and dashboard URL.</li>
+            <li>Run `supermanager join &lt;room-code&gt;` inside each repo you want to connect.</li>
+            <li>Claude Code and Codex hook turns automatically flow into the room dashboard.</li>
           </ol>
         </div>
 
         <div className="landing-column landing-column--form">
-          <div className="section-label">Create room</div>
+          <div className="section-label">Create from browser</div>
           <form className="room-form" onSubmit={handleSubmit}>
             <label htmlFor="room-name">Team or room name</label>
             <input

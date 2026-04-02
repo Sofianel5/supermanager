@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 #[command(
     author,
     version,
-    about = "Join or leave supermanager rooms from a local repo"
+    about = "Create, join, or leave supermanager rooms from the CLI"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -16,6 +16,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Create new resources in supermanager.
+    Create {
+        #[command(subcommand)]
+        command: CreateCommands,
+    },
     /// Configure the current repo to report into a room.
     Join {
         room: String,
@@ -38,11 +43,41 @@ enum Commands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum CreateCommands {
+    /// Create a new room and copy its dashboard URL.
+    Room {
+        name: Option<String>,
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let home_dir = supermanager::resolve_home_dir()?;
 
     match cli.command {
+        Commands::Create { command } => match command {
+            CreateCommands::Room { name, server, cwd } => {
+                let cwd = cwd.canonicalize().unwrap_or(cwd);
+                let outcome = supermanager::create_room(supermanager::CreateRoomConfig {
+                    server_url: server,
+                    name,
+                    cwd,
+                })?;
+
+                println!();
+                println!("supermanager room created");
+                println!("room: {}", outcome.room_id);
+                println!("name: {}", outcome.room_name);
+                println!("dashboard: {}", outcome.dashboard_url);
+                println!("join: {}", outcome.join_command);
+                print_clipboard_status(&outcome.dashboard_url);
+            }
+        },
         Commands::Join {
             room,
             server,
@@ -50,10 +85,11 @@ fn main() -> Result<()> {
             cwd,
         } => {
             let repo_dir = cwd.canonicalize().unwrap_or(cwd);
+            let room = supermanager::get_room(&server, &room)?;
             let outcome = supermanager::join_repo(supermanager::JoinConfig {
                 server_url: server,
                 app_url,
-                room_id: room,
+                room_id: room.room_id,
                 repo_dir,
                 home_dir,
             })?;
@@ -64,6 +100,7 @@ fn main() -> Result<()> {
             println!("employee: {}", outcome.employee_name);
             println!("dashboard: {}", outcome.dashboard_url);
             println!("repo: {}", outcome.repo_dir.display());
+            print_clipboard_status(&outcome.dashboard_url);
         }
         Commands::Leave { cwd } => {
             let repo_dir = cwd.canonicalize().unwrap_or(cwd);
@@ -79,4 +116,11 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn print_clipboard_status(text: &str) {
+    match supermanager::copy_to_clipboard(text) {
+        Ok(()) => println!("clipboard: dashboard url copied"),
+        Err(error) => eprintln!("clipboard: {error}"),
+    }
 }

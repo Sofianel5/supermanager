@@ -1,14 +1,16 @@
 use std::{
     collections::BTreeMap,
     env, fs,
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use reporter_protocol::HookTurnReport;
+use reporter_protocol::{
+    CreateRoomRequest, CreateRoomResponse, HookTurnReport, RoomMetadataResponse,
+};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -26,6 +28,7 @@ const CODEX_HOOK_COMMAND: &str = "supermanager hook-report --client codex";
 const HOME_REPO_CONFIG: &str = ".supermanager/repos.json";
 const HOOK_TIMEOUT_SECONDS: u64 = 10;
 const REPORT_TIMEOUT_SECONDS: u64 = 5;
+const API_TIMEOUT_SECONDS: u64 = 10;
 
 pub const DEFAULT_SERVER_URL: &str = "https://supermanager.fly.dev";
 pub const DEFAULT_APP_URL: &str = "https://supermanager.pages.dev";
@@ -43,6 +46,19 @@ pub struct JoinOutcome {
     pub employee_name: String,
     pub dashboard_url: String,
     pub repo_dir: PathBuf,
+}
+
+pub struct CreateRoomConfig {
+    pub server_url: String,
+    pub name: Option<String>,
+    pub cwd: PathBuf,
+}
+
+pub struct CreateRoomOutcome {
+    pub room_id: String,
+    pub room_name: String,
+    pub dashboard_url: String,
+    pub join_command: String,
 }
 
 pub struct LeaveOutcome {
@@ -66,6 +82,38 @@ pub fn resolve_home_dir() -> Result<PathBuf> {
     env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| anyhow!("HOME is not set"))
+}
+
+pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
+    let server_url = normalize_url(&config.server_url);
+    let room_name = config
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| default_room_name(&config.cwd));
+    let http = build_http_client(API_TIMEOUT_SECONDS)?;
+
+    let response = http
+        .post(format!("{server_url}/v1/rooms"))
+        .json(&CreateRoomRequest {
+            name: room_name.clone(),
+        })
+        .send()
+        .context("failed to create room")?;
+
+    let response = ensure_success(response, "create room")?;
+    let payload: CreateRoomResponse = response
+        .json()
+        .context("failed to parse create-room response JSON")?;
+
+    Ok(CreateRoomOutcome {
+        room_id: payload.room_id,
+        room_name,
+        dashboard_url: payload.dashboard_url,
+        join_command: payload.join_command,
+    })
 }
 
 pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
@@ -113,6 +161,44 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     })
 }
 
+pub fn get_room(server_url: &str, room_id: &str) -> Result<RoomMetadataResponse> {
+    let server_url = normalize_url(server_url);
+    let http = build_http_client(API_TIMEOUT_SECONDS)?;
+    let response = http
+        .get(format!("{server_url}/r/{room_id}"))
+        .send()
+        .with_context(|| format!("failed to fetch room {room_id}"))?;
+
+    let response = ensure_success(response, "get room")?;
+    response
+        .json()
+        .context("failed to parse room response JSON")
+}
+
+pub fn copy_to_clipboard(text: &str) -> Result<()> {
+    let commands: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
+        &[("pbcopy", &[])]
+    } else if cfg!(target_os = "windows") {
+        &[("clip", &[])]
+    } else {
+        &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("xsel", &["--clipboard", "--input"]),
+        ]
+    };
+
+    let mut last_error = None;
+    for (program, args) in commands {
+        match run_clipboard_command(program, args, text) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("no clipboard command available")))
+}
+
 pub fn leave_repo(repo_dir: &Path, home_dir: &Path) -> Result<LeaveOutcome> {
     let repo_dir = canonicalize_best_effort(repo_dir);
     if !repo_dir.exists() {
@@ -157,10 +243,7 @@ pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
         room_config.room_id,
     );
 
-    let http = Client::builder()
-        .timeout(Duration::from_secs(REPORT_TIMEOUT_SECONDS))
-        .build()
-        .context("failed to build HTTP client")?;
+    let http = build_http_client(REPORT_TIMEOUT_SECONDS)?;
 
     let response = http
         .post(url)
@@ -173,6 +256,80 @@ pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn default_room_name(cwd: &Path) -> String {
+    let repo_root = resolve_repo_root(cwd);
+    if let Some(name) = path_basename(&repo_root) {
+        return name;
+    }
+    if let Some(name) = path_basename(cwd) {
+        return name;
+    }
+    "supermanager room".to_owned()
+}
+
+fn path_basename(path: &Path) -> Option<String> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn build_http_client(timeout_seconds: u64) -> Result<Client> {
+    Client::builder()
+        .timeout(Duration::from_secs(timeout_seconds))
+        .build()
+        .context("failed to build HTTP client")
+}
+
+fn ensure_success(
+    response: reqwest::blocking::Response,
+    action: &str,
+) -> Result<reqwest::blocking::Response> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+
+    let status = response.status();
+    let body = response.text().unwrap_or_default();
+    let body = body.trim();
+    if body.is_empty() {
+        bail!("{action} returned {status}");
+    }
+    bail!("{action} returned {status}: {body}");
+}
+
+fn run_clipboard_command(program: &str, args: &[&str], text: &str) -> Result<()> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to start {program}"))?;
+
+    let Some(mut stdin) = child.stdin.take() else {
+        bail!("{program} did not expose stdin");
+    };
+    stdin
+        .write_all(text.as_bytes())
+        .with_context(|| format!("failed to write clipboard contents to {program}"))?;
+    drop(stdin);
+
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("failed to wait for {program}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    if stderr.is_empty() {
+        bail!("{program} exited with {}", output.status);
+    }
+    bail!("{program} exited with {}: {stderr}", output.status);
 }
 
 fn build_hook_report(client: &str, payload: &Value) -> Result<Option<(PathBuf, HookTurnReport)>> {
@@ -726,6 +883,19 @@ mod tests {
             canonicalize_best_effort(&repo_dir).display().to_string()
         );
         assert_eq!(report.payload, payload);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn default_room_name_prefers_repo_root_name() {
+        let root = test_dir("default-room-name");
+        let repo_dir = root.join("repo-name");
+        let nested_dir = repo_dir.join("nested");
+        fs::create_dir_all(&nested_dir).unwrap();
+        init_git_repo(&repo_dir);
+
+        assert_eq!(default_room_name(&nested_dir), "repo-name");
 
         fs::remove_dir_all(root).unwrap();
     }
