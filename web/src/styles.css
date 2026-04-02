@@ -131,47 +131,11 @@ pre {
   line-height: 1.7;
 }
 
-.hero-rail {
-  display: grid;
-  gap: 12px;
-  min-width: min(28vw, 280px);
-  align-self: stretch;
-}
-
-.hero-stat,
 .room-section,
 .landing-column {
   border: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(17, 24, 37, 0.72), rgba(8, 12, 19, 0.88));
   backdrop-filter: blur(12px);
-}
-
-.hero-stat {
-  padding: 18px;
-  animation: rise-in 650ms ease-out both;
-}
-
-.hero-stat:nth-child(2) {
-  animation-delay: 90ms;
-}
-
-.hero-stat:nth-child(3) {
-  animation-delay: 180ms;
-}
-
-.hero-stat span {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 0.74rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.hero-stat strong {
-  font-size: 1rem;
-  font-weight: 600;
 }
 
 .landing-body,
@@ -203,6 +167,10 @@ pre {
 .room-form {
   display: grid;
   gap: 14px;
+}
+
+.room-form--gate {
+  width: min(100%, 420px);
 }
 
 .room-form label {

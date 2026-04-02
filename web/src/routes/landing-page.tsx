@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, PublicConfigResponse } from "../api";
-import { buildCreatedRoomState, stashRoomSecret } from "../room-credentials";
+import { buildRoomHash, stashRoomSecret } from "../room-credentials";
 
 export function LandingPage() {
   const navigate = useNavigate();
@@ -47,8 +47,9 @@ export function LandingPage() {
     try {
       const createdRoom = await api.createRoom(trimmedName);
       stashRoomSecret(createdRoom.room_id, createdRoom.secret);
-      navigate(`/r/${createdRoom.room_id}`, {
-        state: buildCreatedRoomState(createdRoom.room_id, createdRoom.secret),
+      navigate({
+        pathname: `/r/${createdRoom.room_id}`,
+        hash: buildRoomHash(createdRoom.secret),
       });
     } catch (requestError) {
       setError(readMessage(requestError));
@@ -70,26 +71,11 @@ export function LandingPage() {
       <section className="landing-hero">
         <div className="hero-copy">
           <div className="eyebrow">supermanager</div>
-          <h1>Real-time visibility into what every coding agent is doing.</h1>
+          <h1>real-time visibility into your team's ai productiviy</h1>
           <p className="hero-text">
             Create a room, connect the repos that matter, and watch a live feed
             and manager summary update as work lands.
           </p>
-        </div>
-
-        <div className="hero-rail">
-          <div className="hero-stat">
-            <span>Flow</span>
-            <strong>Create room</strong>
-          </div>
-          <div className="hero-stat">
-            <span>Install once</span>
-            <strong>Join per repo</strong>
-          </div>
-          <div className="hero-stat">
-            <span>Signal</span>
-            <strong>Live SSE feed</strong>
-          </div>
         </div>
       </section>
 
