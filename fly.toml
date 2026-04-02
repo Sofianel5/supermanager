@@ -9,8 +9,9 @@ primary_region = 'sjc'
 [build]
 
 [env]
+  SUPERMANAGER_CLI_INSTALL_COMMAND = "curl -fsSL https://supermanager.dev/install.sh | sh"
   SUPERMANAGER_PUBLIC_API_URL = "https://supermanager.fly.dev"
-  SUPERMANAGER_PUBLIC_APP_URL = "https://supermanager.pages.dev"
+  SUPERMANAGER_PUBLIC_APP_URL = "https://supermanager.dev"
 
 [[mounts]]
   source = 'supermanager_data'

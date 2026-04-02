@@ -38,7 +38,7 @@ struct Cli {
     #[arg(
         long,
         env = "SUPERMANAGER_CLI_INSTALL_COMMAND",
-        default_value = "cargo install --git https://github.com/Sofianel5/supermanager.git supermanager"
+        default_value = "curl -fsSL https://supermanager.dev/install.sh | sh"
     )]
     cli_install_command: String,
 }
