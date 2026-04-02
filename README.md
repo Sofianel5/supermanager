@@ -63,8 +63,7 @@ The response includes:
 
 - `install_command`
 - `dashboard_url`
-- `room_id`
-- `secret`
+- `room_id` as a 6-character case-insensitive alphanumeric code
 - `join_command`
 
 ### 5. Join repos to the room
@@ -72,14 +71,18 @@ The response includes:
 Run the returned join command inside each repo you want connected:
 
 ```sh
-supermanager join \
-  --server "http://127.0.0.1:8787" \
-  --app-url "http://127.0.0.1:5173" \
-  --room "<room-id>" \
-  --secret "<room-secret>"
+supermanager join <room-code>
 ```
 
-That command installs repo-local Claude Code and Codex hooks for the current repo only. Claude uses `.claude/settings.local.json`; Codex uses `.codex/hooks.json` and ensures `[features]` contains `codex_hooks = true` in `.codex/config.toml`. Both hooks call the native `supermanager hook-report` subcommand, and room credentials are stored machine-locally in `$HOME/.supermanager/repos.json`.
+For local development or custom deployments, override the API and app origins explicitly:
+
+```sh
+supermanager join <room-code> \
+  --server "http://127.0.0.1:8787" \
+  --app-url "http://127.0.0.1:5173"
+```
+
+That command installs repo-local Claude Code and Codex hooks for the current repo only. Claude uses `.claude/settings.local.json`; Codex uses `.codex/hooks.json` and ensures `[features]` contains `codex_hooks = true` in `.codex/config.toml`. Both hooks call the native `supermanager hook-report` subcommand, and room settings are stored machine-locally in `$HOME/.supermanager/repos.json`.
 
 To remove the repo from supermanager later:
 
@@ -92,7 +95,7 @@ supermanager leave
 Open the room dashboard:
 
 ```sh
-open "http://127.0.0.1:5173/r/<room-id>"
+open "http://127.0.0.1:5173/r/<room-code>"
 ```
 
 The frontend reads room metadata, feed, and summary from the API and watches summary generation status over SSE.

@@ -18,14 +18,11 @@ struct Cli {
 enum Commands {
     /// Configure the current repo to report into a room.
     Join {
-        #[arg(long)]
-        server: String,
-        #[arg(long)]
-        app_url: String,
-        #[arg(long)]
         room: String,
-        #[arg(long)]
-        secret: String,
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+        #[arg(long, env = "SUPERMANAGER_APP_URL", default_value = supermanager::DEFAULT_APP_URL)]
+        app_url: String,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
@@ -47,10 +44,9 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Join {
+            room,
             server,
             app_url,
-            room,
-            secret,
             cwd,
         } => {
             let repo_dir = cwd.canonicalize().unwrap_or(cwd);
@@ -58,7 +54,6 @@ fn main() -> Result<()> {
                 server_url: server,
                 app_url,
                 room_id: room,
-                secret,
                 repo_dir,
                 home_dir,
             })?;

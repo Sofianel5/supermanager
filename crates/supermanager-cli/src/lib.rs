@@ -27,11 +27,13 @@ const HOME_REPO_CONFIG: &str = ".supermanager/repos.json";
 const HOOK_TIMEOUT_SECONDS: u64 = 10;
 const REPORT_TIMEOUT_SECONDS: u64 = 5;
 
+pub const DEFAULT_SERVER_URL: &str = "https://supermanager.fly.dev";
+pub const DEFAULT_APP_URL: &str = "https://supermanager.pages.dev";
+
 pub struct JoinConfig {
     pub server_url: String,
     pub app_url: String,
     pub room_id: String,
-    pub secret: String,
     pub repo_dir: PathBuf,
     pub home_dir: PathBuf,
 }
@@ -52,7 +54,6 @@ pub struct LeaveOutcome {
 struct RepoRoomConfig {
     server_url: String,
     room_id: String,
-    secret: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -81,7 +82,6 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     let room_config = RepoRoomConfig {
         server_url,
         room_id: config.room_id.clone(),
-        secret: config.secret,
     };
 
     upsert_repo_room_config(&config.home_dir, &repo_dir, room_config)?;
@@ -152,10 +152,9 @@ pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
     };
 
     let url = format!(
-        "{}/r/{}/hooks/turn?secret={}",
+        "{}/r/{}/hooks/turn",
         room_config.server_url.trim_end_matches('/'),
         room_config.room_id,
-        room_config.secret,
     );
 
     let http = Client::builder()
@@ -624,7 +623,6 @@ mod tests {
             server_url: "http://127.0.0.1:8787/".to_owned(),
             app_url: "https://app.supermanager.test/".to_owned(),
             room_id: "bright-fox".to_owned(),
-            secret: "secret123".to_owned(),
             repo_dir: repo_dir.clone(),
             home_dir: home_dir.clone(),
         })

@@ -19,7 +19,6 @@ pub struct FeedResponse {
 pub struct Room {
     pub room_id: String,
     pub name: String,
-    pub secret: String,
     pub created_at: String,
 }
 
@@ -32,7 +31,6 @@ pub struct CreateRoomRequest {
 pub struct CreateRoomResponse {
     pub install_command: String,
     pub room_id: String,
-    pub secret: String,
     pub dashboard_url: String,
     pub join_command: String,
 }

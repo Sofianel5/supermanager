@@ -80,7 +80,6 @@ async fn main() -> Result<()> {
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
                 .allow_headers([
                     header::CONTENT_TYPE,
-                    header::AUTHORIZATION,
                     HeaderName::from_static("last-event-id"),
                 ]),
         )
