@@ -55,17 +55,7 @@ impl Db {
         )?;
 
         if rooms_table_has_column(&conn, "secret")? {
-            conn.execute_batch(
-                "CREATE TABLE IF NOT EXISTS rooms_new (
-                    room_id    TEXT PRIMARY KEY,
-                    name       TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                INSERT INTO rooms_new (room_id, name, created_at)
-                    SELECT room_id, name, created_at FROM rooms;
-                DROP TABLE rooms;
-                ALTER TABLE rooms_new RENAME TO rooms;",
-            )?;
+            migrate_rooms_table_without_secret(&conn)?;
         }
 
         // ── Migrations for existing DBs ────────────────────────
@@ -124,7 +114,9 @@ impl Db {
                     break;
                 }
             }
-            code.ok_or_else(|| anyhow::anyhow!("failed to generate unique room code after {max_attempts} attempts"))?
+            code.ok_or_else(|| {
+                anyhow::anyhow!("failed to generate unique room code after {max_attempts} attempts")
+            })?
         };
 
         conn.execute(
@@ -427,6 +419,47 @@ fn rooms_table_has_column(conn: &Connection, column: &str) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+fn migrate_rooms_table_without_secret(conn: &Connection) -> Result<()> {
+    conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+
+    let migration_result = conn.execute_batch(
+        "DROP TABLE IF EXISTS rooms_new;
+         CREATE TABLE rooms_new (
+            room_id    TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            created_at TEXT NOT NULL
+         );
+         INSERT INTO rooms_new (room_id, name, created_at)
+            SELECT room_id, name, created_at FROM rooms;
+         DROP TABLE rooms;
+         ALTER TABLE rooms_new RENAME TO rooms;",
+    );
+
+    let restore_result = conn.execute_batch("PRAGMA foreign_keys=ON;");
+
+    migration_result?;
+    restore_result?;
+    ensure_no_foreign_key_violations(conn)?;
+    Ok(())
+}
+
+fn ensure_no_foreign_key_violations(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA foreign_key_check")?;
+    let mut rows = stmt.query([])?;
+
+    if let Some(row) = rows.next()? {
+        let table: String = row.get(0)?;
+        let row_id: i64 = row.get(1)?;
+        let parent: String = row.get(2)?;
+        let fk_index: i64 = row.get(3)?;
+        anyhow::bail!(
+            "foreign key violation after rooms migration: table={table} row_id={row_id} parent={parent} fk_index={fk_index}"
+        );
+    }
+
+    Ok(())
 }
 
 fn generate_room_code(rng: &mut impl Rng) -> String {
