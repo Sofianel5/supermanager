@@ -281,7 +281,7 @@ export function RoomPage() {
       <section className="room-layout">
         <div className="room-section">
           <div className="room-section__head">
-            <span className="section-label">Manager summary</span>
+            <span className="section-label">Summary</span>
             <span className={`summary-pill summary-pill--${summaryStatus}`}>
               {summaryStatus === "idle" ? "loading" : summaryStatus}
             </span>
@@ -290,9 +290,7 @@ export function RoomPage() {
         </div>
 
         <div className="room-section">
-          <div className="section-label">
-            {roomSecret ? "Room created" : "Connect agents"}
-          </div>
+          <div className="section-label">Room info</div>
           {config && (
             <CopyPanel
               copiedValue={copiedValue}
@@ -301,30 +299,23 @@ export function RoomPage() {
               value={config.install_command}
             />
           )}
-          {roomSecret && (
-            <CopyPanel
-              copiedValue={copiedValue}
-              label="Secret"
-              onCopy={copy}
-              value={roomSecret}
-            />
-          )}
+          <CopyPanel
+            copiedValue={copiedValue}
+            label="Secret"
+            onCopy={copy}
+            value={roomSecret}
+          />
           <CopyPanel
             copiedValue={copiedValue}
             label="Join command"
             onCopy={copy}
             value={joinCommand}
           />
-          <p className="message">
-            {roomSecret
-              ? "Copy the secret and the exact join command now, then run it in each repo you want connected."
-              : "Add the room secret to the join command before running it in a repo."}
-          </p>
         </div>
 
         <div className="room-section">
           <div className="room-section__head">
-            <span className="section-label">Activity feed</span>
+            <span className="section-label">Raw feed</span>
             <span className="section-count">
               {events.length} update{events.length === 1 ? "" : "s"}
             </span>
