@@ -1,9 +1,3 @@
-export type CreateRoomResponse = {
-  room_id: string;
-  dashboard_url: string;
-  join_command: string;
-};
-
 export type RoomMetadataResponse = {
   room_id: string;
   name: string;
@@ -62,15 +56,6 @@ export function getApiBaseUrl() {
 }
 
 export const api = {
-  createRoom(name: string) {
-    return requestJson<CreateRoomResponse>("/v1/rooms", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ name }),
-    });
-  },
   getRoom(roomId: string) {
     return requestJson<RoomMetadataResponse>(`/r/${encodeURIComponent(roomId)}`);
   },

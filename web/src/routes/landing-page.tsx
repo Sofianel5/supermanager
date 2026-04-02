@@ -1,37 +1,7 @@
-import { FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { api } from "../api";
+import { useState } from "react";
 
 export function LandingPage() {
-  const navigate = useNavigate();
-  const [name, setName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setError("Enter a room name first.");
-      return;
-    }
-
-    setIsCreating(true);
-    setError(null);
-
-    try {
-      const createdRoom = await api.createRoom(trimmedName);
-      navigate({
-        pathname: `/r/${createdRoom.room_id}`,
-      });
-    } catch (requestError) {
-      setError(readMessage(requestError));
-    } finally {
-      setIsCreating(false);
-    }
-  }
 
   async function copy(label: string, value: string) {
     await navigator.clipboard.writeText(value);
@@ -77,29 +47,8 @@ export function LandingPage() {
             </span>
             <code>curl -fsSL https://supermanager.dev/install.sh | sh</code>
           </button>
-
-          <div className="section-label">Create from browser</div>
-          <form className="room-form" onSubmit={handleSubmit}>
-            <label htmlFor="room-name">Team or room name</label>
-            <input
-              id="room-name"
-              type="text"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. Platform migration"
-            />
-            <button type="submit" disabled={isCreating}>
-              {isCreating ? "Creating room..." : "Create room"}
-            </button>
-          </form>
-
-          {error && <p className="message message--error">{error}</p>}
         </div>
       </section>
     </main>
   );
-}
-
-function readMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Request failed.";
 }
