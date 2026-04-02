@@ -1,6 +1,6 @@
 # Supermanager
 
-Supermanager is a room-based coordination server for coding agents. It creates per-team rooms, gives each room its own MCP endpoint, stores progress updates in SQLite, and renders a live dashboard plus an auto-generated summary. Repos join rooms through a globally installed `supermanager` CLI.
+Supermanager is a room-based coordination server for coding agents. It creates per-team rooms, installs repo-local Claude Code and Codex hooks through a globally installed `supermanager` CLI, stores turn updates in SQLite, and renders a live dashboard plus an auto-generated summary.
 
 ## Setup
 
@@ -59,7 +59,7 @@ Run the returned join command inside each repo you want connected:
 supermanager join --server "http://127.0.0.1:8787" --room "<room-id>" --secret "<room-secret>"
 ```
 
-That command writes the room-specific MCP config and injects the reporting instructions into local `CLAUDE.md` and `AGENTS.md` files for the current repo only.
+That command installs repo-local Claude Code and Codex hooks for the current repo only. Claude uses `.claude/settings.local.json`; Codex uses `.codex/hooks.json` and ensures `[features]` contains `codex_hooks = true` in `.codex/config.toml`. Both hooks call the native `supermanager hook-report` subcommand, and room credentials are stored machine-locally in `$HOME/.supermanager/repos.json`.
 
 To remove the repo from supermanager later:
 
@@ -85,35 +85,18 @@ The dashboard reads the room feed, shows task state, and watches summary generat
 | `/` | GET | Landing page for room creation |
 | `/v1/rooms` | POST | Create a room |
 | `/r/{room_id}` | GET | Room dashboard |
-| `/r/{room_id}/feed` | GET | Get room notes, newest first |
-| `/r/{room_id}/feed/stream` | GET | SSE stream of room note and summary-status events |
-| `/r/{room_id}/progress` | POST | Submit a room-scoped progress note |
+| `/r/{room_id}/feed` | GET | Get raw room hook events, newest first |
+| `/r/{room_id}/feed/stream` | GET | SSE stream of hook-event and summary-status events |
+| `/r/{room_id}/hooks/turn` | POST | Submit a hook-captured turn event |
 | `/r/{room_id}/summary` | GET | Read the current room summary |
 | `/r/{room_id}/tasks` | GET | Read the current room task list |
-| `/r/{room_id}/mcp` | POST | Room-scoped MCP endpoint |
-| `/r/{room_id}/install` | GET | Compatibility wrapper that forwards to `supermanager join` |
-| `/r/{room_id}/uninstall` | GET | Compatibility wrapper that forwards to `supermanager leave` |
-| `/uninstall` | GET | Compatibility wrapper that forwards to `supermanager leave` |
-
-## MCP tools
-
-| Tool | Description |
-|---|---|
-| `submit_progress` | Submit a progress update |
-| `get_feed` | Read the room feed |
-| `get_manager_summary` | Read the persisted room summary |
-| `get_summary` | Ask OpenAI for a summary of filtered updates |
-| `ask` | Ask a question against the progress log |
-| `create_task` | Add a task to the room task list |
-| `get_tasks` | Read the room task list |
-| `update_task` | Update a task title, status, or assignee |
 
 ## Project structure
 
 ```text
 crates/
-  coordination-server/    # HTTP server, dashboard, room APIs, MCP endpoint
-  reporter-protocol/      # Shared room and note types
+  coordination-server/    # HTTP server, dashboard, room APIs
+  reporter-protocol/      # Shared room and hook-event types
   supermanager-cli/       # Global CLI for joining/leaving repos
 Dockerfile                # Production image
 fly.toml                  # Fly deployment config
@@ -121,5 +104,4 @@ fly.toml                  # Fly deployment config
 
 ## Notes
 
-- Install-time instruction template now lives in `crates/reporter-protocol/src/supermanager_instructions.md`.
-- Summary generation runs on the server after new notes arrive.
+- Summary generation runs on the server after new hook turns arrive.

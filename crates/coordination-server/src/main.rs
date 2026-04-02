@@ -35,12 +35,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let db = Arc::new(Db::open(&cli.db_path)?);
 
-    let (note_events, _) = broadcast::channel(256);
+    let (hook_events, _) = broadcast::channel(256);
     let (summary_events, _) = broadcast::channel(64);
 
     let state = AppState {
         db,
-        note_events,
+        hook_events,
         summary_events,
         base_url: cli.base_url,
         cli_install_command: cli.cli_install_command,
@@ -55,13 +55,9 @@ async fn main() -> Result<()> {
         .route("/r/{room_id}", get(api::dashboard))
         .route("/r/{room_id}/feed", get(api::get_feed))
         .route("/r/{room_id}/feed/stream", get(api::stream_feed))
-        .route("/r/{room_id}/progress", post(api::ingest_progress))
+        .route("/r/{room_id}/hooks/turn", post(api::ingest_hook_turn))
         .route("/r/{room_id}/summary", get(api::get_manager_summary))
         .route("/r/{room_id}/tasks", get(api::get_tasks_http))
-        .route("/r/{room_id}/mcp", post(api::handle_mcp))
-        .route("/r/{room_id}/install", get(api::install_script))
-        .route("/r/{room_id}/uninstall", get(api::uninstall_script))
-        .route("/uninstall", get(api::uninstall_script_global))
         // ── Landing page ────────────────────────────────
         .route("/", get(api::landing_page))
         // ── Health ───────────────────────────────────────

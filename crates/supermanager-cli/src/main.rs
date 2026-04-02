@@ -32,6 +32,11 @@ enum Commands {
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
+    #[command(hide = true)]
+    HookReport {
+        #[arg(long, value_parser = ["claude", "codex"])]
+        client: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -69,6 +74,9 @@ fn main() -> Result<()> {
             println!("supermanager leave complete");
             println!("repo: {}", outcome.repo_dir.display());
             println!("removed: {}", outcome.removed_paths.join(", "));
+        }
+        Commands::HookReport { client } => {
+            let _ = supermanager::report_hook_turn(&client, &home_dir);
         }
     }
     Ok(())

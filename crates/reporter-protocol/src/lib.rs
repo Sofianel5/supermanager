@@ -1,34 +1,16 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
-
-pub const SUPERMANAGER_INSTRUCTIONS_TEMPLATE: &str = include_str!("supermanager_instructions.md");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProgressNote {
-    pub employee_name: String,
-    pub repo: String,
-    #[serde(default)]
-    pub branch: Option<String>,
-    pub progress_text: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredProgressNote {
-    pub note_id: Uuid,
-    pub received_at: String,
-    #[serde(flatten)]
-    pub note: ProgressNote,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestResponse {
-    pub note_id: Uuid,
+    pub event_id: Uuid,
     pub received_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedResponse {
-    pub notes: Vec<StoredProgressNote>,
+    pub events: Vec<StoredHookEvent>,
 }
 
 // ── Room types ──────────────────────────────────────────────
@@ -53,4 +35,26 @@ pub struct CreateRoomResponse {
     pub secret: String,
     pub dashboard_url: String,
     pub join_command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookTurnReport {
+    pub employee_name: String,
+    pub client: String,
+    pub repo_root: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredHookEvent {
+    pub event_id: Uuid,
+    pub received_at: String,
+    pub employee_name: String,
+    pub client: String,
+    pub repo_root: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    pub payload: Value,
 }

@@ -1,5 +1,6 @@
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
+use anyhow::{Context, bail};
 use async_stream::stream;
 use axum::{
     Json,
@@ -11,8 +12,8 @@ use axum::{
     },
 };
 use reporter_protocol::{
-    CreateRoomRequest, CreateRoomResponse, FeedResponse, IngestResponse, ProgressNote,
-    StoredProgressNote,
+    CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse,
+    StoredHookEvent,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -23,9 +24,9 @@ use crate::store::Db;
 // ── Shared state ────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct NoteEvent {
+pub struct HookFeedEvent {
     pub room_id: String,
-    pub note: StoredProgressNote,
+    pub event: StoredHookEvent,
 }
 
 #[derive(Clone)]
@@ -37,7 +38,7 @@ pub struct SummaryStatusEvent {
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Db>,
-    pub note_events: broadcast::Sender<NoteEvent>,
+    pub hook_events: broadcast::Sender<HookFeedEvent>,
     pub summary_events: broadcast::Sender<SummaryStatusEvent>,
     pub base_url: String,
     pub cli_install_command: String,
@@ -285,12 +286,12 @@ pub async fn create_room(
 
 // ── Room-scoped routes ──────────────────────────────────────
 
-pub async fn ingest_progress(
+pub async fn ingest_hook_turn(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
     headers: HeaderMap,
     Query(query): Query<SecretQuery>,
-    Json(note): Json<ProgressNote>,
+    Json(report): Json<HookTurnReport>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let secret = extract_secret(&headers, &query)
         .ok_or((StatusCode::UNAUTHORIZED, "missing secret".to_owned()))?;
@@ -305,27 +306,22 @@ pub async fn ingest_progress(
 
     let stored = state
         .db
-        .insert_note(&room_id, &note)
+        .insert_hook_event(&room_id, &report)
         .map_err(internal_error)?;
-    let note_id = stored.note_id;
+    let event_id = stored.event_id;
     let received_at = stored.received_at.clone();
 
-    let _ = state.note_events.send(NoteEvent {
+    let _ = state.hook_events.send(HookFeedEvent {
         room_id: room_id.clone(),
-        note: stored,
+        event: stored,
     });
 
-    // Spawn background auto-summarize
-    let bg_state = state.clone();
-    let bg_room = room_id;
-    tokio::spawn(async move {
-        auto_summarize(&bg_state, &bg_room).await;
-    });
+    spawn_auto_summarize(&state, &room_id);
 
     Ok((
         StatusCode::ACCEPTED,
         Json(IngestResponse {
-            note_id,
+            event_id,
             received_at,
         }),
     ))
@@ -339,8 +335,8 @@ pub async fn get_feed(
     if room.is_none() {
         return Err((StatusCode::NOT_FOUND, format!("room not found: {room_id}")));
     }
-    let notes = state.db.get_notes(&room_id).map_err(internal_error)?;
-    Ok(Json(FeedResponse { notes }))
+    let events = state.db.get_hook_events(&room_id).map_err(internal_error)?;
+    Ok(Json(FeedResponse { events }))
 }
 
 pub async fn stream_feed(
@@ -352,12 +348,12 @@ pub async fn stream_feed(
     let replay = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
-        .map(|note_id| state.db.get_notes_after(&room_id, note_id))
+        .map(|event_id| state.db.get_hook_events_after(&room_id, event_id))
         .transpose()
         .map_err(internal_error)?
         .unwrap_or_default();
 
-    let mut note_rx = state.note_events.subscribe();
+    let mut hook_rx = state.hook_events.subscribe();
     let mut summary_rx = state.summary_events.subscribe();
     let target_room = room_id.clone();
 
@@ -368,9 +364,9 @@ pub async fn stream_feed(
         .unwrap_or_else(|_| "ready".to_owned());
 
     let event_stream = stream! {
-        // Replay missed notes
-        for note in replay {
-            yield Ok(progress_event(&note));
+        // Replay missed events
+        for event in replay {
+            yield Ok(hook_event(&event));
         }
 
         // Send current summary status on connect
@@ -380,11 +376,11 @@ pub async fn stream_feed(
 
         loop {
             tokio::select! {
-                note_result = note_rx.recv() => {
-                    match note_result {
+                hook_result = hook_rx.recv() => {
+                    match hook_result {
                         Ok(evt) => {
                             if evt.room_id == target_room {
-                                yield Ok(progress_event(&evt.note));
+                                yield Ok(hook_event(&evt.event));
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -534,7 +530,7 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 .note-repo{{color:var(--cyan);font-weight:500}}
 .note-branch{{color:var(--violet);font-weight:400}}
 .note-sep{{color:var(--text-muted);font-size:0.7rem}}
-.note-text{{color:var(--text-secondary);font-family:var(--sans);font-size:0.88rem;white-space:pre-wrap;line-height:1.6;}}
+.note-text{{color:var(--text-secondary);font-family:var(--mono);font-size:0.78rem;white-space:pre-wrap;line-height:1.6;overflow-x:auto;}}
 .join-label{{font-family:var(--sans);font-size:0.85rem;color:var(--text-muted);margin-bottom:10px;}}
 .join-cmd{{display:block;font-family:var(--mono);font-size:0.78rem;color:var(--amber);background:var(--bg-deep);border:1px solid var(--border);padding:14px 16px;border-radius:6px;white-space:pre-wrap;word-break:break-all;cursor:pointer;transition:border-color 0.2s, background 0.2s;position:relative;}}
 .join-cmd:hover{{border-color:var(--amber-dim);background:rgba(245,158,11,0.04)}}
@@ -618,7 +614,7 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
   var taskList = document.getElementById('task-list');
   var taskCount = document.getElementById('task-count');
   var summaryEl = document.getElementById('summary');
-  var notes = [];
+  var events = [];
   var expanded = false;
   var FEED_LIMIT = 10;
   var toggleBtn = document.getElementById('toggle-feed');
@@ -650,7 +646,15 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
     catch(e) {{ return iso; }}
   }}
 
-  function buildNote(n, i) {{
+  function formatPayload(payload) {{
+    try {{
+      return JSON.stringify(payload, null, 2);
+    }} catch (e) {{
+      return String(payload);
+    }}
+  }}
+
+  function buildEvent(n, i) {{
     var card = el('div', 'note');
     card.style.animationDelay = (i * 0.04) + 's';
 
@@ -662,33 +666,35 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
     card.appendChild(top);
 
     var repoLine = el('div', 'note-repo-line');
-    repoLine.appendChild(el('span', 'note-repo', n.repo));
+    repoLine.appendChild(el('span', 'note-repo', n.repo_root));
     if (n.branch) {{
       repoLine.appendChild(el('span', 'note-sep', '/'));
       repoLine.appendChild(el('span', 'note-branch', n.branch));
     }}
+    repoLine.appendChild(el('span', 'note-sep', '/'));
+    repoLine.appendChild(el('span', 'note-branch', n.client));
     card.appendChild(repoLine);
-    card.appendChild(el('div', 'note-text', n.progress_text));
+    card.appendChild(el('pre', 'note-text', formatPayload(n.payload)));
     return card;
   }}
 
   function renderFeed() {{
     feed.textContent = '';
-    if (notes.length === 0) {{
+    if (events.length === 0) {{
       feed.appendChild(el('span', 'empty', 'No updates yet.'));
       toggleBtn.style.display = 'none';
     }} else {{
-      var visible = expanded ? notes : notes.slice(0, FEED_LIMIT);
-      visible.forEach(function(n, i) {{ feed.appendChild(buildNote(n, i)); }});
-      if (notes.length > FEED_LIMIT) {{
+      var visible = expanded ? events : events.slice(0, FEED_LIMIT);
+      visible.forEach(function(n, i) {{ feed.appendChild(buildEvent(n, i)); }});
+      if (events.length > FEED_LIMIT) {{
         toggleBtn.style.display = 'block';
-        var hidden = notes.length - FEED_LIMIT;
+        var hidden = events.length - FEED_LIMIT;
         toggleBtn.textContent = expanded ? 'Show less' : 'Show ' + hidden + ' more';
       }} else {{
         toggleBtn.style.display = 'none';
       }}
     }}
-    var label = notes.length === 1 ? '1 update' : notes.length + ' updates';
+    var label = events.length === 1 ? '1 update' : events.length + ' updates';
     countEl.textContent = label;
   }}
 
@@ -699,7 +705,7 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
 
   setInterval(function() {{
     var times = feed.querySelectorAll('.note-time');
-    var all = notes;
+    var all = events;
     times.forEach(function(t, i) {{
       if (all[i]) t.textContent = timeAgo(all[i].received_at);
     }});
@@ -709,7 +715,7 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
   fetch(base + '/feed')
     .then(function(r) {{ return r.json(); }})
     .then(function(data) {{
-      if (data.notes && data.notes.length > 0) {{ notes = data.notes; }}
+      if (data.events && data.events.length > 0) {{ events = data.events; }}
       renderFeed();
     }})
     .catch(function() {{ renderFeed(); }});
@@ -766,10 +772,10 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
     liveText.textContent = 'live';
     statusEl.className = 'live-dot connected';
   }};
-  es.addEventListener('progress_note', function(e) {{
+  es.addEventListener('hook_event', function(e) {{
     try {{
-      var note = JSON.parse(e.data);
-      notes.unshift(note);
+      var event = JSON.parse(e.data);
+      events.unshift(event);
       renderFeed();
     }} catch(err) {{}}
   }});
@@ -807,578 +813,13 @@ body::after{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opa
     )
 }
 
-// ── Install script ──────────────────────────────────────────
-
-pub async fn install_script(
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Query(query): Query<SecretQuery>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let secret = query.secret.as_deref().filter(|s| !s.is_empty()).ok_or((
-        StatusCode::FORBIDDEN,
-        "missing secret query param".to_owned(),
-    ))?;
-
-    let valid = state
-        .db
-        .verify_room_secret(&room_id, secret)
-        .map_err(internal_error)?;
-    if !valid {
-        return Err((StatusCode::FORBIDDEN, "invalid secret".to_owned()));
-    }
-
-    let base = &state.base_url;
-    let dashboard_url = format!("{base}/r/{room_id}");
-    let install_command = &state.cli_install_command;
-    let join_command = cli_join_command(base, &room_id, secret);
-
-    let script = format!(
-        r##"#!/bin/sh
-set -e
-
-# ── Supermanager room join wrapper ──────────────────────────
-# Room:      {room_id}
-# Dashboard: {dashboard_url}
-
-echo ""
-echo "  ┌─────────────────────────────────────────────────┐"
-echo "  │  supermanager join                              │"
-echo "  │  Room: {room_id}"
-echo "  └─────────────────────────────────────────────────┘"
-echo ""
-if ! command -v supermanager >/dev/null 2>&1; then
-  echo "  supermanager CLI not found."
-  echo ""
-  echo "  Install it once with:"
-  echo "    {install_command}"
-  echo ""
-  exit 1
-fi
-
-exec {join_command}
-"##,
-        room_id = room_id,
-        dashboard_url = dashboard_url,
-        install_command = install_command,
-        join_command = join_command,
-    );
-
-    Ok((
-        [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
-        script,
-    ))
-}
-
-pub async fn uninstall_script_global() -> impl IntoResponse {
-    uninstall_response(None)
-}
-
-pub async fn uninstall_script(Path(room_id): Path<String>) -> impl IntoResponse {
-    uninstall_response(Some(&room_id))
-}
-
-fn uninstall_response(room_id: Option<&str>) -> ([(header::HeaderName, &'static str); 1], String) {
-    let room_line = match room_id {
-        Some(id) => format!("echo \"  Room: {id}\""),
-        None => String::new(),
-    };
-
-    let script = format!(
-        r##"#!/bin/sh
-set -e
-
-# ── Supermanager agent uninstaller ─────────────────────────
-
-echo ""
-echo "  supermanager uninstaller"
-{room_line}
-echo ""
-
-if ! command -v supermanager >/dev/null 2>&1; then
-  echo "  supermanager CLI not found."
-  echo ""
-  echo "  Install it first, then run:"
-  echo "    supermanager leave"
-  echo ""
-  exit 1
-fi
-
-exec supermanager leave
-"##,
-        room_line = room_line,
-    );
-
-    (
-        [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
-        script,
-    )
-}
-
-// ── Room-scoped MCP ─────────────────────────────────────────
-
-pub async fn handle_mcp(
-    State(state): State<AppState>,
-    Path(room_id): Path<String>,
-    Query(query): Query<SecretQuery>,
-    headers: HeaderMap,
-    Json(req): Json<Value>,
-) -> impl IntoResponse {
-    let id = req.get("id").cloned().unwrap_or(Value::Null);
-    let method = req.get("method").and_then(Value::as_str).unwrap_or("");
-
-    let secret = extract_secret(&headers, &query);
-
-    let result = match method {
-        "initialize" => {
-            let client_version = req
-                .pointer("/params/protocolVersion")
-                .and_then(Value::as_str)
-                .unwrap_or("2025-03-26");
-            json!({
-                "protocolVersion": client_version,
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": "supermanager", "version": "0.1.0" },
-                "instructions": "CRITICAL: Your FIRST tool call in every conversation must be submit_progress to report that you are starting work. Call submit_progress again when you make meaningful progress, change direction, hit a blocker, or finish. Keep summaries concise. Never skip this — even when other tools need to be called, include submit_progress in parallel.\n\nFor employee_name: use `git config user.name` to resolve the human's name. If you are a subagent (spawned by another agent, not directly by the user), append ' (subagent)' — e.g. 'Bryan Chiang (subagent)'. Never use 'Claude', 'user', 'assistant', or your own name.\n\nWhen calling get_summary or ask: always pass your current git branch in the `branch` parameter so results are scoped to the relevant work. Omit `branch` only if the user explicitly asks about all branches."
-            })
-        }
-        _ if method.starts_with("notifications/") => {
-            return StatusCode::ACCEPTED.into_response();
-        }
-        "tools/list" => json!({
-            "tools": [
-                {
-                    "name": "submit_progress",
-                    "description": "Submit a progress update to the coordination server. Use this to report what you accomplished.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "employee_name": {
-                                "type": "string",
-                                "description": "Name of the human user you are working for — never use 'Claude' or your own name"
-                            },
-                            "repo": {
-                                "type": "string",
-                                "description": "Repository URL or identifier"
-                            },
-                            "branch": {
-                                "type": "string",
-                                "description": "Git branch name"
-                            },
-                            "progress_text": {
-                                "type": "string",
-                                "description": "A concise summary of what was accomplished"
-                            },
-                            "quiet": {
-                                "type": "boolean",
-                                "description": "If true, skip returning others' updates and task list (default: false)"
-                            }
-                        },
-                        "required": ["employee_name", "repo", "branch", "progress_text"]
-                    }
-                },
-                {
-                    "name": "get_feed",
-                    "description": "Get the feed of all progress updates from all employees.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {}
-                    }
-                },
-                {
-                    "name": "get_manager_summary",
-                    "description": "Read the manager-facing Markdown summary document that lives on the coordination server.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {}
-                    }
-                },
-                {
-                    "name": "get_summary",
-                    "description": "Get an AI-generated summary of recent progress updates. Always pass your current git branch to scope results. Supports filtering by time window, message count, employee name, branch, or since a specific person's last update.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "limit": {
-                                "type": "integer",
-                                "description": "Max number of messages to summarize (default: 20)"
-                            },
-                            "minutes": {
-                                "type": "integer",
-                                "description": "Only include messages from the last N minutes"
-                            },
-                            "employee_name": {
-                                "type": "string",
-                                "description": "Filter to only this person's updates"
-                            },
-                            "branch": {
-                                "type": "string",
-                                "description": "Filter to only updates from this git branch"
-                            },
-                            "since_last_update_by": {
-                                "type": "string",
-                                "description": "Include all updates since this person's most recent update"
-                            }
-                        }
-                    }
-                },
-                {
-                    "name": "ask",
-                    "description": "Ask a question about progress updates and get a focused, cited answer. Always pass your current git branch to scope results. Searches the raw log so you don't need it in context.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "The question to answer from the progress log"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "How far back to search in messages (default: 50)"
-                            },
-                            "minutes": {
-                                "type": "integer",
-                                "description": "Only search messages from the last N minutes"
-                            },
-                            "employee_name": {
-                                "type": "string",
-                                "description": "Only search this person's updates"
-                            },
-                            "branch": {
-                                "type": "string",
-                                "description": "Only search updates from this git branch"
-                            },
-                            "since_last_update_by": {
-                                "type": "string",
-                                "description": "Only search updates since this person's most recent update"
-                            }
-                        },
-                        "required": ["question"]
-                    }
-                },
-                {
-                    "name": "create_task",
-                    "description": "Create a task in the shared task list.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "title": {
-                                "type": "string",
-                                "description": "The task description"
-                            },
-                            "assignee": {
-                                "type": "string",
-                                "description": "Who this task is assigned to (optional)"
-                            }
-                        },
-                        "required": ["title"]
-                    }
-                },
-                {
-                    "name": "get_tasks",
-                    "description": "Get the shared task list. By default returns only incomplete tasks.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "include_done": {
-                                "type": "boolean",
-                                "description": "Include completed tasks (default: false)"
-                            }
-                        }
-                    }
-                },
-                {
-                    "name": "update_task",
-                    "description": "Update a task — change its title, status, or assignee. Set status to 'done' to mark complete.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "task_id": {
-                                "type": "string",
-                                "description": "The task ID to update"
-                            },
-                            "title": {
-                                "type": "string",
-                                "description": "New title (optional)"
-                            },
-                            "status": {
-                                "type": "string",
-                                "description": "New status: todo, in_progress, done"
-                            },
-                            "assignee": {
-                                "type": "string",
-                                "description": "New assignee (optional)"
-                            }
-                        },
-                        "required": ["task_id"]
-                    }
-                }
-            ]
-        }),
-        "tools/call" => {
-            let tool_name = req
-                .pointer("/params/name")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            match tool_name {
-                "submit_progress" => match verify_mcp_secret(&state, &room_id, &secret) {
-                    Ok(()) => mcp_submit_progress(&state, &room_id, &req),
-                    Err(msg) => mcp_error(msg),
-                },
-                "create_task" => match verify_mcp_secret(&state, &room_id, &secret) {
-                    Ok(()) => mcp_create_task(&state, &room_id, &req),
-                    Err(msg) => mcp_error(msg),
-                },
-                "update_task" => match verify_mcp_secret(&state, &room_id, &secret) {
-                    Ok(()) => mcp_update_task(&state, &room_id, &req),
-                    Err(msg) => mcp_error(msg),
-                },
-                // Public tools — no secret required
-                "get_feed" => mcp_get_feed(&state, &room_id),
-                "get_tasks" => mcp_get_tasks(&state, &room_id, &req),
-                "get_manager_summary" => mcp_get_manager_summary(&state, &room_id),
-                "get_summary" => mcp_get_summary(&state, &room_id, &req).await,
-                "ask" => mcp_ask(&state, &room_id, &req).await,
-                _ => json!({
-                    "isError": true,
-                    "content": [{ "type": "text", "text": format!("Unknown tool: {tool_name}") }]
-                }),
-            }
-        }
-        _ => {
-            return Json(json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32601, "message": format!("Unknown method: {method}") }
-            }))
-            .into_response();
-        }
-    };
-
-    Json(json!({ "jsonrpc": "2.0", "id": id, "result": result })).into_response()
-}
-
-/// Verify that a secret is present and valid for the given room.
-/// Returns Ok(()) on success or Err(message) on failure.
-fn verify_mcp_secret(
-    state: &AppState,
-    room_id: &str,
-    secret: &Option<String>,
-) -> Result<(), &'static str> {
-    match secret {
-        Some(s) => {
-            let valid = state.db.verify_room_secret(room_id, s).unwrap_or(false);
-            if valid {
-                Ok(())
-            } else {
-                Err("Unauthorized: invalid secret")
-            }
-        }
-        None => Err("Unauthorized: secret required"),
-    }
-}
-
-fn mcp_error(msg: &str) -> Value {
-    json!({
-        "isError": true,
-        "content": [{ "type": "text", "text": msg }]
-    })
-}
-
-fn mcp_submit_progress(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req.pointer("/params/arguments");
-    let str_arg = |field| {
-        args.and_then(|a| a.get(field))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned()
-    };
-
-    let note = ProgressNote {
-        employee_name: str_arg("employee_name"),
-        repo: str_arg("repo"),
-        branch: Some(str_arg("branch")),
-        progress_text: str_arg("progress_text"),
-    };
-
-    let quiet = args
-        .and_then(|a| a.get("quiet"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    match state.db.insert_note(room_id, &note) {
-        Ok(stored) => {
-            let note_id = stored.note_id;
-            let employee = note.employee_name.clone();
-            let _ = state.note_events.send(NoteEvent {
-                room_id: room_id.to_owned(),
-                note: stored,
-            });
-
-            // Spawn background auto-summarize
-            eprintln!("[submit_progress] spawning auto_summarize for room {room_id}");
-            let bg_state = state.clone();
-            let bg_room = room_id.to_owned();
-            tokio::spawn(async move {
-                auto_summarize(&bg_state, &bg_room).await;
-            });
-
-            // Build response with context unless quiet
-            let mut response = format!("Progress submitted (note_id: {note_id})");
-
-            if !quiet {
-                // Get updates from others since our last submission
-                if let Ok(others) = state.db.get_updates_from_others(room_id, &employee, 20) {
-                    if !others.is_empty() {
-                        response.push_str(&format!(
-                            "\n\n--- Updates from others ({}) ---\n",
-                            others.len()
-                        ));
-                        for n in &others {
-                            response.push_str(&format!(
-                                "[{}] {} ({}): {}\n",
-                                n.received_at,
-                                n.note.employee_name,
-                                n.note.branch.as_deref().unwrap_or("—"),
-                                n.note.progress_text,
-                            ));
-                        }
-                    }
-                }
-
-                // Append task list
-                if let Ok(tasks) = state.db.get_tasks(room_id, false) {
-                    if !tasks.is_empty() {
-                        response.push_str("\n--- Task List ---\n");
-                        for t in &tasks {
-                            let status = t["status"].as_str().unwrap_or("todo");
-                            let marker = if status == "done" { "x" } else { " " };
-                            let title = t["title"].as_str().unwrap_or("");
-                            let assignee = t["assignee"].as_str().unwrap_or("");
-                            let id = t["task_id"].as_str().unwrap_or("");
-                            if assignee.is_empty() {
-                                response.push_str(&format!("- [{marker}] {title} ({id})\n"));
-                            } else {
-                                response.push_str(&format!(
-                                    "- [{marker}] {title} @{assignee} ({id})\n"
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-
-            json!({
-                "content": [{ "type": "text", "text": response }]
-            })
-        }
-        Err(e) => json!({
-            "isError": true,
-            "content": [{ "type": "text", "text": format!("Failed to submit: {e}") }]
-        }),
-    }
-}
-
-fn mcp_get_feed(state: &AppState, room_id: &str) -> Value {
-    match state.db.get_notes(room_id) {
-        Ok(notes) => json!({
-            "content": [{ "type": "text", "text": serde_json::to_string_pretty(&notes).unwrap_or_default() }]
-        }),
-        Err(e) => json!({
-            "isError": true,
-            "content": [{ "type": "text", "text": format!("Failed to read feed: {e}") }]
-        }),
-    }
-}
-
-fn mcp_get_manager_summary(state: &AppState, room_id: &str) -> Value {
-    match state.db.get_summary(room_id) {
-        Ok(summary) => json!({
-            "content": [{ "type": "text", "text": summary }]
-        }),
-        Err(e) => json!({
-            "isError": true,
-            "content": [{ "type": "text", "text": format!("Failed to read manager summary: {e}") }]
-        }),
-    }
-}
-
-fn mcp_create_task(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req.pointer("/params/arguments");
-    let title = args
-        .and_then(|a| a.get("title"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let assignee = args.and_then(|a| a.get("assignee")).and_then(Value::as_str);
-
-    if title.is_empty() {
-        return mcp_error("Missing required field: title");
-    }
-
-    match state.db.create_task(room_id, title, assignee) {
-        Ok(task_id) => json!({
-            "content": [{ "type": "text", "text": format!("Task created (task_id: {task_id})") }]
-        }),
-        Err(e) => mcp_error(&format!("Failed to create task: {e}")),
-    }
-}
-
-fn mcp_get_tasks(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req
-        .pointer("/params/arguments")
-        .cloned()
-        .unwrap_or(json!({}));
-    let include_done = args
-        .get("include_done")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    match state.db.get_tasks(room_id, include_done) {
-        Ok(tasks) => {
-            let text = if tasks.is_empty() {
-                "No tasks.".to_owned()
-            } else {
-                serde_json::to_string_pretty(&tasks).unwrap_or_default()
-            };
-            json!({ "content": [{ "type": "text", "text": text }] })
-        }
-        Err(e) => mcp_error(&format!("Failed to get tasks: {e}")),
-    }
-}
-
-fn mcp_update_task(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req.pointer("/params/arguments");
-    let task_id = args
-        .and_then(|a| a.get("task_id"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let title = args.and_then(|a| a.get("title")).and_then(Value::as_str);
-    let status = args.and_then(|a| a.get("status")).and_then(Value::as_str);
-    let assignee = args.and_then(|a| a.get("assignee")).and_then(Value::as_str);
-
-    if task_id.is_empty() {
-        return mcp_error("Missing required field: task_id");
-    }
-
-    match state
-        .db
-        .update_task(room_id, task_id, title, status, assignee)
-    {
-        Ok(true) => json!({
-            "content": [{ "type": "text", "text": format!("Task {task_id} updated") }]
-        }),
-        Ok(false) => mcp_error(&format!("Task not found: {task_id}")),
-        Err(e) => mcp_error(&format!("Failed to update task: {e}")),
-    }
-}
-
-/// Shared: resolve filter args → fetch notes → format context string.
-/// Returns `Ok((context, filter_desc))` or `Err(mcp error Value)`.
-fn resolve_notes_context(
+/// Shared: resolve filter args → fetch hook events → format context string.
+fn resolve_hook_context(
     state: &AppState,
     room_id: &str,
     args: &Value,
     default_limit: u32,
-) -> Result<(String, String), Value> {
+) -> anyhow::Result<(String, String)> {
     let limit = args
         .get("limit")
         .and_then(Value::as_u64)
@@ -1392,8 +833,8 @@ fn resolve_notes_context(
     let after_time = if let Some(person) = since_last_update_by {
         state
             .db
-            .get_last_update_time(room_id, person)
-            .map_err(|e| mcp_error(&format!("Failed to look up last update by {person}: {e}")))?
+            .get_last_hook_event_time(room_id, person)
+            .with_context(|| format!("failed to look up last hook event by {person}"))?
     } else if let Some(mins) = minutes {
         let cutoff = time::OffsetDateTime::now_utc() - time::Duration::minutes(mins as i64);
         Some(
@@ -1405,30 +846,30 @@ fn resolve_notes_context(
         None
     };
 
-    let notes = state
+    let events = state
         .db
-        .get_notes_filtered(room_id, after_time.as_deref(), employee_name, branch, limit)
-        .map_err(|e| mcp_error(&format!("Failed to fetch notes: {e}")))?;
+        .get_hook_events_filtered(room_id, after_time.as_deref(), employee_name, branch, limit)
+        .context("failed to fetch hook events")?;
 
-    if notes.is_empty() {
-        return Err(json!({
-            "content": [{ "type": "text", "text": "No progress updates found matching the filter." }]
-        }));
+    if events.is_empty() {
+        bail!("no hook updates found matching the filter");
     }
 
     let mut context = String::new();
-    for n in &notes {
-        context.push_str(&format!(
-            "[{}] {} ({}, {}): {}\n",
-            n.received_at,
-            n.note.employee_name,
-            n.note.repo,
-            n.note.branch.as_deref().unwrap_or("—"),
-            n.note.progress_text,
-        ));
+    for event in &events {
+        let line = json!({
+            "received_at": event.received_at,
+            "employee_name": event.employee_name,
+            "client": event.client,
+            "repo_root": event.repo_root,
+            "branch": event.branch,
+            "payload": event.payload,
+        });
+        context.push_str(&serde_json::to_string(&line).unwrap_or_default());
+        context.push('\n');
     }
 
-    let mut filter_desc = format!("{} most recent updates", notes.len());
+    let mut filter_desc = format!("{} most recent hook updates", events.len());
     if let Some(name) = employee_name {
         filter_desc = format!("{filter_desc} from {name}");
     }
@@ -1445,11 +886,11 @@ fn resolve_notes_context(
     Ok((context, filter_desc))
 }
 
-/// Shared: call OpenAI Responses API and return the text.
-async fn call_openai(state: &AppState, instructions: &str, input: &str) -> Value {
+/// Shared: call OpenAI Responses API and return the generated text.
+async fn call_openai(state: &AppState, instructions: &str, input: &str) -> anyhow::Result<String> {
     let api_key = match &state.openai_api_key {
         Some(k) => k,
-        None => return mcp_error("OPENAI_API_KEY not configured on the server"),
+        None => bail!("OPENAI_API_KEY not configured on the server"),
     };
 
     let body = json!({
@@ -1469,31 +910,28 @@ async fn call_openai(state: &AppState, instructions: &str, input: &str) -> Value
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return mcp_error(&format!("OpenAI request failed: {e}")),
+        Err(e) => bail!("OpenAI request failed: {e}"),
     };
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body_text = resp.text().await.unwrap_or_default();
-        return mcp_error(&format!("OpenAI returned {status}: {body_text}"));
+        bail!("OpenAI returned {status}: {body_text}");
     }
 
     let resp_json: Value = match resp.json().await {
         Ok(v) => v,
-        Err(e) => return mcp_error(&format!("Failed to parse OpenAI response: {e}")),
+        Err(e) => bail!("Failed to parse OpenAI response: {e}"),
     };
 
-    let text = resp_json
+    Ok(resp_json
         .pointer("/output/0/content/0/text")
         .and_then(Value::as_str)
-        .unwrap_or("(empty response from OpenAI)");
-
-    json!({
-        "content": [{ "type": "text", "text": text }]
-    })
+        .unwrap_or("(empty response from OpenAI)")
+        .to_owned())
 }
 
-/// Background auto-summarize: triggered after every new note.
+/// Background auto-summarize: triggered after every new hook event.
 async fn auto_summarize(state: &AppState, room_id: &str) {
     eprintln!("[auto_summarize] starting for room {room_id}");
 
@@ -1504,12 +942,12 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
         status: "generating".to_owned(),
     });
 
-    // Build context from last 100 messages
+    // Build context from the most recent hook events
     let args = json!({});
-    let (context, filter_desc) = match resolve_notes_context(state, room_id, &args, 100) {
+    let (context, filter_desc) = match resolve_hook_context(state, room_id, &args, 100) {
         Ok(v) => v,
-        Err(_) => {
-            eprintln!("[auto_summarize] no notes in last 5 min for room {room_id}");
+        Err(error) => {
+            eprintln!("[auto_summarize] no hook events available for room {room_id}: {error}");
             let _ = state.db.set_summary_status(room_id, "ready");
             let _ = state.summary_events.send(SummaryStatusEvent {
                 room_id: room_id.to_owned(),
@@ -1523,78 +961,49 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
 
     let result = call_openai(
         state,
-        "You are a concise project manager assistant. Summarize progress updates into a clear, actionable briefing. Group by person or theme. Highlight blockers, completions, and key decisions. Be brief.",
+        "You are a concise project manager assistant. You will receive raw hook updates from coding agents as JSON lines. Each line includes metadata such as employee_name, client, repo_root, branch, received_at, and the original hook payload. Summarize the work into a clear, actionable briefing. Group by person or theme. Highlight blockers, completions, and key decisions. Be brief.",
         &format!("Summarize these {filter_desc}:\n\n{context}"),
     ).await;
-
-    // Extract text from MCP response
-    let text = result
-        .pointer("/content/0/text")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-
-    if text.is_empty() || result.get("isError").is_some() {
-        eprintln!("[auto_summarize] error for room {room_id}: {result}");
-        let _ = state.db.set_summary_status(room_id, "error");
-        let _ = state.summary_events.send(SummaryStatusEvent {
-            room_id: room_id.to_owned(),
-            status: "error".to_owned(),
-        });
-    } else {
-        eprintln!(
-            "[auto_summarize] success for room {room_id}, {} chars",
-            text.len()
-        );
-        let _ = state.db.set_summary(room_id, text);
-        let _ = state.summary_events.send(SummaryStatusEvent {
-            room_id: room_id.to_owned(),
-            status: "ready".to_owned(),
-        });
+    match result {
+        Ok(text) if !text.is_empty() => {
+            eprintln!(
+                "[auto_summarize] success for room {room_id}, {} chars",
+                text.len()
+            );
+            let _ = state.db.set_summary(room_id, &text);
+            let _ = state.summary_events.send(SummaryStatusEvent {
+                room_id: room_id.to_owned(),
+                status: "ready".to_owned(),
+            });
+        }
+        Ok(_) => {
+            eprintln!("[auto_summarize] empty response for room {room_id}");
+            let _ = state.db.set_summary_status(room_id, "error");
+            let _ = state.summary_events.send(SummaryStatusEvent {
+                room_id: room_id.to_owned(),
+                status: "error".to_owned(),
+            });
+        }
+        Err(error) => {
+            eprintln!("[auto_summarize] error for room {room_id}: {error}");
+            let _ = state.db.set_summary_status(room_id, "error");
+            let _ = state.summary_events.send(SummaryStatusEvent {
+                room_id: room_id.to_owned(),
+                status: "error".to_owned(),
+            });
+        }
     }
 }
 
-async fn mcp_get_summary(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req
-        .pointer("/params/arguments")
-        .cloned()
-        .unwrap_or(json!({}));
-
-    let (context, filter_desc) = match resolve_notes_context(state, room_id, &args, 20) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-
-    call_openai(
-        state,
-        "You are a concise project manager assistant. Summarize progress updates into a clear, actionable briefing. Group by person or theme. Highlight blockers, completions, and key decisions. Be brief.",
-        &format!("Summarize these {filter_desc}:\n\n{context}"),
-    ).await
-}
-
-async fn mcp_ask(state: &AppState, room_id: &str, req: &Value) -> Value {
-    let args = req
-        .pointer("/params/arguments")
-        .cloned()
-        .unwrap_or(json!({}));
-
-    let question = match args.get("question").and_then(Value::as_str) {
-        Some(q) => q.to_owned(),
-        None => return mcp_error("Missing required field: question"),
-    };
-
-    let (context, _filter_desc) = match resolve_notes_context(state, room_id, &args, 50) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-
-    call_openai(
-        state,
-        "You are a project assistant. Answer the question based ONLY on the progress log below. Be specific — cite timestamps and names. If the answer isn't in the log, say so clearly.",
-        &format!("Question: {question}\n\nProgress log:\n{context}"),
-    ).await
-}
-
 // ── Helpers ─────────────────────────────────────────────────
+
+fn spawn_auto_summarize(state: &AppState, room_id: &str) {
+    let bg_state = state.clone();
+    let bg_room = room_id.to_owned();
+    tokio::spawn(async move {
+        auto_summarize(&bg_state, &bg_room).await;
+    });
+}
 
 fn cli_join_command(base_url: &str, room_id: &str, secret: &str) -> String {
     format!(
@@ -1609,11 +1018,11 @@ fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
 }
 
-fn progress_event(note: &StoredProgressNote) -> Event {
-    let data = serde_json::to_string(note).unwrap_or_else(|_| "{}".to_owned());
+fn hook_event(event: &StoredHookEvent) -> Event {
+    let data = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_owned());
     Event::default()
-        .event("progress_note")
-        .id(note.note_id.to_string())
+        .event("hook_event")
+        .id(event.event_id.to_string())
         .data(data)
 }
 

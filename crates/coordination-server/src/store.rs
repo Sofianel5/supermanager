@@ -3,8 +3,9 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use rand::Rng;
-use reporter_protocol::{ProgressNote, Room, StoredProgressNote};
+use reporter_protocol::{HookTurnReport, Room, StoredHookEvent};
 use rusqlite::{Connection, params};
+use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
@@ -42,16 +43,6 @@ impl Db {
                 created_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS notes (
-                note_id       TEXT PRIMARY KEY,
-                room_id       TEXT NOT NULL REFERENCES rooms(room_id),
-                employee_name TEXT NOT NULL,
-                repo          TEXT NOT NULL,
-                branch        TEXT,
-                progress_text TEXT NOT NULL,
-                received_at   TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS summaries (
                 room_id          TEXT PRIMARY KEY REFERENCES rooms(room_id),
                 content_markdown TEXT NOT NULL,
@@ -69,10 +60,26 @@ impl Db {
                 updated_at TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_notes_room_received
-                ON notes(room_id, received_at);
+            CREATE TABLE IF NOT EXISTS hook_events (
+                event_id       TEXT PRIMARY KEY,
+                room_id        TEXT NOT NULL REFERENCES rooms(room_id),
+                employee_name  TEXT NOT NULL,
+                client         TEXT NOT NULL,
+                event_name     TEXT NOT NULL,
+                session_id     TEXT NOT NULL,
+                turn_id        TEXT,
+                repo_root      TEXT NOT NULL,
+                cwd            TEXT,
+                branch         TEXT,
+                content        TEXT NOT NULL,
+                payload_json   TEXT,
+                received_at    TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_tasks_room
-                ON tasks(room_id);",
+                ON tasks(room_id);
+            CREATE INDEX IF NOT EXISTS idx_hook_events_room_received
+                ON hook_events(room_id, received_at);",
         )?;
 
         // ── Migrations for existing DBs ────────────────────────
@@ -86,6 +93,15 @@ impl Db {
             conn.execute_batch(
                 "ALTER TABLE summaries ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';",
             )?;
+        }
+
+        let has_payload_json: bool = conn
+            .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='hook_events'")?
+            .query_row([], |row| row.get::<_, String>(0))
+            .map(|sql| sql.contains("payload_json"))
+            .unwrap_or(false);
+        if !has_payload_json {
+            conn.execute_batch("ALTER TABLE hook_events ADD COLUMN payload_json TEXT;")?;
         }
 
         Ok(Self {
@@ -161,78 +177,80 @@ impl Db {
         Ok(result.as_deref() == Some(secret))
     }
 
-    // ── Notes ───────────────────────────────────────────────
-
-    /// Insert a progress note into a room.
-    pub fn insert_note(&self, room_id: &str, note: &ProgressNote) -> Result<StoredProgressNote> {
+    /// Insert a raw hook turn event into a room.
+    pub fn insert_hook_event(
+        &self,
+        room_id: &str,
+        report: &HookTurnReport,
+    ) -> Result<StoredHookEvent> {
         let conn = self.conn.lock().unwrap();
-        let note_id = Uuid::new_v4();
+        let event_id = Uuid::new_v4();
         let received_at = now_rfc3339();
+        let payload_json =
+            serde_json::to_string(&report.payload).context("failed to serialize hook payload")?;
 
         conn.execute(
-            "INSERT INTO notes (note_id, room_id, employee_name, repo, branch, progress_text, received_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO hook_events (
+                event_id, room_id, employee_name, client, event_name, session_id, turn_id,
+                repo_root, cwd, branch, content, payload_json, received_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
-                note_id.to_string(),
+                event_id.to_string(),
                 room_id,
-                note.employee_name,
-                note.repo,
-                note.branch,
-                note.progress_text,
+                report.employee_name,
+                report.client,
+                "",
+                "",
+                Option::<String>::None,
+                report.repo_root,
+                report.branch,
+                Option::<String>::None,
+                payload_json.clone(),
+                payload_json,
                 received_at,
             ],
         )
-        .with_context(|| format!("failed to insert note into room {room_id}"))?;
+        .with_context(|| format!("failed to insert hook event into room {room_id}"))?;
 
-        Ok(StoredProgressNote {
-            note_id,
+        Ok(StoredHookEvent {
+            event_id,
             received_at,
-            note: note.clone(),
+            employee_name: report.employee_name.clone(),
+            client: report.client.clone(),
+            repo_root: report.repo_root.clone(),
+            branch: report.branch.clone(),
+            payload: report.payload.clone(),
         })
     }
 
-    /// Get all notes in a room, newest first.
-    pub fn get_notes(&self, room_id: &str) -> Result<Vec<StoredProgressNote>> {
+    pub fn get_hook_events(&self, room_id: &str) -> Result<Vec<StoredHookEvent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT note_id, employee_name, repo, branch, progress_text, received_at
-             FROM notes WHERE room_id = ?1
+            "SELECT event_id, employee_name, client, repo_root, branch, payload_json,
+                    event_name, session_id, turn_id, cwd, content, received_at
+             FROM hook_events WHERE room_id = ?1
              ORDER BY received_at DESC",
         )?;
 
-        let notes = stmt
-            .query_map(params![room_id], |row| {
-                let note_id_str: String = row.get(0)?;
-                Ok(StoredProgressNote {
-                    note_id: Uuid::parse_str(&note_id_str).unwrap_or_else(|_| Uuid::nil()),
-                    received_at: row.get(5)?,
-                    note: ProgressNote {
-                        employee_name: row.get(1)?,
-                        repo: row.get(2)?,
-                        branch: row.get(3)?,
-                        progress_text: row.get(4)?,
-                    },
-                })
-            })?
+        let events = stmt
+            .query_map(params![room_id], map_stored_hook_event)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(notes)
+        Ok(events)
     }
 
-    /// Get all notes received after the note with the given ID (chronological
-    /// order, oldest first). Used for SSE replay.
-    pub fn get_notes_after(
+    pub fn get_hook_events_after(
         &self,
         room_id: &str,
-        after_note_id: &str,
-    ) -> Result<Vec<StoredProgressNote>> {
+        after_event_id: &str,
+    ) -> Result<Vec<StoredHookEvent>> {
         let conn = self.conn.lock().unwrap();
 
-        // Find the received_at of the anchor note.
         let anchor_time: Option<String> = conn
             .query_row(
-                "SELECT received_at FROM notes WHERE note_id = ?1 AND room_id = ?2",
-                params![after_note_id, room_id],
+                "SELECT received_at FROM hook_events WHERE event_id = ?1 AND room_id = ?2",
+                params![after_event_id, room_id],
                 |row| row.get(0),
             )
             .optional()?;
@@ -243,33 +261,21 @@ impl Db {
         };
 
         let mut stmt = conn.prepare(
-            "SELECT note_id, employee_name, repo, branch, progress_text, received_at
-             FROM notes
+            "SELECT event_id, employee_name, client, repo_root, branch, payload_json,
+                    event_name, session_id, turn_id, cwd, content, received_at
+             FROM hook_events
              WHERE room_id = ?1 AND received_at > ?2
              ORDER BY received_at ASC",
         )?;
 
-        let notes = stmt
-            .query_map(params![room_id, anchor_time], |row| {
-                let note_id_str: String = row.get(0)?;
-                Ok(StoredProgressNote {
-                    note_id: Uuid::parse_str(&note_id_str).unwrap_or_else(|_| Uuid::nil()),
-                    received_at: row.get(5)?,
-                    note: ProgressNote {
-                        employee_name: row.get(1)?,
-                        repo: row.get(2)?,
-                        branch: row.get(3)?,
-                        progress_text: row.get(4)?,
-                    },
-                })
-            })?
+        let events = stmt
+            .query_map(params![room_id, anchor_time], map_stored_hook_event)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(notes)
+        Ok(events)
     }
 
-    /// Get the received_at timestamp of a person's most recent note in a room.
-    pub fn get_last_update_time(
+    pub fn get_last_hook_event_time(
         &self,
         room_id: &str,
         employee_name: &str,
@@ -277,7 +283,7 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let result: Option<String> = conn
             .query_row(
-                "SELECT received_at FROM notes
+                "SELECT received_at FROM hook_events
                  WHERE room_id = ?1 AND employee_name = ?2
                  ORDER BY received_at DESC LIMIT 1",
                 params![room_id, employee_name],
@@ -287,87 +293,14 @@ impl Db {
         Ok(result)
     }
 
-    /// Get notes from OTHER people since a person's second-to-last update.
-    /// (Second-to-last because the most recent is the one just submitted.)
-    pub fn get_updates_from_others(
-        &self,
-        room_id: &str,
-        employee_name: &str,
-        limit: u32,
-    ) -> Result<Vec<StoredProgressNote>> {
-        let conn = self.conn.lock().unwrap();
-        // Get second-to-last update time for this person
-        let cutoff: Option<String> = conn
-            .query_row(
-                "SELECT received_at FROM notes
-                 WHERE room_id = ?1 AND employee_name = ?2
-                 ORDER BY received_at DESC LIMIT 1 OFFSET 1",
-                params![room_id, employee_name],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        let (sql, param_values): (String, Vec<String>) = if let Some(ref t) = cutoff {
-            (
-                format!(
-                    "SELECT note_id, employee_name, repo, branch, progress_text, received_at
-                     FROM notes WHERE room_id = ?1 AND employee_name != ?2 AND received_at > ?3
-                     ORDER BY received_at DESC LIMIT ?4"
-                ),
-                vec![
-                    room_id.to_string(),
-                    employee_name.to_string(),
-                    t.clone(),
-                    limit.to_string(),
-                ],
-            )
-        } else {
-            (
-                format!(
-                    "SELECT note_id, employee_name, repo, branch, progress_text, received_at
-                     FROM notes WHERE room_id = ?1 AND employee_name != ?2
-                     ORDER BY received_at DESC LIMIT ?3"
-                ),
-                vec![
-                    room_id.to_string(),
-                    employee_name.to_string(),
-                    limit.to_string(),
-                ],
-            )
-        };
-
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values
-            .iter()
-            .map(|s| s as &dyn rusqlite::types::ToSql)
-            .collect();
-        let mut stmt = conn.prepare(&sql)?;
-        let notes = stmt
-            .query_map(rusqlite::params_from_iter(param_refs.iter()), |row| {
-                let note_id_str: String = row.get(0)?;
-                Ok(StoredProgressNote {
-                    note_id: Uuid::parse_str(&note_id_str).unwrap_or_else(|_| Uuid::nil()),
-                    received_at: row.get(5)?,
-                    note: ProgressNote {
-                        employee_name: row.get(1)?,
-                        repo: row.get(2)?,
-                        branch: row.get(3)?,
-                        progress_text: row.get(4)?,
-                    },
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(notes)
-    }
-
-    /// Get notes with optional filters: time cutoff, employee name, limit.
-    pub fn get_notes_filtered(
+    pub fn get_hook_events_filtered(
         &self,
         room_id: &str,
         after_time: Option<&str>,
         employee_name: Option<&str>,
         branch: Option<&str>,
         limit: u32,
-    ) -> Result<Vec<StoredProgressNote>> {
+    ) -> Result<Vec<StoredHookEvent>> {
         let conn = self.conn.lock().unwrap();
 
         let mut conditions = vec!["room_id = ?1".to_string()];
@@ -394,8 +327,9 @@ impl Db {
 
         let where_clause = conditions.join(" AND ");
         let sql = format!(
-            "SELECT note_id, employee_name, repo, branch, progress_text, received_at
-             FROM notes WHERE {where_clause}
+            "SELECT event_id, employee_name, client, repo_root, branch, payload_json,
+                    event_name, session_id, turn_id, cwd, content, received_at
+             FROM hook_events WHERE {where_clause}
              ORDER BY received_at DESC LIMIT ?{idx}"
         );
         param_values.push(limit.to_string());
@@ -406,23 +340,14 @@ impl Db {
             .collect();
 
         let mut stmt = conn.prepare(&sql)?;
-        let notes = stmt
-            .query_map(rusqlite::params_from_iter(param_refs.iter()), |row| {
-                let note_id_str: String = row.get(0)?;
-                Ok(StoredProgressNote {
-                    note_id: Uuid::parse_str(&note_id_str).unwrap_or_else(|_| Uuid::nil()),
-                    received_at: row.get(5)?,
-                    note: ProgressNote {
-                        employee_name: row.get(1)?,
-                        repo: row.get(2)?,
-                        branch: row.get(3)?,
-                        progress_text: row.get(4)?,
-                    },
-                })
-            })?
+        let events = stmt
+            .query_map(
+                rusqlite::params_from_iter(param_refs.iter()),
+                map_stored_hook_event,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(notes)
+        Ok(events)
     }
 
     // ── Summaries ───────────────────────────────────────────
@@ -483,23 +408,6 @@ impl Db {
     }
     // ── Tasks ───────────────────────────────────────────────
 
-    pub fn create_task(
-        &self,
-        room_id: &str,
-        title: &str,
-        assignee: Option<&str>,
-    ) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
-        let task_id = Uuid::new_v4().to_string();
-        let now = now_rfc3339();
-        conn.execute(
-            "INSERT INTO tasks (task_id, room_id, title, status, assignee, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 'todo', ?4, ?5, ?5)",
-            params![task_id, room_id, title, assignee, now],
-        )?;
-        Ok(task_id)
-    }
-
     pub fn get_tasks(&self, room_id: &str, include_done: bool) -> Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
         let sql = if include_done {
@@ -524,50 +432,80 @@ impl Db {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(tasks)
     }
-
-    pub fn update_task(
-        &self,
-        room_id: &str,
-        task_id: &str,
-        title: Option<&str>,
-        status: Option<&str>,
-        assignee: Option<&str>,
-    ) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let mut sets = vec!["updated_at = ?3".to_string()];
-        let mut param_values: Vec<String> =
-            vec![task_id.to_string(), room_id.to_string(), now_rfc3339()];
-        let mut idx = 4u32;
-
-        if let Some(t) = title {
-            sets.push(format!("title = ?{idx}"));
-            param_values.push(t.to_string());
-            idx += 1;
-        }
-        if let Some(s) = status {
-            sets.push(format!("status = ?{idx}"));
-            param_values.push(s.to_string());
-            idx += 1;
-        }
-        if let Some(a) = assignee {
-            sets.push(format!("assignee = ?{idx}"));
-            param_values.push(a.to_string());
-        }
-
-        let sql = format!(
-            "UPDATE tasks SET {} WHERE task_id = ?1 AND room_id = ?2",
-            sets.join(", ")
-        );
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values
-            .iter()
-            .map(|s| s as &dyn rusqlite::types::ToSql)
-            .collect();
-        let changed = conn.execute(&sql, rusqlite::params_from_iter(param_refs.iter()))?;
-        Ok(changed > 0)
-    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────
+
+fn map_stored_hook_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredHookEvent> {
+    let event_id_str: String = row.get(0)?;
+    let payload_json: Option<String> = row.get(5)?;
+    let payload = parse_or_reconstruct_payload(
+        payload_json.as_deref(),
+        row.get::<_, String>(6)?.as_str(),
+        row.get::<_, String>(7)?.as_str(),
+        row.get::<_, Option<String>>(8)?,
+        row.get::<_, Option<String>>(9)?,
+        row.get::<_, String>(10)?.as_str(),
+    );
+
+    Ok(StoredHookEvent {
+        event_id: Uuid::parse_str(&event_id_str).unwrap_or_else(|_| Uuid::nil()),
+        received_at: row.get(11)?,
+        employee_name: row.get(1)?,
+        client: row.get(2)?,
+        repo_root: row.get(3)?,
+        branch: row.get(4)?,
+        payload,
+    })
+}
+
+fn parse_or_reconstruct_payload(
+    payload_json: Option<&str>,
+    event_name: &str,
+    session_id: &str,
+    turn_id: Option<String>,
+    cwd: Option<String>,
+    content: &str,
+) -> Value {
+    if let Some(raw) = payload_json {
+        if let Ok(value) = serde_json::from_str::<Value>(raw) {
+            return value;
+        }
+    }
+
+    let hook_event_name = match event_name {
+        "user_prompt_submit" => "UserPromptSubmit",
+        "stop" => "Stop",
+        other if !other.is_empty() => other,
+        _ => "Unknown",
+    };
+
+    let mut payload = json!({
+        "hook_event_name": hook_event_name,
+    });
+
+    if !session_id.is_empty() {
+        payload["session_id"] = Value::String(session_id.to_owned());
+    }
+    if let Some(turn_id) = turn_id {
+        payload["turn_id"] = Value::String(turn_id);
+    }
+    if let Some(cwd) = cwd {
+        payload["cwd"] = Value::String(cwd);
+    }
+    if !content.is_empty() {
+        let key = if event_name == "user_prompt_submit" {
+            "prompt"
+        } else if event_name == "stop" {
+            "last_assistant_message"
+        } else {
+            "content"
+        };
+        payload[key] = Value::String(content.to_owned());
+    }
+
+    payload
+}
 
 /// Extension trait so we can use `.optional()` on rusqlite single-row queries.
 trait OptionalExt<T> {
