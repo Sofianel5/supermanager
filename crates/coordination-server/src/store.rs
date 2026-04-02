@@ -50,16 +50,6 @@ impl Db {
                 updated_at       TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS tasks (
-                task_id    TEXT PRIMARY KEY,
-                room_id    TEXT NOT NULL REFERENCES rooms(room_id),
-                title      TEXT NOT NULL,
-                status     TEXT NOT NULL DEFAULT 'todo',
-                assignee   TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS hook_events (
                 event_id       TEXT PRIMARY KEY,
                 room_id        TEXT NOT NULL REFERENCES rooms(room_id),
@@ -70,9 +60,6 @@ impl Db {
                 payload_json   TEXT,
                 received_at    TEXT NOT NULL
             );
-
-            CREATE INDEX IF NOT EXISTS idx_tasks_room
-                ON tasks(room_id);
             CREATE INDEX IF NOT EXISTS idx_hook_events_room_received
                 ON hook_events(room_id, received_at);",
         )?;
@@ -98,6 +85,11 @@ impl Db {
         if !has_payload_json {
             conn.execute_batch("ALTER TABLE hook_events ADD COLUMN payload_json TEXT;")?;
         }
+
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_tasks_room;
+             DROP TABLE IF EXISTS tasks;",
+        )?;
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -392,32 +384,6 @@ impl Db {
             params![room_id, content, now_rfc3339()],
         )?;
         Ok(())
-    }
-    // ── Tasks ───────────────────────────────────────────────
-
-    pub fn get_tasks(&self, room_id: &str, include_done: bool) -> Result<Vec<serde_json::Value>> {
-        let conn = self.conn.lock().unwrap();
-        let sql = if include_done {
-            "SELECT task_id, title, status, assignee, created_at, updated_at
-             FROM tasks WHERE room_id = ?1 ORDER BY created_at"
-        } else {
-            "SELECT task_id, title, status, assignee, created_at, updated_at
-             FROM tasks WHERE room_id = ?1 AND status != 'done' ORDER BY created_at"
-        };
-        let mut stmt = conn.prepare(sql)?;
-        let tasks = stmt
-            .query_map(params![room_id], |row| {
-                Ok(serde_json::json!({
-                    "task_id": row.get::<_, String>(0)?,
-                    "title": row.get::<_, String>(1)?,
-                    "status": row.get::<_, String>(2)?,
-                    "assignee": row.get::<_, Option<String>>(3)?,
-                    "created_at": row.get::<_, String>(4)?,
-                    "updated_at": row.get::<_, String>(5)?,
-                }))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(tasks)
     }
 }
 
