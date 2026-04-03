@@ -1,6 +1,7 @@
 use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
 
 use anyhow::{Context, bail};
+use schemars::JsonSchema;
 use async_stream::stream;
 use axum::{
     Json,
@@ -24,7 +25,7 @@ use crate::store::Db;
 const DEFAULT_PUBLIC_API_URL: &str = "https://supermanager.fly.dev";
 const DEFAULT_PUBLIC_APP_URL: &str = "https://supermanager.dev";
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 struct RoomSnapshotPatch {
     #[serde(default)]
     bluf_markdown: Option<String>,
@@ -34,7 +35,7 @@ struct RoomSnapshotPatch {
     employees: Vec<EmployeeSnapshotPatch>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 struct EmployeeSnapshotPatch {
     employee_name: String,
     #[serde(default)]
@@ -386,6 +387,39 @@ fn is_snapshot_empty(snapshot: &RoomSnapshot) -> bool {
         && snapshot.employees.is_empty()
 }
 
+/// Build an OpenAI structured-output format block from a `schemars`-derived schema.
+/// Adds `"additionalProperties": false` to every object node (required by strict mode).
+fn openai_strict_schema<T: JsonSchema>(name: &str) -> Value {
+    let root = schemars::schema_for!(T);
+    let mut schema = serde_json::to_value(root).unwrap_or_default();
+    enforce_additional_properties_false(&mut schema);
+    json!({
+        "type": "json_schema",
+        "name": name,
+        "strict": true,
+        "schema": schema,
+    })
+}
+
+fn enforce_additional_properties_false(value: &mut Value) {
+    if let Some(obj) = value.as_object_mut() {
+        if obj.contains_key("properties") {
+            obj.insert(
+                "additionalProperties".to_owned(),
+                Value::Bool(false),
+            );
+        }
+        for child in obj.values_mut() {
+            enforce_additional_properties_false(child);
+        }
+    }
+    if let Some(arr) = value.as_array_mut() {
+        for child in arr {
+            enforce_additional_properties_false(child);
+        }
+    }
+}
+
 /// Shared: call OpenAI Responses API and return the generated text.
 async fn call_openai(state: &AppState, instructions: &str, input: &str) -> anyhow::Result<String> {
     let api_key = match &state.openai_api_key {
@@ -397,6 +431,9 @@ async fn call_openai(state: &AppState, instructions: &str, input: &str) -> anyho
         "model": "gpt-5.4-mini",
         "instructions": instructions,
         "input": input,
+        "text": {
+            "format": openai_strict_schema::<RoomSnapshotPatch>("room_snapshot_patch"),
+        },
     });
 
     eprintln!("[call_openai] sending request to OpenAI (model: gpt-5.4-mini)");
@@ -431,6 +468,19 @@ async fn call_openai(state: &AppState, instructions: &str, input: &str) -> anyho
         .to_owned())
 }
 
+fn broadcast_status(state: &AppState, room_id: &str, status: &str) {
+    let _ = state.db.set_summary_status(room_id, status);
+    let _ = state.summary_events.send(SummaryStatusEvent {
+        room_id: room_id.to_owned(),
+        status: status.to_owned(),
+    });
+}
+
+fn fail_summarize(state: &AppState, room_id: &str, msg: impl std::fmt::Display) {
+    eprintln!("[auto_summarize] {msg}");
+    broadcast_status(state, room_id, "error");
+}
+
 /// Background auto-summarize: triggered after every new hook event.
 async fn auto_summarize(state: &AppState, room_id: &str) {
     eprintln!("[auto_summarize] starting for room {room_id}");
@@ -438,38 +488,19 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
     let current_snapshot = match state.db.get_summary(room_id) {
         Ok(snapshot) => snapshot,
         Err(error) => {
-            eprintln!(
-                "[auto_summarize] failed to load current snapshot for room {room_id}: {error}"
-            );
-            let _ = state.db.set_summary_status(room_id, "error");
-            let _ = state.summary_events.send(SummaryStatusEvent {
-                room_id: room_id.to_owned(),
-                status: "error".to_owned(),
-            });
+            fail_summarize(state, room_id, format_args!("failed to load current snapshot for room {room_id}: {error}"));
             return;
         }
     };
     let current_snapshot_updated_at = match state.db.get_summary_updated_at(room_id) {
         Ok(updated_at) => updated_at,
         Err(error) => {
-            eprintln!(
-                "[auto_summarize] failed to load snapshot timestamp for room {room_id}: {error}"
-            );
-            let _ = state.db.set_summary_status(room_id, "error");
-            let _ = state.summary_events.send(SummaryStatusEvent {
-                room_id: room_id.to_owned(),
-                status: "error".to_owned(),
-            });
+            fail_summarize(state, room_id, format_args!("failed to load snapshot timestamp for room {room_id}: {error}"));
             return;
         }
     };
 
-    // Mark as generating + broadcast
-    let _ = state.db.set_summary_status(room_id, "generating");
-    let _ = state.summary_events.send(SummaryStatusEvent {
-        room_id: room_id.to_owned(),
-        status: "generating".to_owned(),
-    });
+    broadcast_status(state, room_id, "generating");
 
     let active_events = match state
         .db
@@ -478,20 +509,11 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
         Ok(events) if !events.is_empty() => events,
         Ok(_) => {
             eprintln!("[auto_summarize] no hook events available for room {room_id}");
-            let _ = state.db.set_summary_status(room_id, "ready");
-            let _ = state.summary_events.send(SummaryStatusEvent {
-                room_id: room_id.to_owned(),
-                status: "ready".to_owned(),
-            });
+            broadcast_status(state, room_id, "ready");
             return;
         }
         Err(error) => {
-            eprintln!("[auto_summarize] failed to load active events for room {room_id}: {error}");
-            let _ = state.db.set_summary_status(room_id, "error");
-            let _ = state.summary_events.send(SummaryStatusEvent {
-                room_id: room_id.to_owned(),
-                status: "error".to_owned(),
-            });
+            fail_summarize(state, room_id, format_args!("failed to load active events for room {room_id}: {error}"));
             return;
         }
     };
@@ -509,22 +531,11 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             Ok(events) if !events.is_empty() => events,
             Ok(_) => {
                 eprintln!("[auto_summarize] no new events to merge for room {room_id}");
-                let _ = state.db.set_summary_status(room_id, "ready");
-                let _ = state.summary_events.send(SummaryStatusEvent {
-                    room_id: room_id.to_owned(),
-                    status: "ready".to_owned(),
-                });
+                broadcast_status(state, room_id, "ready");
                 return;
             }
             Err(error) => {
-                eprintln!(
-                    "[auto_summarize] failed to load changed events for room {room_id}: {error}"
-                );
-                let _ = state.db.set_summary_status(room_id, "error");
-                let _ = state.summary_events.send(SummaryStatusEvent {
-                    room_id: room_id.to_owned(),
-                    status: "error".to_owned(),
-                });
+                fail_summarize(state, room_id, format_args!("failed to load changed events for room {room_id}: {error}"));
                 return;
             }
         }
@@ -547,14 +558,7 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             let next_snapshot = match parse_snapshot_patch(&text) {
                 Ok(patch) => merge_snapshot_patch(current_snapshot, patch, &active_events),
                 Err(error) => {
-                    eprintln!(
-                        "[auto_summarize] invalid snapshot patch for room {room_id}: {error}"
-                    );
-                    let _ = state.db.set_summary_status(room_id, "error");
-                    let _ = state.summary_events.send(SummaryStatusEvent {
-                        room_id: room_id.to_owned(),
-                        status: "error".to_owned(),
-                    });
+                    fail_summarize(state, room_id, format_args!("invalid snapshot patch for room {room_id}: {error}"));
                     return;
                 }
             };
@@ -563,26 +567,13 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
                 text.len()
             );
             let _ = state.db.set_summary(room_id, &next_snapshot);
-            let _ = state.summary_events.send(SummaryStatusEvent {
-                room_id: room_id.to_owned(),
-                status: "ready".to_owned(),
-            });
+            broadcast_status(state, room_id, "ready");
         }
         Ok(_) => {
-            eprintln!("[auto_summarize] empty response for room {room_id}");
-            let _ = state.db.set_summary_status(room_id, "error");
-            let _ = state.summary_events.send(SummaryStatusEvent {
-                room_id: room_id.to_owned(),
-                status: "error".to_owned(),
-            });
+            fail_summarize(state, room_id, format_args!("empty response for room {room_id}"));
         }
         Err(error) => {
-            eprintln!("[auto_summarize] error for room {room_id}: {error}");
-            let _ = state.db.set_summary_status(room_id, "error");
-            let _ = state.summary_events.send(SummaryStatusEvent {
-                room_id: room_id.to_owned(),
-                status: "error".to_owned(),
-            });
+            fail_summarize(state, room_id, format_args!("error for room {room_id}: {error}"));
         }
     }
 }
