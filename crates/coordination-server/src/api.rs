@@ -63,10 +63,45 @@ pub struct HookFeedEvent {
     pub event: StoredHookEvent,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummaryStatus {
+    Generating,
+    Ready,
+    Error,
+}
+
+impl SummaryStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Generating => "generating",
+            Self::Ready => "ready",
+            Self::Error => "error",
+        }
+    }
+}
+
+impl std::fmt::Display for SummaryStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for SummaryStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "generating" => Ok(Self::Generating),
+            "ready" => Ok(Self::Ready),
+            "error" => Ok(Self::Error),
+            other => Err(format!("unknown summary status: {other}")),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct SummaryStatusEvent {
     pub room_id: String,
-    pub status: String, // "generating", "ready", "error"
+    pub status: SummaryStatus,
 }
 
 #[derive(Clone)]
@@ -181,7 +216,9 @@ pub async fn stream_feed(
     let initial_status = state
         .db
         .get_summary_status(&room_id)
-        .unwrap_or_else(|_| "ready".to_owned());
+        .ok()
+        .and_then(|s| s.parse::<SummaryStatus>().ok())
+        .unwrap_or(SummaryStatus::Ready);
 
     let event_stream = stream! {
         // Replay missed events
@@ -192,7 +229,7 @@ pub async fn stream_feed(
         // Send current summary status on connect
         yield Ok(Event::default()
             .event("summary_status")
-            .data(json!({ "status": initial_status }).to_string()));
+            .data(json!({ "status": initial_status.as_str() }).to_string()));
 
         loop {
             tokio::select! {
@@ -217,7 +254,7 @@ pub async fn stream_feed(
                             if evt.room_id == target_room {
                                 yield Ok(Event::default()
                                     .event("summary_status")
-                                    .data(json!({ "status": evt.status }).to_string()));
+                                    .data(json!({ "status": evt.status.as_str() }).to_string()));
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {}
@@ -511,17 +548,17 @@ async fn call_openai(state: &AppState, instructions: &str, input: &str) -> anyho
         .to_owned())
 }
 
-fn broadcast_status(state: &AppState, room_id: &str, status: &str) {
-    let _ = state.db.set_summary_status(room_id, status);
+fn broadcast_status(state: &AppState, room_id: &str, status: SummaryStatus) {
+    let _ = state.db.set_summary_status(room_id, status.as_str());
     let _ = state.summary_events.send(SummaryStatusEvent {
         room_id: room_id.to_owned(),
-        status: status.to_owned(),
+        status,
     });
 }
 
 fn fail_summarize(state: &AppState, room_id: &str, msg: impl std::fmt::Display) {
     eprintln!("[auto_summarize] {msg}");
-    broadcast_status(state, room_id, "error");
+    broadcast_status(state, room_id, SummaryStatus::Error);
 }
 
 /// Background auto-summarize: triggered after every new hook event.
@@ -539,7 +576,7 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             return;
         }
     };
-    broadcast_status(state, room_id, "generating");
+    broadcast_status(state, room_id, SummaryStatus::Generating);
 
     let active_events = match state
         .db
@@ -548,7 +585,7 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
         Ok(events) if !events.is_empty() => events,
         Ok(_) => {
             eprintln!("[auto_summarize] no hook events available for room {room_id}");
-            broadcast_status(state, room_id, "ready");
+            broadcast_status(state, room_id, SummaryStatus::Ready);
             return;
         }
         Err(error) => {
@@ -577,7 +614,7 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             .unwrap_or(active_events.len());
         if boundary == 0 {
             eprintln!("[auto_summarize] no new events to merge for room {room_id}");
-            broadcast_status(state, room_id, "ready");
+            broadcast_status(state, room_id, SummaryStatus::Ready);
             return;
         }
         &active_events[..boundary]
@@ -617,7 +654,7 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
                 next_snapshot.employees.len()
             );
             let _ = state.db.set_summary(room_id, &next_snapshot);
-            broadcast_status(state, room_id, "ready");
+            broadcast_status(state, room_id, SummaryStatus::Ready);
         }
         Ok(_) => {
             fail_summarize(
