@@ -131,7 +131,7 @@ Open the room dashboard:
 open "http://127.0.0.1:5173/r/<room-code>"
 ```
 
-The frontend reads room metadata, feed, and summary from the API and watches summary generation status over SSE.
+The frontend reads room metadata, feed, and a structured room summary from the API and watches summary generation status over SSE.
 
 ## API
 
@@ -144,7 +144,7 @@ The frontend reads room metadata, feed, and summary from the API and watches sum
 | `/r/{room_id}/feed` | GET | Get raw room hook events, newest first |
 | `/r/{room_id}/feed/stream` | GET | SSE stream of hook-event and summary-status events |
 | `/r/{room_id}/hooks/turn` | POST | Submit a hook-captured turn event |
-| `/r/{room_id}/summary` | GET | Read the current room summary |
+| `/r/{room_id}/summary` | GET | Read the current room summary JSON (`bluf_markdown`, `overview_markdown`, `employees[]`) |
 
 ## Project structure
 
@@ -161,6 +161,7 @@ fly.toml                  # Fly deployment config
 ## Notes
 
 - Summary generation runs on the server after new hook turns arrive.
+- The stored room summary is structured JSON. The model receives the current summary plus fresh updates and can return partial section updates instead of rewriting the whole room summary each time.
 
 ## Deploying to Fly with GitHub Actions and AWS CodeBuild
 

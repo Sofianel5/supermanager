@@ -11,6 +11,7 @@ import {
   api,
   getApiBaseUrl,
   RoomMetadataResponse,
+  RoomSnapshot,
   StoredHookEvent,
 } from "../api";
 
@@ -25,7 +26,7 @@ export function RoomPage() {
   const { roomId = "" } = useParams();
   const [room, setRoom] = useState<RoomMetadataResponse | null>(null);
   const [events, setEvents] = useState<StoredHookEvent[]>([]);
-  const [summary, setSummary] = useState("No summary yet.");
+  const [snapshot, setSnapshot] = useState<RoomSnapshot>(() => emptyRoomSnapshot());
   const [summaryStatus, setSummaryStatus] = useState<SummaryStatus>("idle");
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("connecting");
@@ -50,8 +51,8 @@ export function RoomPage() {
   }, []);
 
   const refreshSummary = useEffectEvent(async () => {
-    const nextSummary = await api.getSummary(roomId);
-    setSummary(nextSummary || "No summary yet.");
+    const nextSnapshot = await api.getSummary(roomId);
+    setSnapshot(nextSnapshot);
     setSummaryStatus("ready");
   });
 
@@ -88,7 +89,7 @@ export function RoomPage() {
       api.getFeed(roomId),
       api.getSummary(roomId),
     ])
-      .then(([nextRoom, feed, nextSummary]) => {
+      .then(([nextRoom, feed, nextSnapshot]) => {
         if (cancelled) {
           return;
         }
@@ -96,7 +97,7 @@ export function RoomPage() {
         startTransition(() => {
           setRoom(nextRoom);
           setEvents(feed.events);
-          setSummary(nextSummary || "No summary yet.");
+          setSnapshot(nextSnapshot);
           setSummaryStatus("ready");
         });
       })
@@ -215,7 +216,11 @@ export function RoomPage() {
               {summaryStatus === "idle" ? "loading" : summaryStatus}
             </span>
           </div>
-          <SummaryContent summary={summary} summaryStatus={summaryStatus} />
+          <SummaryContent
+            clock={clock}
+            snapshot={snapshot}
+            summaryStatus={summaryStatus}
+          />
         </div>
 
         <div className="room-section">
@@ -286,24 +291,112 @@ function CopyPanel({
 }
 
 function SummaryContent({
-  summary,
+  clock,
+  snapshot,
   summaryStatus,
 }: {
-  summary: string;
+  clock: number;
+  snapshot: RoomSnapshot;
   summaryStatus: SummaryStatus;
 }) {
-  if (summaryStatus === "error" && !summary.trim()) {
+  const hasContent = hasSnapshotContent(snapshot);
+
+  if (summaryStatus === "error" && !hasContent) {
     return (
-      <p className="summary-copy summary-copy--error">
+      <p className="summary-empty summary-empty--error">
         Summary generation failed.
       </p>
     );
   }
 
+  if (summaryStatus === "generating" && !hasContent) {
+    return <p className="summary-empty">Generating room summary...</p>;
+  }
+
+  if (!hasContent) {
+    return (
+      <p className="summary-empty">
+        No updates yet. New hook activity will build the room summary here.
+      </p>
+    );
+  }
+
+  return (
+    <div className="summary-layout">
+      <section className="summary-panel summary-panel--bluf">
+        <div className="summary-panel__label">BLUF</div>
+        {snapshot.bluf_markdown.trim() ? (
+          <MarkdownBlock markdown={snapshot.bluf_markdown} />
+        ) : (
+          <p className="message">No BLUF yet.</p>
+        )}
+      </section>
+
+      <details className="summary-disclosure">
+        <summary>
+          <span>Detailed overview</span>
+          <span className="summary-disclosure__hint">hidden by default</span>
+        </summary>
+        <div className="summary-disclosure__body">
+          {snapshot.overview_markdown.trim() ? (
+            <MarkdownBlock markdown={snapshot.overview_markdown} />
+          ) : (
+            <p className="message">No detailed overview yet.</p>
+          )}
+        </div>
+      </details>
+
+      <section className="summary-panel">
+        <div className="room-section__head room-section__head--compact">
+          <span className="summary-panel__label">Employees</span>
+          <span className="section-count">
+            {snapshot.employees.length} card{snapshot.employees.length === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        {snapshot.employees.length > 0 ? (
+          <div className="employee-grid">
+            {snapshot.employees.map((employee) => (
+              <article className="employee-card" key={employee.employee_name}>
+                <div className="employee-card__head">
+                  <h3>{employee.employee_name}</h3>
+                  <time dateTime={employee.last_update_at}>
+                    {formatRelativeTime(employee.last_update_at, clock)}
+                  </time>
+                </div>
+                <MarkdownBlock markdown={employee.content_markdown} />
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="message">No employee cards yet.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function MarkdownBlock({ markdown }: { markdown: string }) {
   return (
     <div className="summary-copy">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
     </div>
+  );
+}
+
+function emptyRoomSnapshot(): RoomSnapshot {
+  return {
+    bluf_markdown: "",
+    overview_markdown: "",
+    employees: [],
+  };
+}
+
+function hasSnapshotContent(snapshot: RoomSnapshot) {
+  return Boolean(
+    snapshot.bluf_markdown.trim() ||
+      snapshot.overview_markdown.trim() ||
+      snapshot.employees.some((employee) => employee.content_markdown.trim()),
   );
 }
 

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use rand::Rng;
-use reporter_protocol::{HookTurnReport, Room, StoredHookEvent};
+use reporter_protocol::{HookTurnReport, Room, RoomSnapshot, StoredHookEvent};
 use rusqlite::{Connection, params};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -34,10 +34,10 @@ impl Db {
             );
 
             CREATE TABLE IF NOT EXISTS summaries (
-                room_id          TEXT PRIMARY KEY REFERENCES rooms(room_id),
-                content_markdown TEXT NOT NULL,
-                status           TEXT NOT NULL DEFAULT 'ready',
-                updated_at       TEXT NOT NULL
+                room_id      TEXT PRIMARY KEY REFERENCES rooms(room_id),
+                content_json TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'ready',
+                updated_at   TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS hook_events (
@@ -54,22 +54,12 @@ impl Db {
                 ON hook_events(room_id, received_at);",
         )?;
 
-        if rooms_table_has_column(&conn, "secret")? {
+        if table_has_column(&conn, "rooms", "secret")? {
             migrate_rooms_table_without_secret(&conn)?;
         }
 
         // ── Migrations for existing DBs ────────────────────────
-        // Add status column to summaries if missing
-        let has_status: bool = conn
-            .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='summaries'")?
-            .query_row([], |row| row.get::<_, String>(0))
-            .map(|sql| sql.contains("status"))
-            .unwrap_or(false);
-        if !has_status {
-            conn.execute_batch(
-                "ALTER TABLE summaries ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';",
-            )?;
-        }
+        migrate_summaries_table(&conn)?;
 
         let has_payload_json: bool = conn
             .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='hook_events'")?
@@ -242,24 +232,6 @@ impl Db {
         Ok(events)
     }
 
-    pub fn get_last_hook_event_time(
-        &self,
-        room_id: &str,
-        employee_name: &str,
-    ) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
-        let result: Option<String> = conn
-            .query_row(
-                "SELECT received_at FROM hook_events
-                 WHERE room_id = ?1 AND employee_name = ?2
-                 ORDER BY received_at DESC LIMIT 1",
-                params![room_id, employee_name],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(result)
-    }
-
     pub fn get_hook_events_filtered(
         &self,
         room_id: &str,
@@ -319,16 +291,30 @@ impl Db {
     // ── Summaries ───────────────────────────────────────────
 
     /// Get the manager summary for a room.
-    pub fn get_summary(&self, room_id: &str) -> Result<String> {
+    pub fn get_summary(&self, room_id: &str) -> Result<RoomSnapshot> {
         let conn = self.conn.lock().unwrap();
         let result: Option<String> = conn
             .query_row(
-                "SELECT content_markdown FROM summaries WHERE room_id = ?1",
+                "SELECT content_json FROM summaries WHERE room_id = ?1",
                 params![room_id],
                 |row| row.get(0),
             )
             .optional()?;
-        Ok(result.unwrap_or_default())
+        Ok(result
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<RoomSnapshot>(raw).ok())
+            .unwrap_or_default())
+    }
+
+    pub fn get_summary_updated_at(&self, room_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT updated_at FROM summaries WHERE room_id = ?1",
+                params![room_id],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     /// Get the summary generation status for a room.
@@ -348,27 +334,29 @@ impl Db {
     pub fn set_summary_status(&self, room_id: &str, status: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO summaries (room_id, content_markdown, status, updated_at)
-             VALUES (?1, '', ?2, ?3)
+            "INSERT INTO summaries (room_id, content_json, status, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(room_id) DO UPDATE SET
                 status     = excluded.status,
                 updated_at = excluded.updated_at",
-            params![room_id, status, now_rfc3339()],
+            params![room_id, empty_room_summary_json(), status, now_rfc3339()],
         )?;
         Ok(())
     }
 
     /// Create or replace the manager summary for a room.
-    pub fn set_summary(&self, room_id: &str, content: &str) -> Result<()> {
+    pub fn set_summary(&self, room_id: &str, content: &RoomSnapshot) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let content_json =
+            serde_json::to_string(content).context("failed to serialize room summary")?;
         conn.execute(
-            "INSERT INTO summaries (room_id, content_markdown, status, updated_at)
+            "INSERT INTO summaries (room_id, content_json, status, updated_at)
              VALUES (?1, ?2, 'ready', ?3)
              ON CONFLICT(room_id) DO UPDATE SET
-                content_markdown = excluded.content_markdown,
-                status           = 'ready',
-                updated_at       = excluded.updated_at",
-            params![room_id, content, now_rfc3339()],
+                content_json = excluded.content_json,
+                status       = 'ready',
+                updated_at   = excluded.updated_at",
+            params![room_id, content_json, now_rfc3339()],
         )?;
         Ok(())
     }
@@ -409,8 +397,8 @@ impl<T> OptionalExt<T> for Result<T, rusqlite::Error> {
     }
 }
 
-fn rooms_table_has_column(conn: &Connection, column: &str) -> Result<bool> {
-    let mut stmt = conn.prepare("PRAGMA table_info(rooms)")?;
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let name: String = row.get(1)?;
@@ -436,6 +424,55 @@ fn migrate_rooms_table_without_secret(conn: &Connection) -> Result<()> {
          DROP TABLE rooms;
          ALTER TABLE rooms_new RENAME TO rooms;",
     );
+
+    let restore_result = conn.execute_batch("PRAGMA foreign_keys=ON;");
+
+    migration_result?;
+    restore_result?;
+    ensure_no_foreign_key_violations(conn)?;
+    Ok(())
+}
+
+fn migrate_summaries_table(conn: &Connection) -> Result<()> {
+    let has_content_json = table_has_column(conn, "summaries", "content_json")?;
+    let has_content_markdown = table_has_column(conn, "summaries", "content_markdown")?;
+    if has_content_json && !has_content_markdown {
+        return Ok(());
+    }
+
+    let has_status = table_has_column(conn, "summaries", "status")?;
+    let empty_summary = empty_room_summary_json();
+
+    conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+
+    let migration_result = (|| -> Result<()> {
+        conn.execute_batch(
+            "ALTER TABLE summaries RENAME TO summaries_old;
+             CREATE TABLE summaries (
+                room_id      TEXT PRIMARY KEY REFERENCES rooms(room_id),
+                content_json TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'ready',
+                updated_at   TEXT NOT NULL
+             );",
+        )?;
+
+        if has_status {
+            conn.execute(
+                "INSERT INTO summaries (room_id, content_json, status, updated_at)
+                 SELECT room_id, ?1, status, updated_at FROM summaries_old",
+                params![empty_summary],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT INTO summaries (room_id, content_json, status, updated_at)
+                 SELECT room_id, ?1, 'ready', updated_at FROM summaries_old",
+                params![empty_summary],
+            )?;
+        }
+
+        conn.execute_batch("DROP TABLE summaries_old;")?;
+        Ok(())
+    })();
 
     let restore_result = conn.execute_batch("PRAGMA foreign_keys=ON;");
 
@@ -475,4 +512,89 @@ pub fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| OffsetDateTime::now_utc().unix_timestamp().to_string())
+}
+
+fn empty_room_summary_json() -> String {
+    serde_json::to_string(&RoomSnapshot::default()).unwrap_or_else(|_| {
+        "{\"bluf_markdown\":\"\",\"overview_markdown\":\"\",\"employees\":[]}".to_owned()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use tempfile::TempDir;
+
+    #[test]
+    fn summary_defaults_to_empty_payload() {
+        let tempdir = TempDir::new().unwrap();
+        let db = Db::open(&tempdir.path().join("summary-default.sqlite")).unwrap();
+        let room = db.create_room("Test Room").unwrap();
+
+        assert_eq!(
+            db.get_summary(&room.room_id).unwrap(),
+            RoomSnapshot::default()
+        );
+        assert_eq!(db.get_summary_status(&room.room_id).unwrap(), "ready");
+        assert_eq!(db.get_summary_updated_at(&room.room_id).unwrap(), None);
+    }
+
+    #[test]
+    fn set_summary_status_persists_empty_json_summary() {
+        let tempdir = TempDir::new().unwrap();
+        let db = Db::open(&tempdir.path().join("summary-status.sqlite")).unwrap();
+        let room = db.create_room("Test Room").unwrap();
+
+        db.set_summary_status(&room.room_id, "generating").unwrap();
+
+        assert_eq!(
+            db.get_summary(&room.room_id).unwrap(),
+            RoomSnapshot::default()
+        );
+        assert_eq!(db.get_summary_status(&room.room_id).unwrap(), "generating");
+        assert!(db.get_summary_updated_at(&room.room_id).unwrap().is_some());
+    }
+
+    #[test]
+    fn open_migrates_markdown_summaries_to_empty_json_payload() {
+        let tempdir = TempDir::new().unwrap();
+        let db_path = tempdir.path().join("summary-migration.sqlite");
+        let updated_at = "2026-04-01T10:00:00Z";
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys=ON;
+             CREATE TABLE rooms (
+                room_id    TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                created_at TEXT NOT NULL
+             );
+             CREATE TABLE summaries (
+                room_id          TEXT PRIMARY KEY REFERENCES rooms(room_id),
+                content_markdown TEXT NOT NULL,
+                status           TEXT NOT NULL DEFAULT 'ready',
+                updated_at       TEXT NOT NULL
+             );
+             INSERT INTO rooms (room_id, name, created_at)
+                VALUES ('ROOM01', 'Migrated Room', '2026-04-01T09:00:00Z');
+             INSERT INTO summaries (room_id, content_markdown, status, updated_at)
+                VALUES ('ROOM01', '# legacy markdown', 'ready', '2026-04-01T10:00:00Z');",
+        )
+        .unwrap();
+        drop(conn);
+
+        let db = Db::open(&db_path).unwrap();
+
+        assert_eq!(db.get_summary("ROOM01").unwrap(), RoomSnapshot::default());
+        assert_eq!(db.get_summary_status("ROOM01").unwrap(), "ready");
+        assert_eq!(
+            db.get_summary_updated_at("ROOM01").unwrap(),
+            Some(updated_at.to_owned())
+        );
+
+        let conn = Connection::open(&db_path).unwrap();
+        assert!(table_has_column(&conn, "summaries", "content_json").unwrap());
+        assert!(!table_has_column(&conn, "summaries", "content_markdown").unwrap());
+    }
 }
