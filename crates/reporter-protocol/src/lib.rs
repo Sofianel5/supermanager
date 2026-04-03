@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -8,7 +9,8 @@ pub struct IngestResponse {
     pub received_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
 pub struct FeedResponse {
     pub events: Vec<StoredHookEvent>,
 }
@@ -34,14 +36,16 @@ pub struct CreateRoomResponse {
     pub join_command: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
 pub struct RoomMetadataResponse {
     pub room_id: String,
     pub name: String,
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
 pub struct RoomSnapshot {
     #[serde(default)]
     pub bluf_markdown: String,
@@ -51,7 +55,8 @@ pub struct RoomSnapshot {
     pub employees: Vec<EmployeeSnapshot>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
 pub struct EmployeeSnapshot {
     pub employee_name: String,
     #[serde(default)]
@@ -70,8 +75,10 @@ pub struct HookTurnReport {
     pub payload: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
 pub struct StoredHookEvent {
+    #[ts(type = "string")]
     pub event_id: Uuid,
     pub received_at: String,
     pub employee_name: String,
@@ -79,5 +86,6 @@ pub struct StoredHookEvent {
     pub repo_root: String,
     #[serde(default)]
     pub branch: Option<String>,
+    #[ts(type = "unknown")]
     pub payload: Value,
 }

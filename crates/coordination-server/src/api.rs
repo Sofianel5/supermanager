@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     convert::Infallible,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -320,11 +320,11 @@ fn merge_snapshot_patch(
             let existing_card = current_cards.remove(&employee_key);
             let content_markdown = patch_cards
                 .remove(&employee_key)
-                .and_then(|card| non_empty_text(card.content_markdown))
+                .and_then(|card| non_empty_text(&card.content_markdown))
                 .or_else(|| {
                     existing_card
                         .as_ref()
-                        .and_then(|card| non_empty_text(card.content_markdown.clone()))
+                        .and_then(|card| non_empty_text(&card.content_markdown))
                 })
                 .unwrap_or_else(|| build_employee_fallback(&activity));
             seen_employees.insert(employee_key);
@@ -347,7 +347,7 @@ fn merge_snapshot_patch(
             let existing_card = current_cards.remove(&employee_key)?;
             let content_markdown = patch_cards
                 .remove(&employee_key)
-                .and_then(|card| non_empty_text(card.content_markdown))
+                .and_then(|card| non_empty_text(&card.content_markdown))
                 .unwrap_or(existing_card.content_markdown);
 
             Some(EmployeeSnapshot {
@@ -405,11 +405,11 @@ fn normalize_employee_name(value: &str) -> String {
     value.trim().to_lowercase()
 }
 
-fn non_empty_text(value: String) -> Option<String> {
+fn non_empty_text(value: &str) -> Option<String> {
     if value.trim().is_empty() {
         None
     } else {
-        Some(value)
+        Some(value.to_owned())
     }
 }
 
@@ -429,17 +429,21 @@ fn latest_snapshot_event_at(snapshot: &RoomSnapshot) -> Option<time::OffsetDateT
         .max()
 }
 
-/// Build an OpenAI structured-output format block from a `schemars`-derived schema.
+/// Build an OpenAI structured-output format block from the `RoomSnapshotPatch` schema.
 /// Adds `"additionalProperties": false` to every object node (required by strict mode).
-fn openai_strict_schema<T: JsonSchema>(name: &str) -> Value {
-    let root = schemars::schema_for!(T);
-    let mut schema = serde_json::to_value(root).unwrap_or_default();
-    enforce_additional_properties_false(&mut schema);
-    json!({
-        "type": "json_schema",
-        "name": name,
-        "strict": true,
-        "schema": schema,
+/// The result is computed once and cached for the lifetime of the process.
+fn snapshot_patch_schema() -> &'static Value {
+    static SCHEMA: OnceLock<Value> = OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        let root = schemars::schema_for!(RoomSnapshotPatch);
+        let mut schema = serde_json::to_value(root).unwrap_or_default();
+        enforce_additional_properties_false(&mut schema);
+        json!({
+            "type": "json_schema",
+            "name": "room_snapshot_patch",
+            "strict": true,
+            "schema": schema,
+        })
     })
 }
 
@@ -471,7 +475,7 @@ async fn call_openai(state: &AppState, instructions: &str, input: &str) -> anyho
         "instructions": instructions,
         "input": input,
         "text": {
-            "format": openai_strict_schema::<RoomSnapshotPatch>("room_snapshot_patch"),
+            "format": snapshot_patch_schema(),
         },
     });
 
@@ -558,25 +562,27 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
     };
 
     let snapshot_cursor = latest_snapshot_event_at(&current_snapshot);
-    let changed_events: Vec<StoredHookEvent> = if is_snapshot_empty(&current_snapshot) {
-        active_events.clone()
+    let changed_events: &[StoredHookEvent] = if is_snapshot_empty(&current_snapshot) {
+        &active_events
     } else if let Some(cursor) = &snapshot_cursor {
-        let filtered: Vec<_> = active_events
+        // Find index of first event newer than the cursor. Events are ordered
+        // newest-first from get_hook_events_filtered, so we take the leading
+        // slice of events whose timestamp exceeds the cursor.
+        let boundary = active_events
             .iter()
-            .filter(|event| {
+            .position(|event| {
                 time::OffsetDateTime::parse(&event.received_at, &Rfc3339)
-                    .map_or(true, |t| t > *cursor)
+                    .map_or(false, |t| t <= *cursor)
             })
-            .cloned()
-            .collect();
-        if filtered.is_empty() {
+            .unwrap_or(active_events.len());
+        if boundary == 0 {
             eprintln!("[auto_summarize] no new events to merge for room {room_id}");
             broadcast_status(state, room_id, "ready");
             return;
         }
-        filtered
+        &active_events[..boundary]
     } else {
-        active_events.clone()
+        &active_events
     };
 
     let employee_activity = collect_employee_activity(&active_events);
@@ -607,8 +613,8 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
                 }
             };
             eprintln!(
-                "[auto_summarize] success for room {room_id}, {} chars",
-                text.len()
+                "[auto_summarize] success for room {room_id}, {} employee cards",
+                next_snapshot.employees.len()
             );
             let _ = state.db.set_summary(room_id, &next_snapshot);
             broadcast_status(state, room_id, "ready");
@@ -682,7 +688,7 @@ fn hook_event(event: &StoredHookEvent) -> Event {
 mod tests {
     use super::*;
 
-    use axum::{body::to_bytes, extract::State};
+    use axum::body::to_bytes;
     use tempfile::TempDir;
     use uuid::Uuid;
 

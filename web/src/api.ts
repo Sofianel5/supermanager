@@ -1,34 +1,16 @@
-export type RoomMetadataResponse = {
-  room_id: string;
-  name: string;
-  created_at: string;
-};
+import type {
+  FeedResponse,
+  RoomMetadataResponse,
+  RoomSnapshot,
+} from "./generated";
 
-export type EmployeeSnapshot = {
-  employee_name: string;
-  content_markdown: string;
-  last_update_at: string;
-};
-
-export type RoomSnapshot = {
-  bluf_markdown: string;
-  overview_markdown: string;
-  employees: EmployeeSnapshot[];
-};
-
-export type StoredHookEvent = {
-  event_id: string;
-  received_at: string;
-  employee_name: string;
-  client: string;
-  repo_root: string;
-  branch?: string | null;
-  payload: unknown;
-};
-
-export type FeedResponse = {
-  events: StoredHookEvent[];
-};
+export type {
+  EmployeeSnapshot,
+  FeedResponse,
+  RoomMetadataResponse,
+  RoomSnapshot,
+  StoredHookEvent,
+} from "./generated";
 
 const API_BASE_URL = normalizeBaseUrl(
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8787",

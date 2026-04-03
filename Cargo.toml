@@ -24,6 +24,7 @@ serde_json = "1.0.145"
 sha2 = "0.10.9"
 tar = "0.4.44"
 tempfile = "3.23.0"
+ts-rs = { version = "10", features = ["serde-compat", "uuid-impl", "serde-json-impl"] }
 time = { version = "0.3.44", features = ["formatting", "parsing"] }
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "signal"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
