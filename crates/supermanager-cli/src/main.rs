@@ -45,12 +45,12 @@ enum Commands {
 
 #[derive(Subcommand, Debug)]
 enum CreateCommands {
-    /// Create a new room, connect the current repo, and copy its dashboard URL.
+    /// Create a new room from the current git repo, connect it, and copy its dashboard URL.
     Room {
         name: Option<String>,
         #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
         server_url: String,
-        #[arg(long, env = "DEFAULT_APP_URL", default_value = supermanager::DEFAULT_APP_URL)]
+        #[arg(long, env = "SUPERMANAGER_APP_URL", default_value = supermanager::DEFAULT_APP_URL)]
         app_url: String,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
@@ -69,43 +69,53 @@ fn main() -> Result<()> {
                 app_url,
                 cwd,
             } => {
-                let cwd = cwd.canonicalize().unwrap_or(cwd);
                 let outcome = supermanager::create_room(supermanager::CreateRoomConfig {
                     server_url: server_url.clone(),
                     name,
-                    cwd: cwd.clone(),
+                    cwd,
                 })?;
                 let join_outcome = supermanager::join_repo(supermanager::JoinConfig {
                     server_url: server_url,
                     app_url: app_url,
                     room_id: outcome.room_id.clone(),
-                    repo_dir: cwd,
+                    repo_dir: outcome.repo_dir.clone(),
                     home_dir,
-                })
-                .with_context(|| {
-                    format!(
-                        "room {} was created, but joining the current repo failed; run `{}` after fixing the repo setup",
-                        outcome.room_id, outcome.join_command
-                    )
-                })?;
+                });
 
                 println!();
                 println!("  \x1b[32m✓\x1b[0m \x1b[1mRoom created\x1b[0m");
                 println!();
                 println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
                 println!("    \x1b[2mName\x1b[0m       {}", outcome.room_name);
-                println!(
-                    "    \x1b[2mEmployee\x1b[0m   {}",
-                    join_outcome.employee_name
-                );
                 println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
                 println!(
                     "    \x1b[2mRepo\x1b[0m       {}",
-                    join_outcome.repo_dir.display()
+                    outcome.repo_dir.display()
                 );
                 println!("    \x1b[2mShare\x1b[0m      {}", outcome.join_command);
-                println!();
-                print_clipboard_status(&outcome.dashboard_url);
+
+                match join_outcome {
+                    Ok(join_outcome) => {
+                        println!(
+                            "    \x1b[2mEmployee\x1b[0m   {}",
+                            join_outcome.employee_name
+                        );
+                        println!();
+                        print_clipboard_status(&outcome.dashboard_url);
+                    }
+                    Err(error) => {
+                        println!();
+                        print_clipboard_status(&outcome.dashboard_url);
+                        return Err(error).with_context(|| {
+                            format!(
+                                "room {} was created, but joining repo {} failed; run `{}` after fixing the repo setup",
+                                outcome.room_id,
+                                outcome.repo_dir.display(),
+                                outcome.join_command
+                            )
+                        });
+                    }
+                }
             }
         },
         Commands::Join {
@@ -114,13 +124,12 @@ fn main() -> Result<()> {
             app_url,
             cwd,
         } => {
-            let repo_dir = cwd.canonicalize().unwrap_or(cwd);
             let room = supermanager::get_room(&server, &room)?;
             let outcome = supermanager::join_repo(supermanager::JoinConfig {
                 server_url: server,
                 app_url,
                 room_id: room.room_id,
-                repo_dir,
+                repo_dir: cwd,
                 home_dir,
             })?;
 
@@ -138,8 +147,7 @@ fn main() -> Result<()> {
             print_clipboard_status(&outcome.dashboard_url);
         }
         Commands::Leave { cwd } => {
-            let repo_dir = cwd.canonicalize().unwrap_or(cwd);
-            let outcome = supermanager::leave_repo(&repo_dir, &home_dir)?;
+            let outcome = supermanager::leave_repo(&cwd, &home_dir)?;
 
             println!();
             println!("  \x1b[32m✓\x1b[0m \x1b[1mLeft room\x1b[0m");

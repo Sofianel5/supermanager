@@ -59,6 +59,7 @@ pub struct CreateRoomOutcome {
     pub room_name: String,
     pub dashboard_url: String,
     pub join_command: String,
+    pub repo_dir: PathBuf,
 }
 
 pub struct LeaveOutcome {
@@ -85,6 +86,7 @@ pub fn resolve_home_dir() -> Result<PathBuf> {
 }
 
 pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
+    let repo_dir = resolve_repo_root(&config.cwd)?;
     let server_url = normalize_url(&config.server_url);
     let room_name = config
         .name
@@ -92,7 +94,7 @@ pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| default_room_name(&config.cwd));
+        .unwrap_or_else(|| default_room_name(&repo_dir));
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
 
     let response = http
@@ -113,15 +115,12 @@ pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
         room_name,
         dashboard_url: payload.dashboard_url,
         join_command: payload.join_command,
+        repo_dir,
     })
 }
 
 pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
-    let repo_dir = canonicalize_best_effort(&config.repo_dir);
-    if !repo_dir.exists() {
-        bail!("repo path does not exist: {}", repo_dir.display());
-    }
-
+    let repo_dir = resolve_repo_root(&config.repo_dir)?;
     let employee_name = detect_employee_name(&repo_dir)?;
     let server_url = normalize_url(&config.server_url);
     let app_url = normalize_url(&config.app_url);
@@ -258,15 +257,8 @@ pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn default_room_name(cwd: &Path) -> String {
-    let repo_root = resolve_repo_root(cwd);
-    if let Some(name) = path_basename(&repo_root) {
-        return name;
-    }
-    if let Some(name) = path_basename(cwd) {
-        return name;
-    }
-    "supermanager room".to_owned()
+fn default_room_name(repo_dir: &Path) -> String {
+    path_basename(repo_dir).unwrap_or_else(|| "supermanager room".to_owned())
 }
 
 fn path_basename(path: &Path) -> Option<String> {
@@ -343,7 +335,7 @@ fn build_hook_report(client: &str, payload: &Value) -> Result<Option<(PathBuf, H
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or(env::current_dir().context("failed to resolve current directory")?);
-    let repo_dir = resolve_repo_root(&cwd);
+    let repo_dir = resolve_repo_root(&cwd)?;
     let employee_name = detect_employee_name(&repo_dir)?;
 
     let report = HookTurnReport {
@@ -406,11 +398,16 @@ fn normalize_url(url: &str) -> String {
     url.trim_end_matches('/').to_owned()
 }
 
-fn resolve_repo_root(cwd: &Path) -> PathBuf {
-    if let Ok(Some(root)) = git_command_value(cwd, &["rev-parse", "--show-toplevel"]) {
-        return canonicalize_best_effort(Path::new(&root));
+fn resolve_repo_root(cwd: &Path) -> Result<PathBuf> {
+    let cwd = canonicalize_best_effort(cwd);
+    if !cwd.exists() {
+        bail!("repo path does not exist: {}", cwd.display());
     }
-    canonicalize_best_effort(cwd)
+
+    let Some(root) = git_command_value(&cwd, &["rev-parse", "--show-toplevel"])? else {
+        bail!("not inside a git repository: {}", cwd.display());
+    };
+    Ok(canonicalize_best_effort(Path::new(&root)))
 }
 
 fn canonicalize_best_effort(path: &Path) -> PathBuf {
@@ -802,6 +799,54 @@ mod tests {
     }
 
     #[test]
+    fn join_repo_uses_repo_root_for_nested_paths() {
+        let root = test_dir("join-repo-nested");
+        let repo_dir = root.join("repo");
+        let nested_dir = repo_dir.join("nested");
+        let home_dir = root.join("home");
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::create_dir_all(&home_dir).unwrap();
+        init_git_repo(&repo_dir);
+
+        let outcome = join_repo(JoinConfig {
+            server_url: "http://127.0.0.1:8787/".to_owned(),
+            app_url: "https://app.supermanager.test/".to_owned(),
+            room_id: "bright-fox".to_owned(),
+            repo_dir: nested_dir.clone(),
+            home_dir: home_dir.clone(),
+        })
+        .unwrap();
+
+        assert_eq!(outcome.repo_dir, canonicalize_best_effort(&repo_dir));
+        assert!(
+            get_repo_room_config(&home_dir, &nested_dir)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            get_repo_room_config(&home_dir, &repo_dir)
+                .unwrap()
+                .unwrap()
+                .room_id,
+            "bright-fox"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolve_repo_root_fails_outside_git_repo() {
+        let root = test_dir("resolve-repo-root-missing");
+        let repo_dir = root.join("not-a-repo");
+        fs::create_dir_all(&repo_dir).unwrap();
+
+        let error = resolve_repo_root(&repo_dir).unwrap_err().to_string();
+        assert!(error.contains("not inside a git repository"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn upsert_codex_config_adds_features_section_when_missing() {
         let root = test_dir("codex-config-missing");
         let config_path = root.join("config.toml");
@@ -895,7 +940,8 @@ mod tests {
         fs::create_dir_all(&nested_dir).unwrap();
         init_git_repo(&repo_dir);
 
-        assert_eq!(default_room_name(&nested_dir), "repo-name");
+        let resolved_repo_dir = resolve_repo_root(&nested_dir).unwrap();
+        assert_eq!(default_room_name(&resolved_repo_dir), "repo-name");
 
         fs::remove_dir_all(root).unwrap();
     }

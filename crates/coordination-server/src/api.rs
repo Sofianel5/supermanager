@@ -12,8 +12,8 @@ use axum::{
     },
 };
 use reporter_protocol::{
-    CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse,
-    Room, RoomMetadataResponse, StoredHookEvent,
+    CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse, Room,
+    RoomMetadataResponse, StoredHookEvent,
 };
 use serde_json::{Value, json};
 use tokio::sync::broadcast;

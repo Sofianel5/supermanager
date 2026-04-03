@@ -59,7 +59,7 @@ Create the room from the CLI:
 supermanager create room
 ```
 
-That uses the current repo or directory name as the room name by default. To pick one explicitly:
+That uses the current git repo name as the room name by default, and it must be run inside a git repo. To pick one explicitly:
 
 ```sh
 supermanager create room "My Team"
@@ -84,7 +84,7 @@ The response includes:
 
 ### 5. Join repos to the room
 
-The repo where you ran `supermanager create room` is already connected. Run the join command inside each additional repo you want connected:
+The repo where you ran `supermanager create room` is already connected. Run the join command inside each additional git repo you want connected:
 
 ```sh
 supermanager join <room-code>
