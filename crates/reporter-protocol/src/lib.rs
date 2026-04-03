@@ -41,6 +41,25 @@ pub struct RoomMetadataResponse {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoomSnapshot {
+    #[serde(default)]
+    pub bluf_markdown: String,
+    #[serde(default)]
+    pub overview_markdown: String,
+    #[serde(default)]
+    pub employees: Vec<EmployeeSnapshot>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmployeeSnapshot {
+    pub employee_name: String,
+    #[serde(default)]
+    pub content_markdown: String,
+    #[serde(default)]
+    pub last_update_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookTurnReport {
     pub employee_name: String,

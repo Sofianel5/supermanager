@@ -1,20 +1,21 @@
-use std::{convert::Infallible, sync::Arc, time::Duration};
+use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
 
 use anyhow::{Context, bail};
 use async_stream::stream;
 use axum::{
     Json,
     extract::{Path, State},
-    http::{StatusCode, header},
+    http::StatusCode,
     response::{
         IntoResponse,
         sse::{Event, KeepAlive, Sse},
     },
 };
 use reporter_protocol::{
-    CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse, Room,
-    RoomMetadataResponse, StoredHookEvent,
+    CreateRoomRequest, CreateRoomResponse, EmployeeSnapshot, FeedResponse, HookTurnReport,
+    IngestResponse, Room, RoomMetadataResponse, RoomSnapshot, StoredHookEvent,
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
@@ -22,6 +23,30 @@ use crate::store::Db;
 
 const DEFAULT_PUBLIC_API_URL: &str = "https://supermanager.fly.dev";
 const DEFAULT_PUBLIC_APP_URL: &str = "https://supermanager.dev";
+
+#[derive(Debug, Default, Deserialize)]
+struct RoomSnapshotPatch {
+    #[serde(default)]
+    bluf_markdown: Option<String>,
+    #[serde(default)]
+    overview_markdown: Option<String>,
+    #[serde(default)]
+    employees: Vec<EmployeeSnapshotPatch>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct EmployeeSnapshotPatch {
+    employee_name: String,
+    #[serde(default)]
+    content_markdown: String,
+}
+
+#[derive(Debug, Clone)]
+struct EmployeeActivity {
+    employee_name: String,
+    latest_update_at: String,
+    events: Vec<StoredHookEvent>,
+}
 
 // ── Shared state ────────────────────────────────────────────
 
@@ -206,87 +231,159 @@ pub async fn stream_feed(
 pub async fn get_manager_summary(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<Json<RoomSnapshot>, (StatusCode, String)> {
     let room = resolve_room(&state, &room_id)?;
     let room_id = room.room_id;
     let summary = state.db.get_summary(&room_id).map_err(internal_error)?;
-    Ok((
-        [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-        summary,
-    ))
+    Ok(Json(summary))
 }
 
-/// Shared: resolve filter args → fetch hook events → format context string.
-fn resolve_hook_context(
-    state: &AppState,
-    room_id: &str,
-    args: &Value,
-    default_limit: u32,
-) -> anyhow::Result<(String, String)> {
-    let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .unwrap_or(default_limit as u64) as u32;
-    let minutes = args.get("minutes").and_then(Value::as_u64);
-    let employee_name = args.get("employee_name").and_then(Value::as_str);
-    let branch = args.get("branch").and_then(Value::as_str);
-    let since_last_update_by = args.get("since_last_update_by").and_then(Value::as_str);
+fn build_summary_patch_input(
+    current_snapshot: &RoomSnapshot,
+    changed_events: &[StoredHookEvent],
+    active_events: &[StoredHookEvent],
+) -> String {
+    let employee_activity = collect_employee_activity(active_events);
+    serde_json::to_string_pretty(&json!({
+        "current_snapshot": current_snapshot,
+        "new_updates": serialize_events(changed_events),
+        "active_employees": employee_activity.iter().map(|activity| {
+            json!({
+                "employee_name": activity.employee_name,
+                "last_update_at": activity.latest_update_at,
+                "recent_update_count": activity.events.len(),
+            })
+        }).collect::<Vec<_>>(),
+    }))
+    .unwrap_or_default()
+}
 
-    // Resolve time cutoff
-    let after_time = if let Some(person) = since_last_update_by {
-        state
-            .db
-            .get_last_hook_event_time(room_id, person)
-            .with_context(|| format!("failed to look up last hook event by {person}"))?
-    } else if let Some(mins) = minutes {
-        let cutoff = time::OffsetDateTime::now_utc() - time::Duration::minutes(mins as i64);
-        Some(
-            cutoff
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default(),
-        )
-    } else {
-        None
+fn serialize_events(events: &[StoredHookEvent]) -> Vec<Value> {
+    events
+        .iter()
+        .map(|event| {
+            json!({
+                "received_at": event.received_at,
+                "employee_name": event.employee_name,
+                "client": event.client,
+                "repo_root": event.repo_root,
+                "branch": event.branch,
+                "payload": event.payload,
+            })
+        })
+        .collect()
+}
+
+fn parse_snapshot_patch(raw: &str) -> anyhow::Result<RoomSnapshotPatch> {
+    serde_json::from_str(raw.trim()).context("failed to parse room snapshot patch JSON")
+}
+
+fn merge_snapshot_patch(
+    current_snapshot: RoomSnapshot,
+    patch: RoomSnapshotPatch,
+    active_events: &[StoredHookEvent],
+) -> RoomSnapshot {
+    let mut next_snapshot = current_snapshot;
+    if let Some(bluf_markdown) = patch.bluf_markdown {
+        next_snapshot.bluf_markdown = bluf_markdown;
+    }
+    if let Some(overview_markdown) = patch.overview_markdown {
+        next_snapshot.overview_markdown = overview_markdown;
+    }
+
+    let mut current_cards = next_snapshot
+        .employees
+        .into_iter()
+        .map(|employee| (normalize_employee_name(&employee.employee_name), employee))
+        .collect::<HashMap<_, _>>();
+    let mut patch_cards = patch
+        .employees
+        .into_iter()
+        .map(|employee| (normalize_employee_name(&employee.employee_name), employee))
+        .collect::<HashMap<_, _>>();
+
+    next_snapshot.employees = collect_employee_activity(active_events)
+        .into_iter()
+        .map(|activity| {
+            let employee_key = normalize_employee_name(&activity.employee_name);
+            let content_markdown = patch_cards
+                .remove(&employee_key)
+                .and_then(|card| non_empty_text(card.content_markdown))
+                .or_else(|| {
+                    current_cards
+                        .remove(&employee_key)
+                        .and_then(|card| non_empty_text(card.content_markdown))
+                })
+                .unwrap_or_else(|| build_employee_fallback(&activity));
+
+            EmployeeSnapshot {
+                employee_name: activity.employee_name,
+                content_markdown,
+                last_update_at: activity.latest_update_at,
+            }
+        })
+        .collect();
+
+    next_snapshot
+}
+
+fn collect_employee_activity(events: &[StoredHookEvent]) -> Vec<EmployeeActivity> {
+    let mut employees: Vec<EmployeeActivity> = Vec::new();
+    let mut employee_indexes: HashMap<String, usize> = HashMap::new();
+
+    for event in events {
+        let employee_key = normalize_employee_name(&event.employee_name);
+        if let Some(&index) = employee_indexes.get(&employee_key) {
+            employees[index].events.push(event.clone());
+            continue;
+        }
+
+        employee_indexes.insert(employee_key, employees.len());
+        employees.push(EmployeeActivity {
+            employee_name: event.employee_name.clone(),
+            latest_update_at: event.received_at.clone(),
+            events: vec![event.clone()],
+        });
+    }
+
+    employees
+}
+
+fn build_employee_fallback(activity: &EmployeeActivity) -> String {
+    let latest = match activity.events.first() {
+        Some(event) => event,
+        None => return "Recent activity landed in the feed for this employee.".to_owned(),
     };
 
-    let events = state
-        .db
-        .get_hook_events_filtered(room_id, after_time.as_deref(), employee_name, branch, limit)
-        .context("failed to fetch hook events")?;
+    let mut first_line = format!("Recent activity arrived from `{}`", latest.repo_root);
+    if let Some(branch) = latest
+        .branch
+        .as_deref()
+        .filter(|branch| !branch.trim().is_empty())
+    {
+        first_line.push_str(&format!(" on `{branch}`"));
+    }
+    first_line.push_str(&format!(" via `{}`.", latest.client));
 
-    if events.is_empty() {
-        bail!("no hook updates found matching the filter");
-    }
+    format!("- {first_line}\n- Raw details are available in the live feed below.")
+}
 
-    let mut context = String::new();
-    for event in &events {
-        let line = json!({
-            "received_at": event.received_at,
-            "employee_name": event.employee_name,
-            "client": event.client,
-            "repo_root": event.repo_root,
-            "branch": event.branch,
-            "payload": event.payload,
-        });
-        context.push_str(&serde_json::to_string(&line).unwrap_or_default());
-        context.push('\n');
-    }
+fn normalize_employee_name(value: &str) -> String {
+    value.trim().to_lowercase()
+}
 
-    let mut filter_desc = format!("{} most recent hook updates", events.len());
-    if let Some(name) = employee_name {
-        filter_desc = format!("{filter_desc} from {name}");
+fn non_empty_text(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
     }
-    if let Some(b) = branch {
-        filter_desc = format!("{filter_desc} on branch {b}");
-    }
-    if let Some(person) = since_last_update_by {
-        filter_desc = format!("{filter_desc} (since {person}'s last update)");
-    }
-    if let Some(mins) = minutes {
-        filter_desc = format!("{filter_desc} from the last {mins} minutes");
-    }
+}
 
-    Ok((context, filter_desc))
+fn is_snapshot_empty(snapshot: &RoomSnapshot) -> bool {
+    snapshot.bluf_markdown.trim().is_empty()
+        && snapshot.overview_markdown.trim().is_empty()
+        && snapshot.employees.is_empty()
 }
 
 /// Shared: call OpenAI Responses API and return the generated text.
@@ -338,6 +435,35 @@ async fn call_openai(state: &AppState, instructions: &str, input: &str) -> anyho
 async fn auto_summarize(state: &AppState, room_id: &str) {
     eprintln!("[auto_summarize] starting for room {room_id}");
 
+    let current_snapshot = match state.db.get_summary(room_id) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!(
+                "[auto_summarize] failed to load current snapshot for room {room_id}: {error}"
+            );
+            let _ = state.db.set_summary_status(room_id, "error");
+            let _ = state.summary_events.send(SummaryStatusEvent {
+                room_id: room_id.to_owned(),
+                status: "error".to_owned(),
+            });
+            return;
+        }
+    };
+    let current_snapshot_updated_at = match state.db.get_summary_updated_at(room_id) {
+        Ok(updated_at) => updated_at,
+        Err(error) => {
+            eprintln!(
+                "[auto_summarize] failed to load snapshot timestamp for room {room_id}: {error}"
+            );
+            let _ = state.db.set_summary_status(room_id, "error");
+            let _ = state.summary_events.send(SummaryStatusEvent {
+                room_id: room_id.to_owned(),
+                status: "error".to_owned(),
+            });
+            return;
+        }
+    };
+
     // Mark as generating + broadcast
     let _ = state.db.set_summary_status(room_id, "generating");
     let _ = state.summary_events.send(SummaryStatusEvent {
@@ -345,12 +471,13 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
         status: "generating".to_owned(),
     });
 
-    // Build context from the most recent hook events
-    let args = json!({});
-    let (context, filter_desc) = match resolve_hook_context(state, room_id, &args, 100) {
-        Ok(v) => v,
-        Err(error) => {
-            eprintln!("[auto_summarize] no hook events available for room {room_id}: {error}");
+    let active_events = match state
+        .db
+        .get_hook_events_filtered(room_id, None, None, None, 100)
+    {
+        Ok(events) if !events.is_empty() => events,
+        Ok(_) => {
+            eprintln!("[auto_summarize] no hook events available for room {room_id}");
             let _ = state.db.set_summary_status(room_id, "ready");
             let _ = state.summary_events.send(SummaryStatusEvent {
                 room_id: room_id.to_owned(),
@@ -358,22 +485,84 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             });
             return;
         }
+        Err(error) => {
+            eprintln!("[auto_summarize] failed to load active events for room {room_id}: {error}");
+            let _ = state.db.set_summary_status(room_id, "error");
+            let _ = state.summary_events.send(SummaryStatusEvent {
+                room_id: room_id.to_owned(),
+                status: "error".to_owned(),
+            });
+            return;
+        }
     };
 
-    eprintln!("[auto_summarize] calling OpenAI with {filter_desc}");
+    let changed_events = if is_snapshot_empty(&current_snapshot) {
+        active_events.clone()
+    } else {
+        match state.db.get_hook_events_filtered(
+            room_id,
+            current_snapshot_updated_at.as_deref(),
+            None,
+            None,
+            100,
+        ) {
+            Ok(events) if !events.is_empty() => events,
+            Ok(_) => {
+                eprintln!("[auto_summarize] no new events to merge for room {room_id}");
+                let _ = state.db.set_summary_status(room_id, "ready");
+                let _ = state.summary_events.send(SummaryStatusEvent {
+                    room_id: room_id.to_owned(),
+                    status: "ready".to_owned(),
+                });
+                return;
+            }
+            Err(error) => {
+                eprintln!(
+                    "[auto_summarize] failed to load changed events for room {room_id}: {error}"
+                );
+                let _ = state.db.set_summary_status(room_id, "error");
+                let _ = state.summary_events.send(SummaryStatusEvent {
+                    room_id: room_id.to_owned(),
+                    status: "error".to_owned(),
+                });
+                return;
+            }
+        }
+    };
+
+    eprintln!(
+        "[auto_summarize] calling OpenAI with {} changed updates across {} active employees",
+        changed_events.len(),
+        collect_employee_activity(&active_events).len(),
+    );
 
     let result = call_openai(
         state,
-        "You are a concise project manager assistant. You will receive raw hook updates from coding agents as JSON lines. Each line includes metadata such as employee_name, client, repo_root, branch, received_at, and the original hook payload. Summarize the work into a clear, actionable briefing. Group by person or theme. Highlight blockers, completions, and key decisions. Be brief.",
-        &format!("Summarize these {filter_desc}:\n\n{context}"),
-    ).await;
+        "You maintain a structured room snapshot for a live engineering coordination room. Return only valid JSON with this exact shape: {\"bluf_markdown\": string | null, \"overview_markdown\": string | null, \"employees\": [{\"employee_name\": string, \"content_markdown\": string}]}. Omit a field or set it to null when that section should stay unchanged. Only include employee entries that need updates. If the current snapshot is empty, initialize the BLUF and detailed overview. Employee markdown should be concise body content only and should not repeat the employee name as a heading. Use only facts from the provided updates.",
+        &build_summary_patch_input(&current_snapshot, &changed_events, &active_events),
+    )
+    .await;
     match result {
         Ok(text) if !text.is_empty() => {
+            let next_snapshot = match parse_snapshot_patch(&text) {
+                Ok(patch) => merge_snapshot_patch(current_snapshot, patch, &active_events),
+                Err(error) => {
+                    eprintln!(
+                        "[auto_summarize] invalid snapshot patch for room {room_id}: {error}"
+                    );
+                    let _ = state.db.set_summary_status(room_id, "error");
+                    let _ = state.summary_events.send(SummaryStatusEvent {
+                        room_id: room_id.to_owned(),
+                        status: "error".to_owned(),
+                    });
+                    return;
+                }
+            };
             eprintln!(
                 "[auto_summarize] success for room {room_id}, {} chars",
                 text.len()
             );
-            let _ = state.db.set_summary(room_id, &text);
+            let _ = state.db.set_summary(room_id, &next_snapshot);
             let _ = state.summary_events.send(SummaryStatusEvent {
                 room_id: room_id.to_owned(),
                 status: "ready".to_owned(),
@@ -450,6 +639,93 @@ fn hook_event(event: &StoredHookEvent) -> Event {
 mod tests {
     use super::*;
 
+    use axum::{body::to_bytes, extract::State};
+    use tempfile::TempDir;
+    use uuid::Uuid;
+
+    #[test]
+    fn parse_snapshot_patch_accepts_valid_json() {
+        let patch = parse_snapshot_patch(
+            r#"{
+                "bluf_markdown": "- top line",
+                "employees": [
+                    {
+                        "employee_name": "Alice",
+                        "content_markdown": "- Wrapped up the endpoint work."
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(patch.bluf_markdown.as_deref(), Some("- top line"));
+        assert!(patch.overview_markdown.is_none());
+        assert_eq!(patch.employees.len(), 1);
+        assert_eq!(patch.employees[0].employee_name, "Alice");
+    }
+
+    #[test]
+    fn parse_snapshot_patch_rejects_fenced_output() {
+        let error = parse_snapshot_patch("```json\n{\"bluf_markdown\":\"x\"}\n```").unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to parse room snapshot patch JSON")
+        );
+    }
+
+    #[test]
+    fn merge_snapshot_patch_updates_only_changed_sections() {
+        let current_snapshot = RoomSnapshot {
+            bluf_markdown: "- Existing BLUF".to_owned(),
+            overview_markdown: "Existing overview".to_owned(),
+            employees: vec![EmployeeSnapshot {
+                employee_name: "Bob".to_owned(),
+                content_markdown: "- Still debugging".to_owned(),
+                last_update_at: "2026-04-01T09:00:00Z".to_owned(),
+            }],
+        };
+        let patch = RoomSnapshotPatch {
+            bluf_markdown: Some("- New BLUF".to_owned()),
+            overview_markdown: None,
+            employees: vec![EmployeeSnapshotPatch {
+                employee_name: "Alice".to_owned(),
+                content_markdown: "- Shipped the API refactor.".to_owned(),
+            }],
+        };
+        let active_events = vec![
+            stored_event(
+                "Alice",
+                "2026-04-02T12:00:00Z",
+                "repo-a",
+                Some("feature/alice"),
+            ),
+            stored_event("Bob", "2026-04-02T11:00:00Z", "repo-b", Some("feature/bob")),
+            stored_event("Carol", "2026-04-02T10:00:00Z", "repo-c", None),
+        ];
+
+        let merged = merge_snapshot_patch(current_snapshot, patch, &active_events);
+
+        assert_eq!(merged.bluf_markdown, "- New BLUF");
+        assert_eq!(merged.overview_markdown, "Existing overview");
+        assert_eq!(
+            merged
+                .employees
+                .iter()
+                .map(|employee| employee.employee_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Alice", "Bob", "Carol"]
+        );
+        assert_eq!(
+            merged.employees[0].content_markdown,
+            "- Shipped the API refactor."
+        );
+        assert_eq!(merged.employees[0].last_update_at, "2026-04-02T12:00:00Z");
+        assert_eq!(merged.employees[1].content_markdown, "- Still debugging");
+        assert!(merged.employees[2].content_markdown.contains("Raw details"));
+    }
+
     #[test]
     fn cli_join_command_includes_app_url() {
         let command = cli_join_command(
@@ -480,5 +756,70 @@ mod tests {
         let url = dashboard_url("https://app.example.com/", "bright-fox-1");
 
         assert_eq!(url, "https://app.example.com/r/bright-fox-1");
+    }
+
+    #[tokio::test]
+    async fn get_manager_summary_returns_json_payload() {
+        let tempdir = TempDir::new().unwrap();
+        let db = Arc::new(Db::open(&tempdir.path().join("api-summary.sqlite")).unwrap());
+        let room = db.create_room("Summary Room").unwrap();
+        let summary = RoomSnapshot {
+            bluf_markdown: "- Top line".to_owned(),
+            overview_markdown: "Detailed overview".to_owned(),
+            employees: vec![EmployeeSnapshot {
+                employee_name: "Alice".to_owned(),
+                content_markdown: "- On track".to_owned(),
+                last_update_at: "2026-04-02T12:00:00Z".to_owned(),
+            }],
+        };
+        db.set_summary(&room.room_id, &summary).unwrap();
+
+        let (hook_events, _) = broadcast::channel(8);
+        let (summary_events, _) = broadcast::channel(8);
+        let state = AppState {
+            db,
+            hook_events,
+            summary_events,
+            public_api_url: DEFAULT_PUBLIC_API_URL.to_owned(),
+            public_app_url: DEFAULT_PUBLIC_APP_URL.to_owned(),
+            http: reqwest::Client::new(),
+            openai_api_key: None,
+        };
+
+        let response = get_manager_summary(State(state), Path(room.room_id.clone()))
+            .await
+            .unwrap()
+            .into_response();
+
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let returned_summary: RoomSnapshot = serde_json::from_slice(&body).unwrap();
+        assert_eq!(returned_summary, summary);
+    }
+
+    fn stored_event(
+        employee_name: &str,
+        received_at: &str,
+        repo_root: &str,
+        branch: Option<&str>,
+    ) -> StoredHookEvent {
+        StoredHookEvent {
+            event_id: Uuid::new_v4(),
+            received_at: received_at.to_owned(),
+            employee_name: employee_name.to_owned(),
+            client: "codex".to_owned(),
+            repo_root: repo_root.to_owned(),
+            branch: branch.map(ToOwned::to_owned),
+            payload: json!({
+                "summary": format!("{employee_name} update"),
+            }),
+        }
     }
 }

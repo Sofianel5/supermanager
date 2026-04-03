@@ -4,6 +4,18 @@ export type RoomMetadataResponse = {
   created_at: string;
 };
 
+export type EmployeeSnapshot = {
+  employee_name: string;
+  content_markdown: string;
+  last_update_at: string;
+};
+
+export type RoomSnapshot = {
+  bluf_markdown: string;
+  overview_markdown: string;
+  employees: EmployeeSnapshot[];
+};
+
 export type StoredHookEvent = {
   event_id: string;
   received_at: string;
@@ -43,14 +55,6 @@ async function requestJson<T>(path: string, init?: RequestInit) {
   return (await response.json()) as T;
 }
 
-async function requestText(path: string) {
-  const response = await fetch(apiUrl(path));
-  if (!response.ok) {
-    throw new Error(await readError(response));
-  }
-  return response.text();
-}
-
 export function getApiBaseUrl() {
   return API_BASE_URL;
 }
@@ -63,7 +67,7 @@ export const api = {
     return requestJson<FeedResponse>(`/r/${encodeURIComponent(roomId)}/feed`);
   },
   getSummary(roomId: string) {
-    return requestText(`/r/${encodeURIComponent(roomId)}/summary`);
+    return requestJson<RoomSnapshot>(`/r/${encodeURIComponent(roomId)}/summary`);
   },
   openRoomStream(roomId: string) {
     return new EventSource(apiUrl(`/r/${encodeURIComponent(roomId)}/feed/stream`));
