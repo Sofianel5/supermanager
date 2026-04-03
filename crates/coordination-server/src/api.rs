@@ -1,7 +1,11 @@
-use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Context, bail};
-use schemars::JsonSchema;
 use async_stream::stream;
 use axum::{
     Json,
@@ -16,6 +20,7 @@ use reporter_protocol::{
     CreateRoomRequest, CreateRoomResponse, EmployeeSnapshot, FeedResponse, HookTurnReport,
     IngestResponse, Room, RoomMetadataResponse, RoomSnapshot, StoredHookEvent,
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -292,8 +297,12 @@ fn merge_snapshot_patch(
         next_snapshot.overview_markdown = overview_markdown;
     }
 
-    let mut current_cards = next_snapshot
+    let current_order = next_snapshot
         .employees
+        .iter()
+        .map(|employee| normalize_employee_name(&employee.employee_name))
+        .collect::<Vec<_>>();
+    let mut current_cards = std::mem::take(&mut next_snapshot.employees)
         .into_iter()
         .map(|employee| (normalize_employee_name(&employee.employee_name), employee))
         .collect::<HashMap<_, _>>();
@@ -302,20 +311,24 @@ fn merge_snapshot_patch(
         .into_iter()
         .map(|employee| (normalize_employee_name(&employee.employee_name), employee))
         .collect::<HashMap<_, _>>();
+    let active_employees = collect_employee_activity(active_events);
+    let mut seen_employees = HashSet::new();
 
-    next_snapshot.employees = collect_employee_activity(active_events)
+    next_snapshot.employees = active_employees
         .into_iter()
         .map(|activity| {
             let employee_key = normalize_employee_name(&activity.employee_name);
+            let existing_card = current_cards.remove(&employee_key);
             let content_markdown = patch_cards
                 .remove(&employee_key)
                 .and_then(|card| non_empty_text(card.content_markdown))
                 .or_else(|| {
-                    current_cards
-                        .remove(&employee_key)
-                        .and_then(|card| non_empty_text(card.content_markdown))
+                    existing_card
+                        .as_ref()
+                        .and_then(|card| non_empty_text(card.content_markdown.clone()))
                 })
                 .unwrap_or_else(|| build_employee_fallback(&activity));
+            seen_employees.insert(employee_key);
 
             EmployeeSnapshot {
                 employee_name: activity.employee_name,
@@ -323,7 +336,27 @@ fn merge_snapshot_patch(
                 last_update_at: activity.latest_update_at,
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    next_snapshot
+        .employees
+        .extend(current_order.into_iter().filter_map(|employee_key| {
+            if seen_employees.contains(&employee_key) {
+                return None;
+            }
+
+            let existing_card = current_cards.remove(&employee_key)?;
+            let content_markdown = patch_cards
+                .remove(&employee_key)
+                .and_then(|card| non_empty_text(card.content_markdown))
+                .unwrap_or(existing_card.content_markdown);
+
+            Some(EmployeeSnapshot {
+                employee_name: existing_card.employee_name,
+                content_markdown,
+                last_update_at: existing_card.last_update_at,
+            })
+        }));
 
     next_snapshot
 }
@@ -387,6 +420,16 @@ fn is_snapshot_empty(snapshot: &RoomSnapshot) -> bool {
         && snapshot.employees.is_empty()
 }
 
+fn latest_snapshot_event_at(snapshot: &RoomSnapshot) -> Option<String> {
+    snapshot
+        .employees
+        .iter()
+        .map(|employee| employee.last_update_at.trim())
+        .filter(|timestamp| !timestamp.is_empty())
+        .max()
+        .map(str::to_owned)
+}
+
 /// Build an OpenAI structured-output format block from a `schemars`-derived schema.
 /// Adds `"additionalProperties": false` to every object node (required by strict mode).
 fn openai_strict_schema<T: JsonSchema>(name: &str) -> Value {
@@ -404,10 +447,7 @@ fn openai_strict_schema<T: JsonSchema>(name: &str) -> Value {
 fn enforce_additional_properties_false(value: &mut Value) {
     if let Some(obj) = value.as_object_mut() {
         if obj.contains_key("properties") {
-            obj.insert(
-                "additionalProperties".to_owned(),
-                Value::Bool(false),
-            );
+            obj.insert("additionalProperties".to_owned(), Value::Bool(false));
         }
         for child in obj.values_mut() {
             enforce_additional_properties_false(child);
@@ -488,18 +528,14 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
     let current_snapshot = match state.db.get_summary(room_id) {
         Ok(snapshot) => snapshot,
         Err(error) => {
-            fail_summarize(state, room_id, format_args!("failed to load current snapshot for room {room_id}: {error}"));
+            fail_summarize(
+                state,
+                room_id,
+                format_args!("failed to load current snapshot for room {room_id}: {error}"),
+            );
             return;
         }
     };
-    let current_snapshot_updated_at = match state.db.get_summary_updated_at(room_id) {
-        Ok(updated_at) => updated_at,
-        Err(error) => {
-            fail_summarize(state, room_id, format_args!("failed to load snapshot timestamp for room {room_id}: {error}"));
-            return;
-        }
-    };
-
     broadcast_status(state, room_id, "generating");
 
     let active_events = match state
@@ -513,17 +549,22 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             return;
         }
         Err(error) => {
-            fail_summarize(state, room_id, format_args!("failed to load active events for room {room_id}: {error}"));
+            fail_summarize(
+                state,
+                room_id,
+                format_args!("failed to load active events for room {room_id}: {error}"),
+            );
             return;
         }
     };
 
+    let current_snapshot_event_at = latest_snapshot_event_at(&current_snapshot);
     let changed_events = if is_snapshot_empty(&current_snapshot) {
         active_events.clone()
     } else {
         match state.db.get_hook_events_filtered(
             room_id,
-            current_snapshot_updated_at.as_deref(),
+            current_snapshot_event_at.as_deref(),
             None,
             None,
             100,
@@ -535,7 +576,11 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
                 return;
             }
             Err(error) => {
-                fail_summarize(state, room_id, format_args!("failed to load changed events for room {room_id}: {error}"));
+                fail_summarize(
+                    state,
+                    room_id,
+                    format_args!("failed to load changed events for room {room_id}: {error}"),
+                );
                 return;
             }
         }
@@ -558,7 +603,11 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             let next_snapshot = match parse_snapshot_patch(&text) {
                 Ok(patch) => merge_snapshot_patch(current_snapshot, patch, &active_events),
                 Err(error) => {
-                    fail_summarize(state, room_id, format_args!("invalid snapshot patch for room {room_id}: {error}"));
+                    fail_summarize(
+                        state,
+                        room_id,
+                        format_args!("invalid snapshot patch for room {room_id}: {error}"),
+                    );
                     return;
                 }
             };
@@ -570,10 +619,18 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
             broadcast_status(state, room_id, "ready");
         }
         Ok(_) => {
-            fail_summarize(state, room_id, format_args!("empty response for room {room_id}"));
+            fail_summarize(
+                state,
+                room_id,
+                format_args!("empty response for room {room_id}"),
+            );
         }
         Err(error) => {
-            fail_summarize(state, room_id, format_args!("error for room {room_id}: {error}"));
+            fail_summarize(
+                state,
+                room_id,
+                format_args!("error for room {room_id}: {error}"),
+            );
         }
     }
 }
@@ -671,11 +728,18 @@ mod tests {
         let current_snapshot = RoomSnapshot {
             bluf_markdown: "- Existing BLUF".to_owned(),
             overview_markdown: "Existing overview".to_owned(),
-            employees: vec![EmployeeSnapshot {
-                employee_name: "Bob".to_owned(),
-                content_markdown: "- Still debugging".to_owned(),
-                last_update_at: "2026-04-01T09:00:00Z".to_owned(),
-            }],
+            employees: vec![
+                EmployeeSnapshot {
+                    employee_name: "Bob".to_owned(),
+                    content_markdown: "- Still debugging".to_owned(),
+                    last_update_at: "2026-04-01T09:00:00Z".to_owned(),
+                },
+                EmployeeSnapshot {
+                    employee_name: "Dana".to_owned(),
+                    content_markdown: "- Watching staging.".to_owned(),
+                    last_update_at: "2026-03-31T17:00:00Z".to_owned(),
+                },
+            ],
         };
         let patch = RoomSnapshotPatch {
             bluf_markdown: Some("- New BLUF".to_owned()),
@@ -706,7 +770,7 @@ mod tests {
                 .iter()
                 .map(|employee| employee.employee_name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Alice", "Bob", "Carol"]
+            vec!["Alice", "Bob", "Carol", "Dana"]
         );
         assert_eq!(
             merged.employees[0].content_markdown,
@@ -715,6 +779,34 @@ mod tests {
         assert_eq!(merged.employees[0].last_update_at, "2026-04-02T12:00:00Z");
         assert_eq!(merged.employees[1].content_markdown, "- Still debugging");
         assert!(merged.employees[2].content_markdown.contains("Raw details"));
+        assert_eq!(merged.employees[3].employee_name, "Dana");
+        assert_eq!(merged.employees[3].content_markdown, "- Watching staging.");
+        assert_eq!(merged.employees[3].last_update_at, "2026-03-31T17:00:00Z");
+    }
+
+    #[test]
+    fn latest_snapshot_event_at_uses_employee_timestamps() {
+        let snapshot = RoomSnapshot {
+            bluf_markdown: String::new(),
+            overview_markdown: String::new(),
+            employees: vec![
+                EmployeeSnapshot {
+                    employee_name: "Alice".to_owned(),
+                    content_markdown: "- Working".to_owned(),
+                    last_update_at: "2026-04-02T12:00:00Z".to_owned(),
+                },
+                EmployeeSnapshot {
+                    employee_name: "Bob".to_owned(),
+                    content_markdown: "- Reviewing".to_owned(),
+                    last_update_at: "2026-04-02T12:05:00Z".to_owned(),
+                },
+            ],
+        };
+
+        assert_eq!(
+            latest_snapshot_event_at(&snapshot),
+            Some("2026-04-02T12:05:00Z".to_owned())
+        );
     }
 
     #[test]
