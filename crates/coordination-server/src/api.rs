@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, bail};
 use async_stream::stream;
+use time::format_description::well_known::Rfc3339;
 use axum::{
     Json,
     extract::{Path, State},
@@ -247,9 +248,8 @@ pub async fn get_manager_summary(
 fn build_summary_patch_input(
     current_snapshot: &RoomSnapshot,
     changed_events: &[StoredHookEvent],
-    active_events: &[StoredHookEvent],
+    employee_activity: &[EmployeeActivity],
 ) -> String {
-    let employee_activity = collect_employee_activity(active_events);
     serde_json::to_string_pretty(&json!({
         "current_snapshot": current_snapshot,
         "new_updates": serialize_events(changed_events),
@@ -287,7 +287,7 @@ fn parse_snapshot_patch(raw: &str) -> anyhow::Result<RoomSnapshotPatch> {
 fn merge_snapshot_patch(
     current_snapshot: RoomSnapshot,
     patch: RoomSnapshotPatch,
-    active_events: &[StoredHookEvent],
+    active_employees: Vec<EmployeeActivity>,
 ) -> RoomSnapshot {
     let mut next_snapshot = current_snapshot;
     if let Some(bluf_markdown) = patch.bluf_markdown {
@@ -311,7 +311,6 @@ fn merge_snapshot_patch(
         .into_iter()
         .map(|employee| (normalize_employee_name(&employee.employee_name), employee))
         .collect::<HashMap<_, _>>();
-    let active_employees = collect_employee_activity(active_events);
     let mut seen_employees = HashSet::new();
 
     next_snapshot.employees = active_employees
@@ -420,14 +419,14 @@ fn is_snapshot_empty(snapshot: &RoomSnapshot) -> bool {
         && snapshot.employees.is_empty()
 }
 
-fn latest_snapshot_event_at(snapshot: &RoomSnapshot) -> Option<String> {
+fn latest_snapshot_event_at(snapshot: &RoomSnapshot) -> Option<time::OffsetDateTime> {
     snapshot
         .employees
         .iter()
-        .map(|employee| employee.last_update_at.trim())
-        .filter(|timestamp| !timestamp.is_empty())
+        .filter_map(|employee| {
+            time::OffsetDateTime::parse(employee.last_update_at.trim(), &Rfc3339).ok()
+        })
         .max()
-        .map(str::to_owned)
 }
 
 /// Build an OpenAI structured-output format block from a `schemars`-derived schema.
@@ -558,50 +557,46 @@ async fn auto_summarize(state: &AppState, room_id: &str) {
         }
     };
 
-    let current_snapshot_event_at = latest_snapshot_event_at(&current_snapshot);
-    let changed_events = if is_snapshot_empty(&current_snapshot) {
+    let snapshot_cursor = latest_snapshot_event_at(&current_snapshot);
+    let changed_events: Vec<StoredHookEvent> = if is_snapshot_empty(&current_snapshot) {
         active_events.clone()
-    } else {
-        match state.db.get_hook_events_filtered(
-            room_id,
-            current_snapshot_event_at.as_deref(),
-            None,
-            None,
-            100,
-        ) {
-            Ok(events) if !events.is_empty() => events,
-            Ok(_) => {
-                eprintln!("[auto_summarize] no new events to merge for room {room_id}");
-                broadcast_status(state, room_id, "ready");
-                return;
-            }
-            Err(error) => {
-                fail_summarize(
-                    state,
-                    room_id,
-                    format_args!("failed to load changed events for room {room_id}: {error}"),
-                );
-                return;
-            }
+    } else if let Some(cursor) = &snapshot_cursor {
+        let filtered: Vec<_> = active_events
+            .iter()
+            .filter(|event| {
+                time::OffsetDateTime::parse(&event.received_at, &Rfc3339)
+                    .map_or(true, |t| t > *cursor)
+            })
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            eprintln!("[auto_summarize] no new events to merge for room {room_id}");
+            broadcast_status(state, room_id, "ready");
+            return;
         }
+        filtered
+    } else {
+        active_events.clone()
     };
+
+    let employee_activity = collect_employee_activity(&active_events);
 
     eprintln!(
         "[auto_summarize] calling OpenAI with {} changed updates across {} active employees",
         changed_events.len(),
-        collect_employee_activity(&active_events).len(),
+        employee_activity.len(),
     );
 
     let result = call_openai(
         state,
         "You maintain a structured room snapshot for a live engineering coordination room. Return only valid JSON with this exact shape: {\"bluf_markdown\": string | null, \"overview_markdown\": string | null, \"employees\": [{\"employee_name\": string, \"content_markdown\": string}]}. Omit a field or set it to null when that section should stay unchanged. Only include employee entries that need updates. If the current snapshot is empty, initialize the BLUF and detailed overview. Employee markdown should be concise body content only and should not repeat the employee name as a heading. Use only facts from the provided updates.",
-        &build_summary_patch_input(&current_snapshot, &changed_events, &active_events),
+        &build_summary_patch_input(&current_snapshot, &changed_events, &employee_activity),
     )
     .await;
     match result {
         Ok(text) if !text.is_empty() => {
             let next_snapshot = match parse_snapshot_patch(&text) {
-                Ok(patch) => merge_snapshot_patch(current_snapshot, patch, &active_events),
+                Ok(patch) => merge_snapshot_patch(current_snapshot, patch, employee_activity),
                 Err(error) => {
                     fail_summarize(
                         state,
@@ -759,8 +754,9 @@ mod tests {
             stored_event("Bob", "2026-04-02T11:00:00Z", "repo-b", Some("feature/bob")),
             stored_event("Carol", "2026-04-02T10:00:00Z", "repo-c", None),
         ];
+        let employee_activity = collect_employee_activity(&active_events);
 
-        let merged = merge_snapshot_patch(current_snapshot, patch, &active_events);
+        let merged = merge_snapshot_patch(current_snapshot, patch, employee_activity);
 
         assert_eq!(merged.bluf_markdown, "- New BLUF");
         assert_eq!(merged.overview_markdown, "Existing overview");
@@ -803,10 +799,10 @@ mod tests {
             ],
         };
 
-        assert_eq!(
-            latest_snapshot_event_at(&snapshot),
-            Some("2026-04-02T12:05:00Z".to_owned())
-        );
+        let result = latest_snapshot_event_at(&snapshot).unwrap();
+        let expected =
+            time::OffsetDateTime::parse("2026-04-02T12:05:00Z", &Rfc3339).unwrap();
+        assert_eq!(result, expected);
     }
 
     #[test]
