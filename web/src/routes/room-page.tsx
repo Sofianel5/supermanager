@@ -177,9 +177,34 @@ export function RoomPage() {
             </span>
           </p>
         </div>
-        <Link className="inline-link" to="/">
-          Create another room
-        </Link>
+        <div className="room-header__actions">
+          <Link className="inline-link" to="/">
+            Create another room
+          </Link>
+          <details className="room-info-dropdown">
+            <summary className="room-info-dropdown__trigger">Room info</summary>
+            <div className="room-section room-info-dropdown__panel">
+              <CopyPanel
+                copiedValue={copiedValue}
+                label="Install CLI"
+                onCopy={copy}
+                value="curl -fsSL https://supermanager.dev/install.sh | sh"
+              />
+              <CopyPanel
+                copiedValue={copiedValue}
+                label="Room code"
+                onCopy={copy}
+                value={canonicalRoomId}
+              />
+              <CopyPanel
+                copiedValue={copiedValue}
+                label="Join another repo"
+                onCopy={copy}
+                value={joinCommand}
+              />
+            </div>
+          </details>
+        </div>
       </header>
 
       <section className="room-layout">
@@ -191,28 +216,6 @@ export function RoomPage() {
             </span>
           </div>
           <SummaryContent summary={summary} summaryStatus={summaryStatus} />
-        </div>
-
-        <div className="room-section">
-          <div className="section-label">Room info</div>
-          <CopyPanel
-            copiedValue={copiedValue}
-            label="Install CLI"
-            onCopy={copy}
-            value="curl -fsSL https://supermanager.dev/install.sh | sh"
-          />
-          <CopyPanel
-            copiedValue={copiedValue}
-            label="Room code"
-            onCopy={copy}
-            value={canonicalRoomId}
-          />
-          <CopyPanel
-            copiedValue={copiedValue}
-            label="Join another repo"
-            onCopy={copy}
-            value={joinCommand}
-          />
         </div>
 
         <div className="room-section">

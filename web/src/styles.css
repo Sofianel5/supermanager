@@ -201,7 +201,8 @@ pre {
 
 .room-form button,
 .secondary-button,
-.inline-link {
+.inline-link,
+.room-info-dropdown__trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -233,7 +234,8 @@ pre {
 }
 
 .secondary-button,
-.inline-link {
+.inline-link,
+.room-info-dropdown__trigger {
   border-color: var(--border);
   color: var(--text);
   background: rgba(11, 16, 25, 0.78);
@@ -292,6 +294,18 @@ pre {
   align-items: center;
 }
 
+.room-header__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  width: min(420px, 100%);
+}
+
+.room-header__actions > .inline-link {
+  align-self: flex-end;
+}
+
 .room-header h1 {
   max-width: 100%;
   font-size: clamp(2.4rem, 6vw, 4.8rem);
@@ -345,6 +359,47 @@ pre {
   gap: 16px;
   align-items: center;
   margin-bottom: 16px;
+}
+
+.room-info-dropdown {
+  width: 100%;
+}
+
+.room-info-dropdown__trigger {
+  width: 100%;
+  justify-content: space-between;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.room-info-dropdown__trigger::-webkit-details-marker {
+  display: none;
+}
+
+.room-info-dropdown__trigger::marker {
+  content: "";
+}
+
+.room-info-dropdown__trigger::after {
+  content: "+";
+  font-size: 1rem;
+  line-height: 1;
+  transition: transform 140ms ease;
+}
+
+.room-info-dropdown[open] .room-info-dropdown__trigger::after {
+  transform: rotate(45deg);
+}
+
+.room-info-dropdown__panel {
+  margin-top: 12px;
+}
+
+.room-info-dropdown__panel .copy-sheet:first-child {
+  margin-top: 0;
 }
 
 .summary-copy {
@@ -565,6 +620,14 @@ pre {
   .landing-hero h1,
   .room-header h1 {
     max-width: 100%;
+  }
+
+  .room-header__actions {
+    width: 100%;
+  }
+
+  .room-header__actions > .inline-link {
+    align-self: flex-start;
   }
 }
 
