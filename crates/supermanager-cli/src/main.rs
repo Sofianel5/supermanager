@@ -36,6 +36,11 @@ enum Commands {
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
+    /// Check for and install the latest published CLI release.
+    Update {
+        #[arg(long)]
+        check: bool,
+    },
     #[command(hide = true)]
     HookReport {
         #[arg(long, value_parser = ["claude", "codex"])]
@@ -60,6 +65,12 @@ enum CreateCommands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let home_dir = supermanager::resolve_home_dir()?;
+
+    if should_auto_update(&cli.command)
+        && let Ok(Some(outcome)) = supermanager::maybe_auto_update(&home_dir)
+    {
+        print_self_update_status(&outcome);
+    }
 
     match cli.command {
         Commands::Create { command } => match command {
@@ -161,6 +172,10 @@ fn main() -> Result<()> {
                 outcome.removed_paths.join(", ")
             );
         }
+        Commands::Update { check } => {
+            let outcome = supermanager::run_self_update(check)?;
+            print_self_update_status(&outcome);
+        }
         Commands::HookReport { client } => {
             let _ = supermanager::report_hook_turn(&client, &home_dir);
         }
@@ -168,9 +183,57 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn should_auto_update(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Create { .. } | Commands::Join { .. } | Commands::Leave { .. }
+    )
+}
+
 fn print_clipboard_status(text: &str) {
     match supermanager::copy_to_clipboard(text) {
         Ok(()) => println!("  \x1b[32m✓\x1b[0m Dashboard URL copied to clipboard"),
         Err(error) => eprintln!("  \x1b[33m!\x1b[0m Clipboard: {error}"),
+    }
+}
+
+fn print_self_update_status(outcome: &supermanager::SelfUpdateOutcome) {
+    match outcome {
+        supermanager::SelfUpdateOutcome::Updated {
+            previous_version,
+            current_version,
+        } => {
+            println!();
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mCLI updated\x1b[0m");
+            println!();
+            println!("    \x1b[2mFrom\x1b[0m       {previous_version}");
+            println!("    \x1b[2mTo\x1b[0m         {current_version}");
+            println!();
+        }
+        supermanager::SelfUpdateOutcome::UpdateAvailable {
+            current_version,
+            latest_version,
+        } => {
+            println!();
+            println!("  \x1b[33m!\x1b[0m \x1b[1mUpdate available\x1b[0m");
+            println!();
+            println!("    \x1b[2mCurrent\x1b[0m    {current_version}");
+            println!("    \x1b[2mLatest\x1b[0m     {latest_version}");
+            println!();
+        }
+        supermanager::SelfUpdateOutcome::AlreadyCurrent { version } => {
+            println!();
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mAlready up to date\x1b[0m");
+            println!();
+            println!("    \x1b[2mVersion\x1b[0m    {version}");
+            println!();
+        }
+        supermanager::SelfUpdateOutcome::Unsupported { reason } => {
+            println!();
+            println!("  \x1b[33m!\x1b[0m \x1b[1mSelf-update unavailable\x1b[0m");
+            println!();
+            println!("    \x1b[2mReason\x1b[0m     {reason}");
+            println!();
+        }
     }
 }

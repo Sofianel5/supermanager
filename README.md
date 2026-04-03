@@ -51,6 +51,15 @@ curl -fsSL https://supermanager.dev/install.sh | sh
 
 The installer downloads the latest GitHub Release for your platform, verifies the published SHA-256 checksum, and installs `supermanager` into `~/.local/bin` by default.
 
+Published CLI installs also self-update in place. Normal interactive commands check once per day for a newer GitHub Release and install it automatically before continuing. To check manually at any time:
+
+```sh
+supermanager update --check
+supermanager update
+```
+
+Set `SUPERMANAGER_AUTO_UPDATE=0` to disable the automatic daily check.
+
 ### 4. Create a room
 
 Create the room from the CLI:

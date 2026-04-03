@@ -1,13 +1,18 @@
 [package]
 name = "supermanager"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+flate2.workspace = true
 reporter-protocol = { path = "../reporter-protocol" }
 reqwest = { workspace = true, features = ["blocking"] }
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tempfile.workspace = true
 toml_edit.workspace = true

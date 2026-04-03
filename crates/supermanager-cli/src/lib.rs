@@ -16,6 +16,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use toml_edit::{DocumentMut, Item, Table, value};
 
+mod update;
+
+pub use update::{SelfUpdateOutcome, maybe_auto_update, run_self_update};
+
 const MANAGED_TOML_START: &str = "# supermanager:start";
 const MANAGED_TOML_END: &str = "# supermanager:end";
 
