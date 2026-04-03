@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 #[command(
     author,
     version,
-    about = "Create, join, or leave supermanager rooms from the CLI"
+    about = "Create, join, list, or leave supermanager rooms from the CLI"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -36,6 +36,8 @@ enum Commands {
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
+    /// List the rooms currently joined on this machine.
+    List,
     /// Check for and install the latest published CLI release.
     Update {
         #[arg(long)]
@@ -172,6 +174,41 @@ fn main() -> Result<()> {
                 outcome.removed_paths.join(", ")
             );
         }
+        Commands::List => {
+            let outcome = supermanager::list_rooms(&home_dir)?;
+
+            if outcome.rooms.is_empty() {
+                println!();
+                println!("  \x1b[33m!\x1b[0m \x1b[1mNo joined rooms\x1b[0m");
+                println!();
+                println!("    Join one with `supermanager join <room-code>` inside a git repo");
+                return Ok(());
+            }
+
+            let repo_count = outcome
+                .rooms
+                .iter()
+                .map(|room| room.repo_dirs.len())
+                .sum::<usize>();
+
+            println!();
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mJoined rooms\x1b[0m");
+            println!();
+            println!("    \x1b[2mRooms\x1b[0m      {}", outcome.rooms.len());
+            println!("    \x1b[2mRepos\x1b[0m      {}", repo_count);
+
+            for room in outcome.rooms {
+                println!();
+                println!("    \x1b[2mRoom\x1b[0m       {}", room.room_id);
+                println!("    \x1b[2mServer\x1b[0m     {}", room.server_url);
+                if let Some((first_repo, other_repos)) = room.repo_dirs.split_first() {
+                    println!("    \x1b[2mRepos\x1b[0m      {}", first_repo.display());
+                    for repo_dir in other_repos {
+                        println!("               {}", repo_dir.display());
+                    }
+                }
+            }
+        }
         Commands::Update { check } => {
             let outcome = supermanager::run_self_update(check)?;
             print_self_update_status(&outcome);
@@ -186,7 +223,7 @@ fn main() -> Result<()> {
 fn should_auto_update(command: &Commands) -> bool {
     matches!(
         command,
-        Commands::Create { .. } | Commands::Join { .. } | Commands::Leave { .. }
+        Commands::Create { .. } | Commands::Join { .. } | Commands::Leave { .. } | Commands::List
     )
 }
 

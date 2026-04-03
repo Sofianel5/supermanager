@@ -71,6 +71,16 @@ pub struct LeaveOutcome {
     pub removed_paths: Vec<String>,
 }
 
+pub struct ListRoomsOutcome {
+    pub rooms: Vec<ListRoomEntry>,
+}
+
+pub struct ListRoomEntry {
+    pub room_id: String,
+    pub server_url: String,
+    pub repo_dirs: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct RepoRoomConfig {
     server_url: String,
@@ -228,6 +238,33 @@ pub fn leave_repo(repo_dir: &Path, home_dir: &Path) -> Result<LeaveOutcome> {
         repo_dir,
         removed_paths,
     })
+}
+
+pub fn list_rooms(home_dir: &Path) -> Result<ListRoomsOutcome> {
+    let path = home_repo_config_path(home_dir);
+    let config = read_home_repo_config(&path)?;
+    let mut grouped = BTreeMap::<(String, String), Vec<PathBuf>>::new();
+
+    for (repo_dir, room_config) in config.repos {
+        grouped
+            .entry((room_config.room_id, room_config.server_url))
+            .or_default()
+            .push(PathBuf::from(repo_dir));
+    }
+
+    let rooms = grouped
+        .into_iter()
+        .map(|((room_id, server_url), mut repo_dirs)| {
+            repo_dirs.sort();
+            ListRoomEntry {
+                room_id,
+                server_url,
+                repo_dirs,
+            }
+        })
+        .collect();
+
+    Ok(ListRoomsOutcome { rooms })
 }
 
 pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
@@ -946,6 +983,78 @@ mod tests {
 
         let resolved_repo_dir = resolve_repo_root(&nested_dir).unwrap();
         assert_eq!(default_room_name(&resolved_repo_dir), "repo-name");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_rooms_groups_repo_memberships_by_room() {
+        let root = test_dir("list-rooms");
+        let home_dir = root.join("home");
+        let repo_a = root.join("repo-a");
+        let repo_b = root.join("repo-b");
+        let repo_c = root.join("repo-c");
+        fs::create_dir_all(&home_dir).unwrap();
+        fs::create_dir_all(&repo_a).unwrap();
+        fs::create_dir_all(&repo_b).unwrap();
+        fs::create_dir_all(&repo_c).unwrap();
+
+        let mut config = HomeRepoConfig::default();
+        config.repos.insert(
+            repo_key(&repo_b),
+            RepoRoomConfig {
+                server_url: "https://supermanager.fly.dev".to_owned(),
+                room_id: "ALPHA1".to_owned(),
+            },
+        );
+        config.repos.insert(
+            repo_key(&repo_a),
+            RepoRoomConfig {
+                server_url: "https://supermanager.fly.dev".to_owned(),
+                room_id: "ALPHA1".to_owned(),
+            },
+        );
+        config.repos.insert(
+            repo_key(&repo_c),
+            RepoRoomConfig {
+                server_url: "http://127.0.0.1:8787".to_owned(),
+                room_id: "BETA22".to_owned(),
+            },
+        );
+
+        write_home_repo_config(&home_repo_config_path(&home_dir), &config).unwrap();
+
+        let outcome = list_rooms(&home_dir).unwrap();
+
+        assert_eq!(outcome.rooms.len(), 2);
+        assert_eq!(outcome.rooms[0].room_id, "ALPHA1");
+        assert_eq!(outcome.rooms[0].server_url, "https://supermanager.fly.dev");
+        assert_eq!(
+            outcome.rooms[0].repo_dirs,
+            vec![
+                canonicalize_best_effort(&repo_a),
+                canonicalize_best_effort(&repo_b)
+            ]
+        );
+        assert_eq!(outcome.rooms[1].room_id, "BETA22");
+        assert_eq!(outcome.rooms[1].server_url, "http://127.0.0.1:8787");
+        assert_eq!(
+            outcome.rooms[1].repo_dirs,
+            vec![canonicalize_best_effort(&repo_c)]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_rooms_returns_empty_when_not_joined_anywhere() {
+        let root = test_dir("list-rooms-empty");
+        let home_dir = root.join("home");
+        fs::create_dir_all(&home_dir).unwrap();
+
+        let outcome = list_rooms(&home_dir).unwrap();
+
+        assert!(outcome.rooms.is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }

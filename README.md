@@ -117,6 +117,12 @@ To remove the repo from supermanager later:
 supermanager leave
 ```
 
+To list every room this machine is currently joined to:
+
+```sh
+supermanager list
+```
+
 ### 6. Use the dashboard
 
 Open the room dashboard:
