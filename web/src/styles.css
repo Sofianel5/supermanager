@@ -244,7 +244,8 @@ pre {
 .room-form button:hover,
 .secondary-button:hover,
 .inline-link:hover,
-.copy-sheet:hover {
+.copy-sheet:hover,
+.room-info-dropdown__trigger:hover {
   transform: translateY(-1px);
 }
 
@@ -295,15 +296,17 @@ pre {
 }
 
 .room-header__actions {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
-  width: min(420px, 100%);
+  width: min(19rem, 100%);
 }
 
-.room-header__actions > .inline-link {
-  align-self: flex-end;
+.room-header__actions > .inline-link,
+.room-info-dropdown {
+  width: 100%;
 }
 
 .room-header h1 {
@@ -362,7 +365,7 @@ pre {
 }
 
 .room-info-dropdown {
-  width: 100%;
+  position: relative;
 }
 
 .room-info-dropdown__trigger {
@@ -395,7 +398,13 @@ pre {
 }
 
 .room-info-dropdown__panel {
-  margin-top: 12px;
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 4;
+  width: 100%;
+  margin-top: 0;
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.42);
 }
 
 .room-info-dropdown__panel .copy-sheet:first-child {
@@ -626,9 +635,6 @@ pre {
     width: 100%;
   }
 
-  .room-header__actions > .inline-link {
-    align-self: flex-start;
-  }
 }
 
 @media (max-width: 640px) {
