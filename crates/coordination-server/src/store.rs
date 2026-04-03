@@ -306,17 +306,6 @@ impl Db {
             .unwrap_or_default())
     }
 
-    pub fn get_summary_updated_at(&self, room_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
-        Ok(conn
-            .query_row(
-                "SELECT updated_at FROM summaries WHERE room_id = ?1",
-                params![room_id],
-                |row| row.get(0),
-            )
-            .optional()?)
-    }
-
     /// Get the summary generation status for a room.
     pub fn get_summary_status(&self, room_id: &str) -> Result<String> {
         let conn = self.conn.lock().unwrap();
@@ -537,7 +526,6 @@ mod tests {
             RoomSnapshot::default()
         );
         assert_eq!(db.get_summary_status(&room.room_id).unwrap(), "ready");
-        assert_eq!(db.get_summary_updated_at(&room.room_id).unwrap(), None);
     }
 
     #[test]
@@ -553,14 +541,12 @@ mod tests {
             RoomSnapshot::default()
         );
         assert_eq!(db.get_summary_status(&room.room_id).unwrap(), "generating");
-        assert!(db.get_summary_updated_at(&room.room_id).unwrap().is_some());
     }
 
     #[test]
     fn open_migrates_markdown_summaries_to_empty_json_payload() {
         let tempdir = TempDir::new().unwrap();
         let db_path = tempdir.path().join("summary-migration.sqlite");
-        let updated_at = "2026-04-01T10:00:00Z";
 
         let conn = Connection::open(&db_path).unwrap();
         conn.execute_batch(
@@ -588,10 +574,6 @@ mod tests {
 
         assert_eq!(db.get_summary("ROOM01").unwrap(), RoomSnapshot::default());
         assert_eq!(db.get_summary_status("ROOM01").unwrap(), "ready");
-        assert_eq!(
-            db.get_summary_updated_at("ROOM01").unwrap(),
-            Some(updated_at.to_owned())
-        );
 
         let conn = Connection::open(&db_path).unwrap();
         assert!(table_has_column(&conn, "summaries", "content_json").unwrap());
