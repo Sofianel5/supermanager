@@ -65,7 +65,7 @@ That uses the current repo or directory name as the room name by default. To pic
 supermanager create room "My Team"
 ```
 
-The command prints the room code, the join command, the dashboard URL, and copies the dashboard URL to your clipboard.
+The command creates the room, automatically joins the current repo to it, prints the room code, a join command you can run in other repos, the dashboard URL, and copies the dashboard URL to your clipboard.
 
 You can still create a room in the browser or call the API directly:
 
@@ -84,7 +84,7 @@ The response includes:
 
 ### 5. Join repos to the room
 
-Run the join command inside each repo you want connected:
+The repo where you ran `supermanager create room` is already connected. Run the join command inside each additional repo you want connected:
 
 ```sh
 supermanager join <room-code>

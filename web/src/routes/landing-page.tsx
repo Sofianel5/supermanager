@@ -29,8 +29,8 @@ export function LandingPage() {
           <div className="section-label">How it works</div>
           <ol className="workflow-list">
             <li>Install the CLI once on each machine that should report in.</li>
-            <li>Run `supermanager create room` to get a room code and dashboard URL.</li>
-            <li>Run `supermanager join &lt;room-code&gt;` inside each repo you want to connect.</li>
+            <li>Run `supermanager create room` to create a room and connect the current repo.</li>
+            <li>Run `supermanager join &lt;room-code&gt;` inside each additional repo you want to connect.</li>
             <li>Claude Code and Codex hook turns automatically flow into the room dashboard.</li>
           </ol>
         </div>

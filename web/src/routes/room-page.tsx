@@ -209,7 +209,7 @@ export function RoomPage() {
           />
           <CopyPanel
             copiedValue={copiedValue}
-            label="Join command"
+            label="Join another repo"
             onCopy={copy}
             value={joinCommand}
           />

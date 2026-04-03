@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -45,11 +45,13 @@ enum Commands {
 
 #[derive(Subcommand, Debug)]
 enum CreateCommands {
-    /// Create a new room and copy its dashboard URL.
+    /// Create a new room, connect the current repo, and copy its dashboard URL.
     Room {
         name: Option<String>,
         #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
-        server: String,
+        server_url: String,
+        #[arg(long, env = "DEFAULT_APP_URL", default_value = supermanager::DEFAULT_APP_URL)]
+        app_url: String,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
@@ -61,20 +63,48 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Create { command } => match command {
-            CreateCommands::Room { name, server, cwd } => {
+            CreateCommands::Room {
+                name,
+                server_url,
+                app_url,
+                cwd,
+            } => {
                 let cwd = cwd.canonicalize().unwrap_or(cwd);
                 let outcome = supermanager::create_room(supermanager::CreateRoomConfig {
-                    server_url: server,
+                    server_url: server_url.clone(),
                     name,
-                    cwd,
+                    cwd: cwd.clone(),
+                })?;
+                let join_outcome = supermanager::join_repo(supermanager::JoinConfig {
+                    server_url: server_url,
+                    app_url: app_url,
+                    room_id: outcome.room_id.clone(),
+                    repo_dir: cwd,
+                    home_dir,
+                })
+                .with_context(|| {
+                    format!(
+                        "room {} was created, but joining the current repo failed; run `{}` after fixing the repo setup",
+                        outcome.room_id, outcome.join_command
+                    )
                 })?;
 
                 println!();
-                println!("supermanager room created");
-                println!("room: {}", outcome.room_id);
-                println!("name: {}", outcome.room_name);
-                println!("dashboard: {}", outcome.dashboard_url);
-                println!("join: {}", outcome.join_command);
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mRoom created\x1b[0m");
+                println!();
+                println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
+                println!("    \x1b[2mName\x1b[0m       {}", outcome.room_name);
+                println!(
+                    "    \x1b[2mEmployee\x1b[0m   {}",
+                    join_outcome.employee_name
+                );
+                println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
+                println!(
+                    "    \x1b[2mRepo\x1b[0m       {}",
+                    join_outcome.repo_dir.display()
+                );
+                println!("    \x1b[2mShare\x1b[0m      {}", outcome.join_command);
+                println!();
                 print_clipboard_status(&outcome.dashboard_url);
             }
         },
@@ -95,11 +125,16 @@ fn main() -> Result<()> {
             })?;
 
             println!();
-            println!("supermanager join complete");
-            println!("room: {}", outcome.room_id);
-            println!("employee: {}", outcome.employee_name);
-            println!("dashboard: {}", outcome.dashboard_url);
-            println!("repo: {}", outcome.repo_dir.display());
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mJoined room\x1b[0m");
+            println!();
+            println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
+            println!("    \x1b[2mEmployee\x1b[0m   {}", outcome.employee_name);
+            println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
+            println!(
+                "    \x1b[2mRepo\x1b[0m       {}",
+                outcome.repo_dir.display()
+            );
+            println!();
             print_clipboard_status(&outcome.dashboard_url);
         }
         Commands::Leave { cwd } => {
@@ -107,9 +142,16 @@ fn main() -> Result<()> {
             let outcome = supermanager::leave_repo(&repo_dir, &home_dir)?;
 
             println!();
-            println!("supermanager leave complete");
-            println!("repo: {}", outcome.repo_dir.display());
-            println!("removed: {}", outcome.removed_paths.join(", "));
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mLeft room\x1b[0m");
+            println!();
+            println!(
+                "    \x1b[2mRepo\x1b[0m       {}",
+                outcome.repo_dir.display()
+            );
+            println!(
+                "    \x1b[2mRemoved\x1b[0m    {}",
+                outcome.removed_paths.join(", ")
+            );
         }
         Commands::HookReport { client } => {
             let _ = supermanager::report_hook_turn(&client, &home_dir);
@@ -120,7 +162,7 @@ fn main() -> Result<()> {
 
 fn print_clipboard_status(text: &str) {
     match supermanager::copy_to_clipboard(text) {
-        Ok(()) => println!("clipboard: dashboard url copied"),
-        Err(error) => eprintln!("clipboard: {error}"),
+        Ok(()) => println!("  \x1b[32m✓\x1b[0m Dashboard URL copied to clipboard"),
+        Err(error) => eprintln!("  \x1b[33m!\x1b[0m Clipboard: {error}"),
     }
 }
