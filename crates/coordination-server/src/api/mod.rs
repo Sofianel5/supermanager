@@ -1,3 +1,4 @@
+mod agent;
 mod sse;
 pub mod summarize;
 
@@ -10,13 +11,15 @@ use axum::{
     response::IntoResponse,
 };
 use reporter_protocol::{
-    CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse,
-    RoomMetadataResponse, Room, RoomSnapshot, StoredHookEvent,
+    CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse, Room,
+    RoomMetadataResponse, RoomSnapshot, StoredHookEvent,
 };
 use tokio::sync::broadcast;
 
 use crate::store::Db;
-use summarize::{SummaryStatusEvent, spawn_auto_summarize};
+use summarize::SummaryStatusEvent;
+
+pub use agent::RoomSummaryAgent;
 
 pub use sse::stream_feed;
 
@@ -34,12 +37,11 @@ pub struct HookFeedEvent {
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Db>,
+    pub agent: RoomSummaryAgent,
     pub hook_events: broadcast::Sender<HookFeedEvent>,
     pub summary_events: broadcast::Sender<SummaryStatusEvent>,
     pub public_api_url: String,
     pub public_app_url: String,
-    pub http: reqwest::Client,
-    pub openai_api_key: Option<String>,
 }
 
 // ── Health ──────────────────────────────────────────────────
@@ -82,10 +84,14 @@ pub async fn ingest_hook_turn(
 
     let _ = state.hook_events.send(HookFeedEvent {
         room_id: room_id.clone(),
-        event: stored,
+        event: stored.clone(),
     });
 
-    spawn_auto_summarize(&state, &room_id);
+    state
+        .agent
+        .enqueue(room_id.clone(), stored)
+        .await
+        .map_err(internal_error)?;
 
     Ok((
         StatusCode::ACCEPTED,
@@ -222,12 +228,11 @@ mod tests {
         let (summary_events, _) = broadcast::channel(8);
         let state = AppState {
             db,
+            agent: RoomSummaryAgent::noop(),
             hook_events,
             summary_events,
             public_api_url: DEFAULT_PUBLIC_API_URL.to_owned(),
             public_app_url: DEFAULT_PUBLIC_APP_URL.to_owned(),
-            http: reqwest::Client::new(),
-            openai_api_key: None,
         };
 
         let response = get_manager_summary(State(state), Path(room.room_id.clone()))

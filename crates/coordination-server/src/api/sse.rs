@@ -10,8 +10,8 @@ use reporter_protocol::StoredHookEvent;
 use serde_json::json;
 use tokio::sync::broadcast;
 
-use super::{AppState, resolve_room};
 use super::summarize::SummaryStatus;
+use super::{AppState, resolve_room};
 
 pub async fn stream_feed(
     State(state): State<AppState>,

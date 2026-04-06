@@ -163,6 +163,16 @@ fly.toml                  # Fly deployment config
 - Summary generation runs on the server after new hook turns arrive.
 - The stored room summary is structured JSON. The model receives the current summary plus fresh updates and can return partial section updates instead of rewriting the whole room summary each time.
 
+## Licensing
+
+Unless noted otherwise, the source in this repository is available under the MIT
+license in `LICENSE`.
+
+This repository also vendors `vendor/codex`, which remains available under the
+Apache License 2.0 with its upstream notices preserved in `vendor/codex/LICENSE`
+and `vendor/codex/NOTICE`. The top-level `NOTICE` file carries forward the
+required Codex attribution for this distribution.
+
 ## Deploying to Fly with GitHub Actions and AWS CodeBuild
 
 This repo includes a deployment path where GitHub Actions starts an AWS CodeBuild project, and CodeBuild runs `flyctl deploy --remote-only` against the checked-out commit.

@@ -4,6 +4,7 @@ members = [
   "crates/reporter-protocol",
   "crates/supermanager-cli",
 ]
+exclude = ["vendor/codex/codex-rs"]
 resolver = "2"
 
 [workspace.package]
@@ -11,6 +12,12 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+codex-app-server-client = { path = "vendor/codex/codex-rs/app-server-client" }
+codex-app-server-protocol = { path = "vendor/codex/codex-rs/app-server-protocol" }
+codex-core = { path = "vendor/codex/codex-rs/core" }
+codex-protocol = { path = "vendor/codex/codex-rs/protocol" }
+codex-arg0 = { path = "vendor/codex/codex-rs/arg0" }
+codex-feedback = { path = "vendor/codex/codex-rs/feedback" }
 anyhow = "1.0.100"
 async-stream = "0.3.6"
 axum = "0.8.6"
@@ -26,7 +33,17 @@ tar = "0.4.44"
 tempfile = "3.23.0"
 ts-rs = { version = "10", features = ["serde-compat", "uuid-impl", "serde-json-impl"] }
 time = { version = "0.3.44", features = ["formatting", "parsing"] }
-tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
 reqwest = { version = "0.12", features = ["json"] }
 toml_edit = "0.23"
+
+# Patches required by codex dependencies
+[patch.crates-io]
+crossterm = { git = "https://github.com/nornagon/crossterm", branch = "nornagon/color-query" }
+ratatui = { git = "https://github.com/nornagon/ratatui", branch = "nornagon-v0.29.0-patch" }
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }
+
+[patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }

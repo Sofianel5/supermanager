@@ -1,0 +1,25 @@
+Supermanager
+Copyright 2026 Supermanager contributors
+
+This repository vendors portions of OpenAI Codex under the Apache License,
+Version 2.0. The vendored source lives under vendor/codex.
+
+The following notices are reproduced to satisfy Apache License notice
+requirements for the vendored Codex code:
+
+OpenAI Codex
+Copyright 2025 OpenAI
+
+This project includes code derived from Ratatui
+(https://github.com/ratatui/ratatui), licensed under the MIT license.
+
+Copyright (c) 2016-2022 Florian Dehau
+Copyright (c) 2023-2025 The Ratatui Developers
+
+This project includes Meriyah parser assets from meriyah
+(https://github.com/meriyah/meriyah), licensed under the ISC license.
+
+Copyright (c) 2019 and later, KFlash and others.
+
+See vendor/codex/LICENSE and vendor/codex/NOTICE for the corresponding upstream
+license text and notice file.
