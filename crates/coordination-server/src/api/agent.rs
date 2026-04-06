@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result, anyhow};
 use codex_app_server_client::{
@@ -109,6 +109,7 @@ impl RoomSummaryAgent {
     pub async fn start(
         db: Arc<Db>,
         summary_events: broadcast::Sender<SummaryStatusEvent>,
+        data_dir: PathBuf,
     ) -> Result<Self> {
         let config = Config::load_default_with_cli_overrides(Vec::new())
             .context("failed to load default Codex config")?;
@@ -132,7 +133,9 @@ impl RoomSummaryAgent {
         .context("failed to start in-process Codex app server")?;
 
         let (command_tx, command_rx) = mpsc::channel(256);
-        let workspace_root = std::env::current_dir().context("failed to resolve current cwd")?;
+        let rooms_dir = data_dir.join("rooms");
+        fs::create_dir_all(&rooms_dir)
+            .with_context(|| format!("failed to create rooms dir: {}", rooms_dir.display()))?;
 
         tokio::spawn(async move {
             let loop_state = AgentLoop {
@@ -140,7 +143,7 @@ impl RoomSummaryAgent {
                 command_rx,
                 db,
                 summary_events,
-                workspace_root,
+                rooms_dir,
                 next_request_id: 1,
                 rooms: HashMap::new(),
                 thread_to_room: HashMap::new(),
@@ -185,13 +188,12 @@ struct AgentLoop {
     command_rx: mpsc::Receiver<AgentCommand>,
     db: Arc<Db>,
     summary_events: broadcast::Sender<SummaryStatusEvent>,
-    workspace_root: PathBuf,
+    rooms_dir: PathBuf,
     next_request_id: i64,
     rooms: HashMap<String, RoomState>,
     thread_to_room: HashMap<String, String>,
 }
 
-#[derive(Default)]
 struct RoomState {
     thread_id: Option<String>,
     active_turn: Option<String>,
@@ -490,7 +492,9 @@ impl AgentLoop {
                 let Some(room_id) = self.thread_to_room.get(&payload.thread_id).cloned() else {
                     return Ok(());
                 };
-                let room = self.rooms.entry(room_id.clone()).or_default();
+                let Some(room) = self.rooms.get_mut(&room_id) else {
+                    return Ok(());
+                };
                 if room.active_turn.as_deref() != Some(payload.turn.id.as_str()) {
                     return Ok(());
                 }
@@ -534,8 +538,9 @@ impl AgentLoop {
                 .await
             {
                 Ok(response) => {
-                    let room = self.rooms.entry(room_id.to_owned()).or_default();
-                    room.active_turn = Some(response.turn_id);
+                    if let Some(room) = self.rooms.get_mut(room_id) {
+                        room.active_turn = Some(response.turn_id);
+                    }
                 }
                 Err(error) => {
                     eprintln!(
@@ -564,8 +569,9 @@ impl AgentLoop {
                 .await
             {
                 Ok(response) => {
-                    let room = self.rooms.entry(room_id.to_owned()).or_default();
-                    room.active_turn = Some(response.turn.id);
+                    if let Some(room) = self.rooms.get_mut(room_id) {
+                        room.active_turn = Some(response.turn.id);
+                    }
                 }
                 Err(error) => {
                     eprintln!(
@@ -584,6 +590,13 @@ impl AgentLoop {
         Ok(())
     }
 
+    fn room_cwd(&self, room_id: &str) -> Result<PathBuf> {
+        let dir = self.rooms_dir.join(room_id);
+        fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create room dir: {}", dir.display()))?;
+        Ok(dir)
+    }
+
     async fn ensure_thread(&mut self, room_id: &str) -> Result<String> {
         if let Some(thread_id) = self
             .rooms
@@ -593,26 +606,32 @@ impl AgentLoop {
             return Ok(thread_id);
         }
 
+        let cwd = self.room_cwd(room_id)?;
+        let cwd_str = cwd.display().to_string();
+
         let stored_thread_id = self.db.get_summary_thread_id(room_id)?;
         let thread_id = if let Some(thread_id) = stored_thread_id {
-            match self.resume_thread(&thread_id).await {
+            match self.resume_thread(&thread_id, &cwd_str).await {
                 Ok(thread_id) => thread_id,
                 Err(error) => {
                     eprintln!(
                         "[room_summary_agent] failed to resume thread {thread_id} for room {room_id}: {error}. Creating new thread."
                     );
-                    self.create_thread().await?
+                    self.create_thread(&cwd_str).await?
                 }
             }
         } else {
-            self.create_thread().await?
+            self.create_thread(&cwd_str).await?
         };
 
         self.db
             .set_summary_thread_id(room_id, &thread_id)
             .with_context(|| format!("failed to persist thread id for room {room_id}"))?;
 
-        let room = self.rooms.entry(room_id.to_owned()).or_default();
+        let room = self.rooms.entry(room_id.to_owned()).or_insert_with(|| RoomState {
+            thread_id: None,
+            active_turn: None,
+        });
         room.thread_id = Some(thread_id.clone());
         self.thread_to_room
             .insert(thread_id.clone(), room_id.to_owned());
@@ -620,7 +639,7 @@ impl AgentLoop {
         Ok(thread_id)
     }
 
-    async fn create_thread(&mut self) -> Result<String> {
+    async fn create_thread(&mut self, cwd: &str) -> Result<String> {
         let request_id = self.next_request_id();
         let response = self
             .client
@@ -628,7 +647,7 @@ impl AgentLoop {
                 request_id,
                 params: ThreadStartParams {
                     model: Some(SUMMARY_MODEL.to_owned()),
-                    cwd: Some(self.workspace_root.display().to_string()),
+                    cwd: Some(cwd.to_owned()),
                     approval_policy: Some(AskForApproval::OnRequest),
                     sandbox: Some(SandboxMode::ReadOnly),
                     service_name: Some("supermanager".to_owned()),
@@ -644,7 +663,7 @@ impl AgentLoop {
         Ok(response.thread.id)
     }
 
-    async fn resume_thread(&mut self, thread_id: &str) -> Result<String> {
+    async fn resume_thread(&mut self, thread_id: &str, cwd: &str) -> Result<String> {
         let request_id = self.next_request_id();
         let response = self
             .client
@@ -652,7 +671,7 @@ impl AgentLoop {
                 request_id,
                 params: ThreadResumeParams {
                     thread_id: thread_id.to_owned(),
-                    cwd: Some(self.workspace_root.display().to_string()),
+                    cwd: Some(cwd.to_owned()),
                     approval_policy: Some(AskForApproval::OnRequest),
                     ..Default::default()
                 },

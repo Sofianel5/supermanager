@@ -42,9 +42,15 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let db = Arc::new(Db::open(&cli.db_path)?);
 
+    let data_dir = cli
+        .db_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("supermanager-data");
+
     let (hook_events, _) = broadcast::channel(256);
     let (summary_events, _) = broadcast::channel(64);
-    let agent = RoomSummaryAgent::start(db.clone(), summary_events.clone()).await?;
+    let agent = RoomSummaryAgent::start(db.clone(), summary_events.clone(), data_dir).await?;
 
     let state = AppState {
         db,
