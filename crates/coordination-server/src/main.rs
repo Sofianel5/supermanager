@@ -13,7 +13,7 @@ use clap::Parser;
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 
-use api::AppState;
+use api::{AppState, RoomSummaryAgent};
 use store::Db;
 
 #[derive(Parser, Debug)]
@@ -44,15 +44,15 @@ async fn main() -> Result<()> {
 
     let (hook_events, _) = broadcast::channel(256);
     let (summary_events, _) = broadcast::channel(64);
+    let agent = RoomSummaryAgent::start(db.clone(), summary_events.clone()).await?;
 
     let state = AppState {
         db,
+        agent,
         hook_events,
         summary_events,
         public_api_url: cli.public_api_url,
         public_app_url: cli.public_app_url,
-        http: reqwest::Client::new(),
-        openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
     };
 
     let app = Router::new()

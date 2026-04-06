@@ -2,6 +2,7 @@
 name = "coordination-server"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
@@ -10,16 +11,20 @@ axum.workspace = true
 clap.workspace = true
 futures-core.workspace = true
 rand = "0.9"
-schemars.workspace = true
-rusqlite = { version = "0.34", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 time.workspace = true
 tokio.workspace = true
-reqwest.workspace = true
 reporter-protocol = { path = "../reporter-protocol" }
 tower-http = { version = "0.6.8", features = ["cors"] }
+codex-app-server-client.workspace = true
+codex-app-server-protocol.workspace = true
+codex-core.workspace = true
+codex-protocol.workspace = true
+codex-arg0.workspace = true
+codex-feedback.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

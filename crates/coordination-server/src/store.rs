@@ -36,6 +36,7 @@ impl Db {
             CREATE TABLE IF NOT EXISTS summaries (
                 room_id      TEXT PRIMARY KEY REFERENCES rooms(room_id),
                 content_json TEXT NOT NULL,
+                thread_id    TEXT,
                 status       TEXT NOT NULL DEFAULT 'ready',
                 updated_at   TEXT NOT NULL
             );
@@ -232,62 +233,6 @@ impl Db {
         Ok(events)
     }
 
-    pub fn get_hook_events_filtered(
-        &self,
-        room_id: &str,
-        after_time: Option<&str>,
-        employee_name: Option<&str>,
-        branch: Option<&str>,
-        limit: u32,
-    ) -> Result<Vec<StoredHookEvent>> {
-        let conn = self.conn.lock().unwrap();
-
-        let mut conditions = vec!["room_id = ?1".to_string()];
-        let mut param_values: Vec<String> = vec![room_id.to_string()];
-        let mut idx = 2u32;
-
-        if let Some(time) = after_time {
-            conditions.push(format!("received_at > ?{idx}"));
-            param_values.push(time.to_string());
-            idx += 1;
-        }
-
-        if let Some(name) = employee_name {
-            conditions.push(format!("employee_name = ?{idx}"));
-            param_values.push(name.to_string());
-            idx += 1;
-        }
-
-        if let Some(b) = branch {
-            conditions.push(format!("branch = ?{idx}"));
-            param_values.push(b.to_string());
-            idx += 1;
-        }
-
-        let where_clause = conditions.join(" AND ");
-        let sql = format!(
-            "SELECT event_id, employee_name, client, repo_root, branch, payload_json, received_at
-             FROM hook_events WHERE {where_clause}
-             ORDER BY received_at DESC LIMIT ?{idx}"
-        );
-        param_values.push(limit.to_string());
-
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values
-            .iter()
-            .map(|s| s as &dyn rusqlite::types::ToSql)
-            .collect();
-
-        let mut stmt = conn.prepare(&sql)?;
-        let events = stmt
-            .query_map(
-                rusqlite::params_from_iter(param_refs.iter()),
-                map_stored_hook_event,
-            )?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(events)
-    }
-
     // ── Summaries ───────────────────────────────────────────
 
     /// Get the manager summary for a room.
@@ -304,6 +249,18 @@ impl Db {
             .as_deref()
             .and_then(|raw| serde_json::from_str::<RoomSnapshot>(raw).ok())
             .unwrap_or_default())
+    }
+
+    pub fn get_summary_thread_id(&self, room_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn
+            .query_row(
+                "SELECT thread_id FROM summaries WHERE room_id = ?1",
+                params![room_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        Ok(result.flatten())
     }
 
     /// Get the summary generation status for a room.
@@ -323,8 +280,8 @@ impl Db {
     pub fn set_summary_status(&self, room_id: &str, status: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO summaries (room_id, content_json, status, updated_at)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO summaries (room_id, content_json, thread_id, status, updated_at)
+             VALUES (?1, ?2, NULL, ?3, ?4)
              ON CONFLICT(room_id) DO UPDATE SET
                 status     = excluded.status,
                 updated_at = excluded.updated_at",
@@ -339,13 +296,26 @@ impl Db {
         let content_json =
             serde_json::to_string(content).context("failed to serialize room summary")?;
         conn.execute(
-            "INSERT INTO summaries (room_id, content_json, status, updated_at)
-             VALUES (?1, ?2, 'ready', ?3)
+            "INSERT INTO summaries (room_id, content_json, thread_id, status, updated_at)
+             VALUES (?1, ?2, NULL, 'ready', ?3)
              ON CONFLICT(room_id) DO UPDATE SET
                 content_json = excluded.content_json,
                 status       = 'ready',
                 updated_at   = excluded.updated_at",
             params![room_id, content_json, now_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_summary_thread_id(&self, room_id: &str, thread_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO summaries (room_id, content_json, thread_id, status, updated_at)
+             VALUES (?1, ?2, ?3, 'ready', ?4)
+             ON CONFLICT(room_id) DO UPDATE SET
+                thread_id   = excluded.thread_id,
+                updated_at  = excluded.updated_at",
+            params![room_id, empty_room_summary_json(), thread_id, now_rfc3339()],
         )?;
         Ok(())
     }
@@ -425,7 +395,11 @@ fn migrate_rooms_table_without_secret(conn: &Connection) -> Result<()> {
 fn migrate_summaries_table(conn: &Connection) -> Result<()> {
     let has_content_json = table_has_column(conn, "summaries", "content_json")?;
     let has_content_markdown = table_has_column(conn, "summaries", "content_markdown")?;
+    let has_thread_id = table_has_column(conn, "summaries", "thread_id")?;
     if has_content_json && !has_content_markdown {
+        if !has_thread_id {
+            conn.execute_batch("ALTER TABLE summaries ADD COLUMN thread_id TEXT;")?;
+        }
         return Ok(());
     }
 
@@ -440,6 +414,7 @@ fn migrate_summaries_table(conn: &Connection) -> Result<()> {
              CREATE TABLE summaries (
                 room_id      TEXT PRIMARY KEY REFERENCES rooms(room_id),
                 content_json TEXT NOT NULL,
+                thread_id    TEXT,
                 status       TEXT NOT NULL DEFAULT 'ready',
                 updated_at   TEXT NOT NULL
              );",
@@ -544,6 +519,23 @@ mod tests {
     }
 
     #[test]
+    fn summary_thread_id_round_trips_and_survives_status_updates() {
+        let tempdir = TempDir::new().unwrap();
+        let db = Db::open(&tempdir.path().join("summary-thread.sqlite")).unwrap();
+        let room = db.create_room("Test Room").unwrap();
+
+        db.set_summary_thread_id(&room.room_id, "thread_123")
+            .unwrap();
+        db.set_summary_status(&room.room_id, "generating").unwrap();
+
+        assert_eq!(
+            db.get_summary_thread_id(&room.room_id).unwrap(),
+            Some("thread_123".to_owned())
+        );
+        assert_eq!(db.get_summary_status(&room.room_id).unwrap(), "generating");
+    }
+
+    #[test]
     fn open_migrates_markdown_summaries_to_empty_json_payload() {
         let tempdir = TempDir::new().unwrap();
         let db_path = tempdir.path().join("summary-migration.sqlite");
@@ -577,6 +569,7 @@ mod tests {
 
         let conn = Connection::open(&db_path).unwrap();
         assert!(table_has_column(&conn, "summaries", "content_json").unwrap());
+        assert!(table_has_column(&conn, "summaries", "thread_id").unwrap());
         assert!(!table_has_column(&conn, "summaries", "content_markdown").unwrap());
     }
 }
