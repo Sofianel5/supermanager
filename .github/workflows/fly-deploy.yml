@@ -13,6 +13,8 @@ on:
       - 'Dockerfile'
       - 'fly.toml'
       - 'crates/**'
+      - 'vendor/**'
+      - '.gitmodules'
 jobs:
   deploy:
     name: Deploy app
