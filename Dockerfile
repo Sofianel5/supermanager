@@ -1,5 +1,5 @@
 FROM rust:1.93-slim AS builder
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y pkg-config libssl-dev curl ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 RUN cargo build --release -p coordination-server
