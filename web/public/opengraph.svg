@@ -1,0 +1,82 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#06080E"/>
+  <rect width="1200" height="630" fill="url(#paint0_radial)"/>
+  <rect width="1200" height="630" fill="url(#paint1_radial)"/>
+  <g opacity="0.2">
+    <path d="M0 78H1200" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M0 150H1200" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M0 222H1200" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M0 294H1200" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M0 366H1200" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M0 438H1200" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M0 510H1200" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M0 582H1200" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M94 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M166 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M238 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M310 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M382 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M454 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M526 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M598 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M670 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M742 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M814 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M886 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M958 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M1030 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <path d="M1102 0V630" stroke="#FFFFFF" stroke-opacity="0.08"/>
+  </g>
+  <circle cx="161" cy="146" r="6" fill="#F59E0B"/>
+  <text x="182" y="154" fill="#F59E0B" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="24" font-weight="700" letter-spacing="0.2em">SUPERMANAGER</text>
+  <text x="104" y="252" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="86" font-weight="700">Real-time visibility</text>
+  <text x="104" y="342" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="86" font-weight="700">into your team's AI</text>
+  <text x="104" y="432" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="86" font-weight="700">productivity.</text>
+  <text x="108" y="494" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="400">Track AI work across repos with live updates</text>
+  <text x="108" y="532" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="400">and a clear dashboard for managers.</text>
+  <g filter="url(#filter0_d)">
+    <rect x="772" y="100" width="332" height="410" rx="24" fill="#09101A" fill-opacity="0.94"/>
+    <rect x="772.5" y="100.5" width="331" height="409" rx="23.5" stroke="#5D6C8A" stroke-opacity="0.26"/>
+  </g>
+  <rect x="807" y="143" width="106" height="18" rx="9" fill="#F59E0B" fill-opacity="0.15"/>
+  <text x="827" y="157" fill="#F59E0B" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="12" font-weight="700" letter-spacing="0.18em">LIVE ROOM</text>
+  <text x="807" y="208" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="40" font-weight="700">design-system</text>
+  <text x="807" y="246" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="24">7F3A9Q</text>
+  <rect x="807" y="286" width="262" height="112" rx="18" fill="url(#paint2_linear)"/>
+  <text x="836" y="326" fill="#F59E0B" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="16" font-weight="700" letter-spacing="0.16em">SUMMARY</text>
+  <text x="836" y="362" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">3 agents shipping</text>
+  <text x="836" y="394" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="21">Live feed, room code,</text>
+  <text x="836" y="420" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="21">and manager BLUF.</text>
+  <rect x="807" y="429" width="262" height="32" rx="16" fill="#0D141F"/>
+  <circle cx="834" cy="445" r="6" fill="#34D399"/>
+  <text x="850" y="452" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700">summary ready</text>
+  <rect x="104" y="564" width="308" height="2" fill="url(#paint3_linear)"/>
+  <defs>
+    <filter id="filter0_d" x="740" y="82" width="396" height="474" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="14"/>
+      <feGaussianBlur stdDeviation="16"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.0196078 0 0 0 0 0.0352941 0 0 0 0 0.0666667 0 0 0 0.45 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_2"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_2" result="shape"/>
+    </filter>
+    <radialGradient id="paint0_radial" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(235 92) rotate(57.2648) scale(382.883 574.119)">
+      <stop stop-color="#F59E0B" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#F59E0B" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="paint1_radial" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1042 526) rotate(-147.839) scale(363.437 275.698)">
+      <stop stop-color="#1876D2" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#1876D2" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="paint2_linear" x1="807" y1="286" x2="1069" y2="398" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#121A29"/>
+      <stop offset="1" stop-color="#0A0F18"/>
+    </linearGradient>
+    <linearGradient id="paint3_linear" x1="104" y1="565" x2="412" y2="565" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#F59E0B" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+</svg>
