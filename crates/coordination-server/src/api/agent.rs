@@ -546,6 +546,18 @@ impl AgentLoop {
                     eprintln!(
                         "[room_summary_agent] steer failed for room {room_id}: {error}"
                     );
+                    // Drop the stale turn id so the next event starts a fresh
+                    // turn instead of trying to steer a turn the server has
+                    // already forgotten.
+                    if let Some(room) = self.rooms.get_mut(room_id) {
+                        room.active_turn = None;
+                    }
+                    broadcast_status(
+                        self.db.as_ref(),
+                        &self.summary_events,
+                        room_id,
+                        SummaryStatus::Error,
+                    );
                 }
             }
         } else {

@@ -87,11 +87,12 @@ pub async fn ingest_hook_turn(
         event: stored.clone(),
     });
 
-    state
-        .agent
-        .enqueue(room_id.clone(), stored)
-        .await
-        .map_err(internal_error)?;
+    // Best-effort: the event is already persisted and broadcast, so a dead
+    // summarizer should not block ingest. Reporters can keep posting events
+    // and the next deploy / agent restart will pick them up.
+    if let Err(error) = state.agent.enqueue(room_id.clone(), stored).await {
+        eprintln!("[ingest] failed to enqueue event for room {room_id}: {error}");
+    }
 
     Ok((
         StatusCode::ACCEPTED,
