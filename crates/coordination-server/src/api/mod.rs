@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -14,6 +14,7 @@ use reporter_protocol::{
     CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse, Room,
     RoomMetadataResponse, RoomSnapshot, StoredHookEvent,
 };
+use serde::Deserialize;
 use tokio::sync::broadcast;
 
 use crate::store::Db;
@@ -25,6 +26,17 @@ pub use sse::stream_feed;
 
 const DEFAULT_PUBLIC_API_URL: &str = "https://supermanager.fly.dev";
 const DEFAULT_PUBLIC_APP_URL: &str = "https://supermanager.dev";
+const FEED_PAGE_DEFAULT: i64 = 10;
+const FEED_PAGE_MAX: i64 = 100;
+
+#[derive(Debug, Deserialize)]
+pub struct FeedQuery {
+    #[serde(default)]
+    pub limit: Option<i64>,
+    /// Exclusive upper bound: return events with `seq < before`.
+    #[serde(default)]
+    pub before: Option<i64>,
+}
 
 // ── Shared state ────────────────────────────────────────────
 
@@ -117,10 +129,14 @@ pub async fn get_room(
 pub async fn get_feed(
     State(state): State<AppState>,
     Path(room_id): Path<String>,
+    Query(q): Query<FeedQuery>,
 ) -> Result<Json<FeedResponse>, (StatusCode, String)> {
     let room = resolve_room(&state, &room_id)?;
-    let room_id = room.room_id;
-    let events = state.db.get_hook_events(&room_id).map_err(internal_error)?;
+    let limit = q.limit.unwrap_or(FEED_PAGE_DEFAULT).clamp(1, FEED_PAGE_MAX);
+    let events = state
+        .db
+        .get_hook_events(&room.room_id, q.before, None, Some(limit))
+        .map_err(internal_error)?;
     Ok(Json(FeedResponse { events }))
 }
 

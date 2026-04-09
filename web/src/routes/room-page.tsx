@@ -32,13 +32,12 @@ export function RoomPage() {
   const [summaryStatus, setSummaryStatus] = useState<SummaryStatus>("idle");
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("connecting");
-  const [expanded, setExpanded] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
 
-  const visibleEvents = expanded ? events : events.slice(0, FEED_LIMIT);
-  const hiddenEvents = Math.max(events.length - FEED_LIMIT, 0);
   const canonicalRoomId = room?.room_id || roomId;
   const joinCommand = buildJoinCommand(canonicalRoomId);
 
@@ -88,7 +87,7 @@ export function RoomPage() {
 
     Promise.all([
       api.getRoom(roomId),
-      api.getFeed(roomId),
+      api.getFeed(roomId, { limit: FEED_LIMIT }),
       api.getSummary(roomId),
     ])
       .then(([nextRoom, feed, nextSnapshot]) => {
@@ -99,6 +98,7 @@ export function RoomPage() {
         startTransition(() => {
           setRoom(nextRoom);
           setEvents(feed.events);
+          setHasMore(feed.events.length === FEED_LIMIT);
           setSnapshot(nextSnapshot);
           setSummaryStatus("ready");
         });
@@ -238,8 +238,8 @@ export function RoomPage() {
           </div>
 
           <div className="feed-list">
-            {visibleEvents.length > 0 ? (
-              visibleEvents.map((event) => (
+            {events.length > 0 ? (
+              events.map((event) => (
                 <article className="feed-item" key={event.event_id}>
                   <div className="feed-item__head">
                     <strong>{event.employee_name}</strong>
@@ -260,13 +260,28 @@ export function RoomPage() {
             )}
           </div>
 
-          {hiddenEvents > 0 && (
+          {hasMore && (
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setExpanded((current) => !current)}
+              disabled={loadingMore}
+              onClick={async () => {
+                const oldest = events[events.length - 1];
+                if (!oldest) return;
+                setLoadingMore(true);
+                try {
+                  const page = await api.getFeed(roomId, {
+                    limit: FEED_LIMIT,
+                    before: oldest.seq,
+                  });
+                  setEvents((current) => [...current, ...page.events]);
+                  setHasMore(page.events.length === FEED_LIMIT);
+                } finally {
+                  setLoadingMore(false);
+                }
+              }}
             >
-              {expanded ? "Show less" : `Show ${hiddenEvents} more`}
+              {loadingMore ? "Loading…" : `Show ${FEED_LIMIT} more`}
             </button>
           )}
         </div>

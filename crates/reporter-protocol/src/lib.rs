@@ -78,6 +78,8 @@ pub struct HookTurnReport {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../web/src/generated/")]
 pub struct StoredHookEvent {
+    #[ts(type = "number")]
+    pub seq: i64,
     #[ts(type = "string")]
     pub event_id: Uuid,
     pub received_at: String,

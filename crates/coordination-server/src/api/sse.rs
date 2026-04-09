@@ -22,13 +22,17 @@ pub async fn stream_feed(
     let room = resolve_room(&state, &room_id)?;
     let room_id = room.room_id;
 
-    let replay = headers
+    let mut replay = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
-        .map(|event_id| state.db.get_hook_events_after(&room_id, event_id))
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(|seq| state.db.get_hook_events(&room_id, None, Some(seq), None))
         .transpose()
         .map_err(super::internal_error)?
         .unwrap_or_default();
+    // `get_hook_events` returns newest-first; reverse so replay fires in
+    // chronological (oldest → newest) order, matching insertion order.
+    replay.reverse();
 
     let mut hook_rx = state.hook_events.subscribe();
     let mut summary_rx = state.summary_events.subscribe();
@@ -97,6 +101,6 @@ fn hook_event(event: &StoredHookEvent) -> Event {
     let data = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_owned());
     Event::default()
         .event("hook_event")
-        .id(event.event_id.to_string())
+        .id(event.seq.to_string())
         .data(data)
 }

@@ -45,8 +45,15 @@ export const api = {
   getRoom(roomId: string) {
     return requestJson<RoomMetadataResponse>(`/r/${encodeURIComponent(roomId)}`);
   },
-  getFeed(roomId: string) {
-    return requestJson<FeedResponse>(`/r/${encodeURIComponent(roomId)}/feed`);
+  getFeed(roomId: string, opts: { limit?: number; before?: number } = {}) {
+    const params = new URLSearchParams();
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.before != null) params.set("before", String(opts.before));
+    const qs = params.toString();
+    const suffix = qs ? `?${qs}` : "";
+    return requestJson<FeedResponse>(
+      `/r/${encodeURIComponent(roomId)}/feed${suffix}`,
+    );
   },
   getSummary(roomId: string) {
     return requestJson<RoomSnapshot>(`/r/${encodeURIComponent(roomId)}/summary`);

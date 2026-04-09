@@ -42,7 +42,8 @@ impl Db {
             );
 
             CREATE TABLE IF NOT EXISTS hook_events (
-                event_id       TEXT PRIMARY KEY,
+                seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id       TEXT NOT NULL UNIQUE,
                 room_id        TEXT NOT NULL REFERENCES rooms(room_id),
                 employee_name  TEXT NOT NULL,
                 client         TEXT NOT NULL,
@@ -51,8 +52,8 @@ impl Db {
                 payload_json   TEXT,
                 received_at    TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_hook_events_room_received
-                ON hook_events(room_id, received_at);",
+            CREATE INDEX IF NOT EXISTS idx_hook_events_room_seq
+                ON hook_events(room_id, seq);",
         )?;
 
         if table_has_column(&conn, "rooms", "secret")? {
@@ -69,6 +70,37 @@ impl Db {
             .unwrap_or(false);
         if !has_payload_json {
             conn.execute_batch("ALTER TABLE hook_events ADD COLUMN payload_json TEXT;")?;
+        }
+
+        let has_seq: bool = conn
+            .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='hook_events'")?
+            .query_row([], |row| row.get::<_, String>(0))
+            .map(|sql| sql.contains("seq INTEGER PRIMARY KEY"))
+            .unwrap_or(false);
+        if !has_seq {
+            conn.execute_batch(
+                "CREATE TABLE hook_events_new (
+                    seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id       TEXT NOT NULL UNIQUE,
+                    room_id        TEXT NOT NULL REFERENCES rooms(room_id),
+                    employee_name  TEXT NOT NULL,
+                    client         TEXT NOT NULL,
+                    repo_root      TEXT NOT NULL,
+                    branch         TEXT,
+                    payload_json   TEXT,
+                    received_at    TEXT NOT NULL
+                 );
+                 INSERT INTO hook_events_new
+                     (event_id, room_id, employee_name, client, repo_root, branch, payload_json, received_at)
+                 SELECT event_id, room_id, employee_name, client, repo_root, branch, payload_json, received_at
+                 FROM hook_events
+                 ORDER BY received_at ASC;
+                 DROP INDEX IF EXISTS idx_hook_events_room_received;
+                 DROP TABLE hook_events;
+                 ALTER TABLE hook_events_new RENAME TO hook_events;
+                 CREATE INDEX IF NOT EXISTS idx_hook_events_room_seq
+                     ON hook_events(room_id, seq);",
+            )?;
         }
 
         conn.execute_batch(
@@ -173,7 +205,10 @@ impl Db {
         )
         .with_context(|| format!("failed to insert hook event into room {room_id}"))?;
 
+        let seq = conn.last_insert_rowid();
+
         Ok(StoredHookEvent {
+            seq,
             event_id,
             received_at,
             employee_name: report.employee_name.clone(),
@@ -184,50 +219,33 @@ impl Db {
         })
     }
 
-    pub fn get_hook_events(&self, room_id: &str) -> Result<Vec<StoredHookEvent>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT event_id, employee_name, client, repo_root, branch, payload_json, received_at
-             FROM hook_events WHERE room_id = ?1
-             ORDER BY received_at DESC",
-        )?;
-
-        let events = stmt
-            .query_map(params![room_id], map_stored_hook_event)?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(events)
-    }
-
-    pub fn get_hook_events_after(
+    /// Fetch hook events for a room, ordered newest-first (seq DESC).
+    ///
+    /// `before`/`after` are exclusive seq bounds; pass `None` to leave that
+    /// side unbounded. `limit` caps the returned page; `None` = unbounded.
+    pub fn get_hook_events(
         &self,
         room_id: &str,
-        after_event_id: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+        limit: Option<i64>,
     ) -> Result<Vec<StoredHookEvent>> {
         let conn = self.conn.lock().unwrap();
-
-        let anchor_time: Option<String> = conn
-            .query_row(
-                "SELECT received_at FROM hook_events WHERE event_id = ?1 AND room_id = ?2",
-                params![after_event_id, room_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        let anchor_time = match anchor_time {
-            Some(t) => t,
-            None => return Ok(Vec::new()),
-        };
-
         let mut stmt = conn.prepare(
-            "SELECT event_id, employee_name, client, repo_root, branch, payload_json, received_at
+            "SELECT seq, event_id, employee_name, client, repo_root, branch, payload_json, received_at
              FROM hook_events
-             WHERE room_id = ?1 AND received_at > ?2
-             ORDER BY received_at ASC",
+             WHERE room_id = ?1
+               AND (?2 IS NULL OR seq < ?2)
+               AND (?3 IS NULL OR seq > ?3)
+             ORDER BY seq DESC
+             LIMIT ?4",
         )?;
 
         let events = stmt
-            .query_map(params![room_id, anchor_time], map_stored_hook_event)?
+            .query_map(
+                params![room_id, before, after, limit.unwrap_or(-1)],
+                map_stored_hook_event,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(events)
@@ -324,19 +342,20 @@ impl Db {
 // ── Helpers ─────────────────────────────────────────────────
 
 fn map_stored_hook_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredHookEvent> {
-    let event_id_str: String = row.get(0)?;
+    let event_id_str: String = row.get(1)?;
     let payload = row
-        .get::<_, Option<String>>(5)?
+        .get::<_, Option<String>>(6)?
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
         .unwrap_or(Value::Null);
 
     Ok(StoredHookEvent {
+        seq: row.get(0)?,
         event_id: Uuid::parse_str(&event_id_str).unwrap_or_else(|_| Uuid::nil()),
-        received_at: row.get(6)?,
-        employee_name: row.get(1)?,
-        client: row.get(2)?,
-        repo_root: row.get(3)?,
-        branch: row.get(4)?,
+        received_at: row.get(7)?,
+        employee_name: row.get(2)?,
+        client: row.get(3)?,
+        repo_root: row.get(4)?,
+        branch: row.get(5)?,
         payload,
     })
 }

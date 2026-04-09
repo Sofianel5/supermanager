@@ -815,6 +815,7 @@ mod tests {
     #[test]
     fn format_event_includes_snapshot_fields() {
         let event = StoredHookEvent {
+            seq: 0,
             event_id: uuid::Uuid::nil(),
             received_at: "2026-04-03T12:00:00Z".to_owned(),
             employee_name: "Dana".to_owned(),
