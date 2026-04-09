@@ -449,6 +449,7 @@ pre {
 
 .room-info-dropdown__trigger {
   position: relative;
+  z-index: 5;
   width: 100%;
   justify-content: center;
   text-align: center;
@@ -481,6 +482,12 @@ pre {
 
 .room-info-dropdown[open] .room-info-dropdown__trigger::after {
   transform: translateY(-50%) rotate(45deg);
+}
+
+.room-info-dropdown__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
 }
 
 .room-info-dropdown__panel {

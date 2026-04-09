@@ -154,12 +154,9 @@ export function RoomPage() {
     }, 1800);
   }
 
-  function dismissRoomInfo(target: EventTarget | null) {
+  function closeRoomInfo() {
     const dropdown = roomInfoDropdownRef.current;
     if (!dropdown?.open) {
-      return;
-    }
-    if (target instanceof Node && dropdown.contains(target)) {
       return;
     }
     dropdown.open = false;
@@ -179,10 +176,7 @@ export function RoomPage() {
   }
 
   return (
-    <main
-      className="room-page"
-      onPointerDownCapture={(event) => dismissRoomInfo(event.target)}
-    >
+    <main className="room-page">
       <header className="room-header">
         <div>
           <div className="section-label">supermanager</div>
@@ -200,6 +194,11 @@ export function RoomPage() {
           </Link>
           <details className="room-info-dropdown" ref={roomInfoDropdownRef}>
             <summary className="room-info-dropdown__trigger">Room info</summary>
+            <div
+              aria-hidden="true"
+              className="room-info-dropdown__backdrop"
+              onClick={closeRoomInfo}
+            />
             <div className="room-section room-info-dropdown__panel">
               <CopyPanel
                 copiedValue={copiedValue}
