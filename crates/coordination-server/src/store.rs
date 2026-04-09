@@ -51,9 +51,7 @@ impl Db {
                 branch         TEXT,
                 payload_json   TEXT,
                 received_at    TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_hook_events_room_seq
-                ON hook_events(room_id, seq);",
+            );",
         )?;
 
         if table_has_column(&conn, "rooms", "secret")? {
@@ -103,8 +101,11 @@ impl Db {
             )?;
         }
 
+        // Always ensure the seq index exists (covers both fresh DBs and migrated DBs).
         conn.execute_batch(
-            "DROP INDEX IF EXISTS idx_tasks_room;
+            "CREATE INDEX IF NOT EXISTS idx_hook_events_room_seq
+                 ON hook_events(room_id, seq);
+             DROP INDEX IF EXISTS idx_tasks_room;
              DROP TABLE IF EXISTS tasks;",
         )?;
 
