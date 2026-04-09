@@ -2,6 +2,7 @@ import {
   startTransition,
   useEffect,
   useEffectEvent,
+  useRef,
   useState,
 } from "react";
 import ReactMarkdown from "react-markdown";
@@ -24,6 +25,7 @@ type ConnectionStatus = "connecting" | "live" | "reconnecting";
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
+  const roomInfoDropdownRef = useRef<HTMLDetailsElement | null>(null);
   const [room, setRoom] = useState<RoomMetadataResponse | null>(null);
   const [events, setEvents] = useState<StoredHookEvent[]>([]);
   const [snapshot, setSnapshot] = useState<RoomSnapshot>(() => emptyRoomSnapshot());
@@ -152,6 +154,17 @@ export function RoomPage() {
     }, 1800);
   }
 
+  function dismissRoomInfo(target: EventTarget | null) {
+    const dropdown = roomInfoDropdownRef.current;
+    if (!dropdown?.open) {
+      return;
+    }
+    if (target instanceof Node && dropdown.contains(target)) {
+      return;
+    }
+    dropdown.open = false;
+  }
+
   if (error) {
     return (
       <main className="room-page room-page--error">
@@ -166,7 +179,10 @@ export function RoomPage() {
   }
 
   return (
-    <main className="room-page">
+    <main
+      className="room-page"
+      onPointerDownCapture={(event) => dismissRoomInfo(event.target)}
+    >
       <header className="room-header">
         <div>
           <div className="section-label">supermanager</div>
@@ -182,7 +198,7 @@ export function RoomPage() {
           <Link className="inline-link" to="/">
             Create another room
           </Link>
-          <details className="room-info-dropdown">
+          <details className="room-info-dropdown" ref={roomInfoDropdownRef}>
             <summary className="room-info-dropdown__trigger">Room info</summary>
             <div className="room-section room-info-dropdown__panel">
               <CopyPanel
@@ -190,12 +206,6 @@ export function RoomPage() {
                 label="Install CLI"
                 onCopy={copy}
                 value="curl -fsSL https://supermanager.dev/install.sh | sh"
-              />
-              <CopyPanel
-                copiedValue={copiedValue}
-                label="Room code"
-                onCopy={copy}
-                value={canonicalRoomId}
               />
               <CopyPanel
                 copiedValue={copiedValue}
