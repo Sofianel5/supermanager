@@ -189,9 +189,6 @@ export function RoomPage() {
           </p>
         </div>
         <div className="room-header__actions">
-          <Link className="inline-link" to="/">
-            Create another room
-          </Link>
           <details className="room-info-dropdown" ref={roomInfoDropdownRef}>
             <summary className="room-info-dropdown__trigger">Room info</summary>
             <div

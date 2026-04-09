@@ -296,15 +296,9 @@ pre {
 }
 
 .room-header__actions {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
   width: min(19rem, 100%);
 }
 
-.room-header__actions > .inline-link,
 .room-info-dropdown {
   width: 100%;
 }
