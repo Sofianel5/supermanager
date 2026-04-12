@@ -48,30 +48,33 @@ impl Db {
     }
 
     pub async fn create_room(&self, name: &str) -> Result<Room> {
-        let created_at = now_rfc3339();
-
         for _ in 0..10 {
-            let room = Room {
-                room_id: {
-                    let mut rng = rand::rng();
-                    generate_room_code(&mut rng)
-                },
-                name: name.to_owned(),
-                created_at: created_at.clone(),
+            let room_id = {
+                let mut rng = rand::rng();
+                generate_room_code(&mut rng)
             };
 
             let insert = sqlx::query(
-                "INSERT INTO rooms (room_id, name, created_at)
-                 VALUES ($1, $2, $3)",
+                "INSERT INTO rooms (room_id, name)
+                 VALUES ($1, $2)
+                 RETURNING created_at",
             )
-            .bind(&room.room_id)
-            .bind(&room.name)
-            .bind(&room.created_at)
-            .execute(&self.pool)
+            .bind(&room_id)
+            .bind(name)
+            .fetch_one(&self.pool)
             .await;
 
             match insert {
-                Ok(_) => return Ok(room),
+                Ok(row) => {
+                    let created_at: OffsetDateTime = row
+                        .try_get("created_at")
+                        .context("failed to decode room created_at")?;
+                    return Ok(Room {
+                        room_id,
+                        name: name.to_owned(),
+                        created_at: format_rfc3339(created_at),
+                    });
+                }
                 Err(error) if is_unique_violation(&error) => continue,
                 Err(error) => {
                     return Err(error).context("failed to insert room into PostgreSQL");
@@ -103,8 +106,7 @@ impl Db {
     ) -> Result<StoredHookEvent> {
         let room_id = normalize_room_id(room_id);
         let event_id = Uuid::new_v4();
-        let received_at = now_rfc3339();
-        let seq: i64 = sqlx::query_scalar(
+        let row = sqlx::query(
             "INSERT INTO hook_events (
                 event_id,
                 room_id,
@@ -112,11 +114,10 @@ impl Db {
                 client,
                 repo_root,
                 branch,
-                payload_json,
-                received_at
+                payload_json
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             RETURNING seq",
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING seq, received_at",
         )
         .bind(event_id)
         .bind(&room_id)
@@ -125,15 +126,20 @@ impl Db {
         .bind(&report.repo_root)
         .bind(report.branch.as_deref())
         .bind(Json(report.payload.clone()))
-        .bind(&received_at)
         .fetch_one(&self.pool)
         .await
         .with_context(|| format!("failed to insert hook event into room {room_id}"))?;
+        let seq: i64 = row
+            .try_get("seq")
+            .context("failed to decode hook event seq")?;
+        let received_at: OffsetDateTime = row
+            .try_get("received_at")
+            .context("failed to decode hook event received_at")?;
 
         Ok(StoredHookEvent {
             seq,
             event_id,
-            received_at,
+            received_at: format_rfc3339(received_at),
             employee_name: report.employee_name.clone(),
             client: report.client.clone(),
             repo_root: report.repo_root.clone(),
@@ -235,7 +241,7 @@ impl Db {
     pub async fn set_summary_status(&self, room_id: &str, status: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO summaries (room_id, content_json, thread_id, status, updated_at)
-             VALUES ($1, $2, NULL, $3, $4)
+             VALUES ($1, $2, NULL, $3, NOW())
              ON CONFLICT(room_id) DO UPDATE SET
                 status = EXCLUDED.status,
                 updated_at = EXCLUDED.updated_at",
@@ -243,7 +249,6 @@ impl Db {
         .bind(normalize_room_id(room_id))
         .bind(Json(RoomSnapshot::default()))
         .bind(status)
-        .bind(now_rfc3339())
         .execute(&self.pool)
         .await
         .with_context(|| format!("failed to persist summary status for room {room_id}"))?;
@@ -253,7 +258,7 @@ impl Db {
     pub async fn set_summary(&self, room_id: &str, content: &RoomSnapshot) -> Result<()> {
         sqlx::query(
             "INSERT INTO summaries (room_id, content_json, thread_id, status, updated_at)
-             VALUES ($1, $2, NULL, 'ready', $3)
+             VALUES ($1, $2, NULL, 'ready', NOW())
              ON CONFLICT(room_id) DO UPDATE SET
                 content_json = EXCLUDED.content_json,
                 status = 'ready',
@@ -261,7 +266,6 @@ impl Db {
         )
         .bind(normalize_room_id(room_id))
         .bind(Json(content.clone()))
-        .bind(now_rfc3339())
         .execute(&self.pool)
         .await
         .with_context(|| format!("failed to persist summary for room {room_id}"))?;
@@ -272,7 +276,7 @@ impl Db {
     pub async fn set_summary_thread_id(&self, room_id: &str, thread_id: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO summaries (room_id, content_json, thread_id, status, updated_at)
-             VALUES ($1, $2, $3, 'ready', $4)
+             VALUES ($1, $2, $3, 'ready', NOW())
              ON CONFLICT(room_id) DO UPDATE SET
                 thread_id = EXCLUDED.thread_id,
                 updated_at = EXCLUDED.updated_at",
@@ -280,7 +284,6 @@ impl Db {
         .bind(normalize_room_id(room_id))
         .bind(Json(RoomSnapshot::default()))
         .bind(thread_id)
-        .bind(now_rfc3339())
         .execute(&self.pool)
         .await
         .with_context(|| format!("failed to persist summary thread id for room {room_id}"))?;
@@ -297,7 +300,7 @@ fn map_room(row: PgRow) -> Result<Room> {
     Ok(Room {
         room_id: row.try_get("room_id")?,
         name: row.try_get("name")?,
-        created_at: row.try_get("created_at")?,
+        created_at: format_rfc3339(row.try_get("created_at")?),
     })
 }
 
@@ -305,7 +308,7 @@ fn map_stored_hook_event(row: PgRow) -> Result<StoredHookEvent> {
     Ok(StoredHookEvent {
         seq: row.try_get("seq")?,
         event_id: row.try_get("event_id")?,
-        received_at: row.try_get("received_at")?,
+        received_at: format_rfc3339(row.try_get("received_at")?),
         employee_name: row.try_get("employee_name")?,
         client: row.try_get("client")?,
         repo_root: row.try_get("repo_root")?,
@@ -332,7 +335,11 @@ fn is_unique_violation(error: &sqlx::Error) -> bool {
 }
 
 pub fn now_rfc3339() -> String {
-    OffsetDateTime::now_utc().format(&Rfc3339).unwrap()
+    format_rfc3339(OffsetDateTime::now_utc())
+}
+
+fn format_rfc3339(value: OffsetDateTime) -> String {
+    value.format(&Rfc3339).unwrap()
 }
 
 #[cfg(test)]
