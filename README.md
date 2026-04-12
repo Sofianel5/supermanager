@@ -191,7 +191,6 @@ This repo now deploys the backend as:
 Files involved:
 
 - `.github/workflows/deploy-server.yml`
-- `.github/workflows/test-backend.yml`
 - `infra/aws/**`
 
 ### Provision infrastructure
