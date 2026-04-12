@@ -22,6 +22,7 @@ concurrency:
 jobs:
   deploy:
     name: Build and deploy to ECS
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -32,8 +33,6 @@ jobs:
       AWS_ECR_REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
       AWS_ECS_CLUSTER: ${{ vars.AWS_ECS_CLUSTER }}
       AWS_ECS_SERVICE: ${{ vars.AWS_ECS_SERVICE }}
-      AWS_ECS_TASK_FAMILY: ${{ vars.AWS_ECS_TASK_FAMILY }}
-      AWS_ECS_CONTAINER_NAME: ${{ vars.AWS_ECS_CONTAINER_NAME }}
     steps:
       - name: Validate required configuration
         run: |
@@ -43,9 +42,7 @@ jobs:
             AWS_DEPLOY_ROLE_ARN \
             AWS_ECR_REPOSITORY \
             AWS_ECS_CLUSTER \
-            AWS_ECS_SERVICE \
-            AWS_ECS_TASK_FAMILY \
-            AWS_ECS_CONTAINER_NAME
+            AWS_ECS_SERVICE
           do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required GitHub Actions variable ${name}"
@@ -68,46 +65,21 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push image
-        id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
-          image_uri="${ECR_REGISTRY}/${AWS_ECR_REPOSITORY}:${IMAGE_TAG}"
+          image_uri="${ECR_REGISTRY}/${AWS_ECR_REPOSITORY}:latest"
           docker build --tag "${image_uri}" .
           docker push "${image_uri}"
-          echo "image_uri=${image_uri}" >> "${GITHUB_OUTPUT}"
 
-      - name: Fetch current task definition
+      - name: Force ECS deployment
         run: |
           set -euo pipefail
-          aws ecs describe-task-definition \
-            --task-definition "${AWS_ECS_TASK_FAMILY}" \
-            --query taskDefinition \
-            | jq 'del(
-                .taskDefinitionArn,
-                .revision,
-                .status,
-                .requiresAttributes,
-                .compatibilities,
-                .registeredAt,
-                .registeredBy
-              )' \
-            > task-definition.json
-
-      - name: Render task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.AWS_ECS_CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image_uri }}
-
-      - name: Deploy task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.AWS_ECS_SERVICE }}
-          cluster: ${{ env.AWS_ECS_CLUSTER }}
-          wait-for-service-stability: true
+          aws ecs update-service \
+            --cluster "${AWS_ECS_CLUSTER}" \
+            --service "${AWS_ECS_SERVICE}" \
+            --force-new-deployment >/dev/null
+          aws ecs wait services-stable \
+            --cluster "${AWS_ECS_CLUSTER}" \
+            --services "${AWS_ECS_SERVICE}"

@@ -425,7 +425,7 @@ resource "aws_ecs_task_definition" "server" {
   container_definitions = jsonencode([
     {
       name      = var.container_name
-      image     = "${aws_ecr_repository.server.repository_url}:bootstrap"
+      image     = "${aws_ecr_repository.server.repository_url}:latest"
       essential = true
       portMappings = [
         {

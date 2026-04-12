@@ -35,14 +35,12 @@ terraform apply
 
 ## GitHub Actions variables
 
-After apply, set these repository variables from the Terraform outputs and resource names:
+After apply, set these repository variables from the Terraform outputs:
 
-- `AWS_REGION`
-- `AWS_DEPLOY_ROLE_ARN`
-- `AWS_ECR_REPOSITORY`
-- `AWS_ECS_CLUSTER`
-- `AWS_ECS_SERVICE`
-- `AWS_ECS_TASK_FAMILY`
-- `AWS_ECS_CONTAINER_NAME`
+- `AWS_REGION` from `aws_region`
+- `AWS_DEPLOY_ROLE_ARN` from `github_actions_role_arn`
+- `AWS_ECR_REPOSITORY` from `ecr_repository_name`
+- `AWS_ECS_CLUSTER` from `ecs_cluster_name`
+- `AWS_ECS_SERVICE` from `ecs_service_name`
 
-The deploy workflow assumes the ECS service already exists and rotates it to the newly-pushed ECR image.
+The deploy workflow assumes the ECS service already exists, runs only from `master`, pushes the backend image to ECR as `:latest`, and forces a new ECS deployment so the service pulls that tag.
