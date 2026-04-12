@@ -163,6 +163,12 @@ impl RoomSummaryAgent {
             .await
             .map_err(|_| anyhow!("room summary agent is not running"))
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_stub() -> Self {
+        let (command_tx, _command_rx) = mpsc::channel(1);
+        Self { command_tx }
+    }
 }
 
 enum AgentCommand {

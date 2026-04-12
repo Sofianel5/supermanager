@@ -204,6 +204,11 @@ fn service_unavailable_error(error: anyhow::Error) -> (StatusCode, String) {
 mod tests {
     use super::*;
 
+    use std::sync::Arc;
+
+    use crate::store::test_support::TestDb;
+    use axum::body::to_bytes;
+
     #[test]
     fn cli_join_command_includes_app_url() {
         let command = cli_join_command(
@@ -234,5 +239,74 @@ mod tests {
         let url = dashboard_url("https://app.example.com/", "bright-fox-1");
 
         assert_eq!(url, "https://app.example.com/r/bright-fox-1");
+    }
+
+    #[tokio::test]
+    async fn health_returns_ok_when_database_is_available() {
+        let Some(test_db) = TestDb::new().await else {
+            eprintln!("skipping PostgreSQL test: TEST_DATABASE_URL is not set");
+            return;
+        };
+
+        let (hook_events, _) = broadcast::channel(8);
+        let (summary_events, _) = broadcast::channel(8);
+        let state = AppState {
+            db: Arc::new(test_db.db.clone()),
+            agent: RoomSummaryAgent::test_stub(),
+            hook_events,
+            summary_events,
+            public_api_url: DEFAULT_PUBLIC_API_URL.to_owned(),
+            public_app_url: DEFAULT_PUBLIC_APP_URL.to_owned(),
+        };
+
+        let status = health(State(state)).await.unwrap();
+
+        assert_eq!(status, "ok");
+        test_db.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn create_room_returns_created_payload() {
+        let Some(test_db) = TestDb::new().await else {
+            eprintln!("skipping PostgreSQL test: TEST_DATABASE_URL is not set");
+            return;
+        };
+
+        let (hook_events, _) = broadcast::channel(8);
+        let (summary_events, _) = broadcast::channel(8);
+        let state = AppState {
+            db: Arc::new(test_db.db.clone()),
+            agent: RoomSummaryAgent::test_stub(),
+            hook_events,
+            summary_events,
+            public_api_url: DEFAULT_PUBLIC_API_URL.to_owned(),
+            public_app_url: DEFAULT_PUBLIC_APP_URL.to_owned(),
+        };
+
+        let response = create_room(
+            State(state),
+            Json(CreateRoomRequest {
+                name: "My Team".to_owned(),
+            }),
+        )
+        .await
+        .unwrap()
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: CreateRoomResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            payload.dashboard_url,
+            format!("{DEFAULT_PUBLIC_APP_URL}/r/{}", payload.room_id)
+        );
+        assert_eq!(
+            payload.join_command,
+            format!("supermanager join {}", payload.room_id)
+        );
+        assert_eq!(payload.room_id, payload.room_id.to_ascii_uppercase());
+
+        test_db.cleanup().await;
     }
 }

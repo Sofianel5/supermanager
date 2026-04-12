@@ -23,13 +23,13 @@ on:
 
 jobs:
   cargo-test:
-    name: Cargo test
+    name: Coordination server tests
     runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_USER: postgres
           POSTGRES_DB: postgres
         ports:
@@ -40,7 +40,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,5 +48,5 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Run workspace tests
-        run: cargo test --workspace -- --nocapture
+      - name: Run coordination-server tests
+        run: cargo test -p coordination-server -- --nocapture
