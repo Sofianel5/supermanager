@@ -1,0 +1,39 @@
+name: Check CLI Version
+
+on:
+  pull_request:
+    paths:
+      - crates/supermanager-cli/**
+      - scripts/package-release.sh
+
+jobs:
+  check-version:
+    name: Require CLI version bump
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare CLI versions
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${BASE_REF}"
+
+          base_version="$(git show "origin/${BASE_REF}:crates/supermanager-cli/Cargo.toml" | python -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["package"]["version"])')"
+          head_version="$(python - <<'PY'
+          import tomllib
+
+          with open("crates/supermanager-cli/Cargo.toml", "rb") as handle:
+              print(tomllib.load(handle)["package"]["version"])
+          PY
+          )"
+
+          if [ "${base_version}" = "${head_version}" ]; then
+            echo "::error::CLI release inputs changed, but crates/supermanager-cli/Cargo.toml is still ${head_version}. Bump the CLI version before merging."
+            exit 1
+          fi
+
+          echo "CLI version changed: ${base_version} -> ${head_version}"

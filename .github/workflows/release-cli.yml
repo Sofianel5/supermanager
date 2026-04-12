@@ -2,15 +2,96 @@ name: Release CLI
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - master
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  prepare:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.scope.outputs.should_release }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: version
+        name: Read CLI version
+        run: |
+          set -euo pipefail
+          version="$(python - <<'PY'
+          import tomllib
+
+          with open("crates/supermanager-cli/Cargo.toml", "rb") as handle:
+              print(tomllib.load(handle)["package"]["version"])
+          PY
+          )"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - id: scope
+        name: Determine whether this push should release the CLI
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base_ref="${EVENT_BEFORE}"
+          if [ -z "${base_ref}" ] || [ "${base_ref}" = "0000000000000000000000000000000000000000" ]; then
+            base_ref="$(git rev-parse "${GITHUB_SHA}^")"
+          fi
+
+          changed_files="$(git diff --name-only "${base_ref}" "${GITHUB_SHA}" -- crates/supermanager-cli scripts/package-release.sh || true)"
+          if [ -z "${changed_files}" ]; then
+            echo "::notice::No CLI release inputs changed on this push."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base_version="$(git show "${base_ref}:crates/supermanager-cli/Cargo.toml" | python -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["package"]["version"])')"
+          if [ "${base_version}" = "${HEAD_VERSION}" ]; then
+            echo "::error::CLI release inputs changed, but crates/supermanager-cli/Cargo.toml stayed at ${HEAD_VERSION}. Bump the CLI version before merging."
+            exit 1
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure release version is available
+        if: steps.scope.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>/dev/null)"; then
+            target_commitish="$(printf '%s' "${release_json}" | python -c 'import json, sys; print(json.load(sys.stdin).get("target_commitish", ""))')"
+            if [ "${target_commitish}" != "${GITHUB_SHA}" ]; then
+              echo "::error::GitHub release ${RELEASE_TAG} already exists for ${target_commitish}. Bump crates/supermanager-cli/Cargo.toml before merging another CLI change."
+              exit 1
+            fi
+
+            echo "::notice::Reusing existing release ${RELEASE_TAG} for ${GITHUB_SHA}."
+          fi
+
   build:
     name: Build ${{ matrix.target }}
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -44,7 +125,10 @@ jobs:
 
   publish:
     name: Publish release assets
-    needs: build
+    needs:
+      - prepare
+      - build
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -61,7 +145,11 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ needs.prepare.outputs.tag }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             dist/supermanager-*.tar.gz
             dist/supermanager-checksums.txt
