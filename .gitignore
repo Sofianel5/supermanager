@@ -12,3 +12,8 @@
 AGENTS.md
 CLAUDE.md
 web/dist/
+infra/aws/local.auto.tfvars
+infra/aws/.terraform/
+infra/aws/terraform.tfstate
+infra/aws/terraform.tfstate.*
+infra/aws/.terraform.tfstate.lock.info

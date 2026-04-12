@@ -2,13 +2,7 @@ mod agent;
 mod sse;
 pub mod summarize;
 
-use std::{
-    fs,
-    fs::OpenOptions,
-    io::{ErrorKind, Write},
-    path::{Path as FsPath, PathBuf},
-    sync::Arc,
-};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use axum::{
@@ -75,7 +69,6 @@ impl StoragePaths {
         for path in [&self.data_dir, &self.codex_home, &self.rooms_dir] {
             fs::create_dir_all(path)
                 .with_context(|| format!("failed to create storage dir {}", path.display()))?;
-            verify_dir_writable(path)?;
         }
         Ok(())
     }
@@ -85,7 +78,6 @@ impl StoragePaths {
             if !path.is_dir() {
                 anyhow::bail!("storage dir missing or not a directory: {}", path.display());
             }
-            verify_dir_writable(path)?;
         }
         Ok(())
     }
@@ -238,31 +230,6 @@ fn dashboard_url(app_url: &str, room_id: &str) -> String {
 
 fn trim_url(url: &str) -> &str {
     url.trim_end_matches('/')
-}
-
-fn verify_dir_writable(path: &FsPath) -> anyhow::Result<()> {
-    let probe = path.join(format!(".supermanager-write-check-{}", std::process::id()));
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&probe)
-        .with_context(|| format!("failed to open storage probe file {}", probe.display()))?;
-    file.write_all(b"ok")
-        .with_context(|| format!("failed to write storage probe file {}", probe.display()))?;
-    drop(file);
-
-    match fs::remove_file(&probe) {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!("failed to remove storage probe file {}", probe.display())
-            });
-        }
-    }
-
-    Ok(())
 }
 
 fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
