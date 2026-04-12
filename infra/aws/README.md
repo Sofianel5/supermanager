@@ -6,6 +6,7 @@ This Terraform stack provisions the AWS-native backend for Supermanager:
 - ECS Fargate for the Axum service
 - ALB with TLS termination and `/health` checks
 - PostgreSQL on RDS
+- EFS for durable Codex and per-room working state
 - Secrets Manager wiring for `DATABASE_URL`
 - CloudWatch log group and basic alarms
 - Optional GitHub Actions OIDC deploy role
@@ -44,3 +45,5 @@ After apply, set these repository variables from the Terraform outputs:
 - `AWS_ECS_SERVICE` from `ecs_service_name`
 
 The deploy workflow assumes the ECS service already exists, runs only from `master`, pushes the backend image to ECR as `:latest`, and forces a new ECS deployment so the service pulls that tag.
+
+The ECS task definition is managed in Terraform and mounts EFS at `/srv/supermanager`, with `SUPERMANAGER_DATA_DIR=/srv/supermanager` set in the container environment. The service is configured as a single writer during deploys with `desired_count = 1`, `deployment_minimum_healthy_percent = 0`, and `deployment_maximum_percent = 100`.

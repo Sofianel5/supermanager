@@ -8,6 +8,7 @@ Supermanager is a room-based coordination system for coding agents. The Rust ser
 
 ```sh
 export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
+export SUPERMANAGER_DATA_DIR='./.supermanager-data'
 cargo run -p coordination-server
 ```
 
@@ -18,6 +19,7 @@ To customize the public URLs explicitly:
 ```sh
 cargo run -p coordination-server -- \
   --database-url 'postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable' \
+  --data-dir './.supermanager-data' \
   --public-api-url 'http://127.0.0.1:8787' \
   --public-app-url 'http://127.0.0.1:5173'
 ```
@@ -25,6 +27,7 @@ cargo run -p coordination-server -- \
 You can also configure these through environment variables:
 
 - `DATABASE_URL`
+- `SUPERMANAGER_DATA_DIR`
 - `SUPERMANAGER_PUBLIC_API_URL`
 - `SUPERMANAGER_PUBLIC_APP_URL`
 - `OPENAI_API_KEY`
@@ -161,6 +164,7 @@ infra/aws/                # Terraform for the AWS backend
 ## Notes
 
 - Summary generation runs on the server after new hook turns arrive.
+- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The server keeps a shared Codex home at `<data-dir>/codex` and per-room working directories at `<data-dir>/rooms/<ROOM_ID>/cwd`.
 - The stored room summary is structured JSON. The model receives the current summary plus fresh updates and can return partial section updates instead of rewriting the whole room summary each time.
 
 ## Licensing
@@ -181,6 +185,7 @@ This repo now deploys the backend as:
 - ECS Fargate service
 - ALB on `https://api.supermanager.dev`
 - RDS PostgreSQL
+- EFS mounted at `/srv/supermanager` for durable room-agent state
 - Secrets Manager for `DATABASE_URL` and `OPENAI_API_KEY`
 
 Files involved:
@@ -215,8 +220,11 @@ The ECS task definition should be managed in Terraform and point at the ECR repo
 
 - `DATABASE_URL`
 - `OPENAI_API_KEY`
+- `SUPERMANAGER_DATA_DIR=/srv/supermanager`
 - `SUPERMANAGER_PUBLIC_API_URL=https://api.supermanager.dev`
 - `SUPERMANAGER_PUBLIC_APP_URL=https://supermanager.dev`
+
+The ECS service is intentionally single-writer during deploys: `desired_count = 1`, `deployment_minimum_healthy_percent = 0`, and `deployment_maximum_percent = 100`. That allows the durable Codex state on EFS to survive task replacement cleanly.
 
 ## Deploying the frontend to Cloudflare Pages
 

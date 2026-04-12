@@ -38,6 +38,16 @@ output "database_url_secret_arn" {
   value       = aws_secretsmanager_secret.database_url.arn
 }
 
+output "efs_file_system_id" {
+  description = "EFS filesystem id mounted into the ECS task."
+  value       = aws_efs_file_system.server.id
+}
+
+output "efs_access_point_id" {
+  description = "EFS access point id mounted into the ECS task."
+  value       = aws_efs_access_point.server.id
+}
+
 output "github_actions_role_arn" {
   description = "IAM role ARN for GitHub Actions OIDC, if enabled."
   value       = try(aws_iam_role.github_actions_deploy[0].arn, null)

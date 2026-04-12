@@ -250,7 +250,6 @@ impl Db {
 
         Ok(())
     }
-
     pub async fn set_summary(&self, room_id: &str, content: &RoomSnapshot) -> Result<()> {
         sqlx::query(
             "INSERT INTO summaries (room_id, content_json, thread_id, status, updated_at)
@@ -488,7 +487,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hook_events_round_trip_with_cursor_paging() {
+    async fn hook_events_round_trip_with_paging() {
         let Some(test_db) = TestDb::new().await else {
             eprintln!("skipping PostgreSQL test: TEST_DATABASE_URL is not set");
             return;
