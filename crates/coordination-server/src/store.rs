@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use anyhow::{Context, Result};
 use rand::Rng;
 use reporter_protocol::{HookTurnReport, Room, RoomSnapshot, StoredHookEvent};
@@ -406,7 +404,7 @@ pub(crate) mod test_support {
     }
 
     fn database_url_for_test(admin_database_url: &str, database_name: &str) -> Result<String> {
-        let mut url = Url::from_str(admin_database_url)?;
+        let mut url = Url::parse(admin_database_url)?;
         url.set_path(&format!("/{database_name}"));
         Ok(url.to_string())
     }
