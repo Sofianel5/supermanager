@@ -1,7 +1,7 @@
 mod api;
 mod store;
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
 use axum::{
@@ -21,8 +21,8 @@ use store::Db;
 struct Cli {
     #[arg(long, default_value = "127.0.0.1:8787")]
     bind: SocketAddr,
-    #[arg(long, default_value = "supermanager.db")]
-    db_path: PathBuf,
+    #[arg(long, env = "DATABASE_URL")]
+    database_url: String,
     #[arg(
         long,
         env = "SUPERMANAGER_PUBLIC_API_URL",
@@ -40,13 +40,8 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let db = Arc::new(Db::open(&cli.db_path)?);
-
-    let data_dir = cli
-        .db_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("supermanager-data");
+    let db = Arc::new(Db::connect(&cli.database_url).await?);
+    let data_dir = std::env::temp_dir().join("supermanager-data");
 
     let (hook_events, _) = broadcast::channel(256);
     let (summary_events, _) = broadcast::channel(64);

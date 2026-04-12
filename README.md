@@ -1,31 +1,33 @@
 # Supermanager
 
-Supermanager is a room-based coordination system for coding agents. The Rust server owns room creation, hook ingest, SQLite storage, SSE, and summary generation. A separate React frontend owns the landing page and live room dashboard.
+Supermanager is a room-based coordination system for coding agents. The Rust server owns room creation, hook ingest, PostgreSQL storage, SSE, and summary generation. A separate React frontend owns the landing page and live room dashboard.
 
 ## Setup
 
 ### 1. Start the server API
 
 ```sh
+export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
 cargo run -p coordination-server
 ```
 
-By default it listens on `http://127.0.0.1:8787`, expects the frontend on `http://127.0.0.1:5173`, and writes to `supermanager.db`.
+By default it listens on `http://127.0.0.1:8787` and expects the frontend on `http://127.0.0.1:5173`.
 
-To customize the public URLs and one-time CLI install command:
+To customize the public URLs explicitly:
 
 ```sh
 cargo run -p coordination-server -- \
+  --database-url 'postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable' \
   --public-api-url 'http://127.0.0.1:8787' \
-  --public-app-url 'http://127.0.0.1:5173' \
-  --cli-install-command 'curl -fsSL https://supermanager.dev/install.sh | sh'
+  --public-app-url 'http://127.0.0.1:5173'
 ```
 
 You can also configure these through environment variables:
 
+- `DATABASE_URL`
 - `SUPERMANAGER_PUBLIC_API_URL`
 - `SUPERMANAGER_PUBLIC_APP_URL`
-- `SUPERMANAGER_CLI_INSTALL_COMMAND`
+- `OPENAI_API_KEY`
 
 ### 2. Start the frontend
 
@@ -86,7 +88,6 @@ curl -sS http://127.0.0.1:8787/v1/rooms \
 
 The response includes:
 
-- `install_command`
 - `dashboard_url`
 - `room_id` as a 6-character case-insensitive alphanumeric code
 - `join_command`
@@ -137,7 +138,6 @@ The frontend reads room metadata, feed, and a structured room summary from the A
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/config` | GET | Public frontend bootstrap config |
 | `/health` | GET | Health check |
 | `/v1/rooms` | POST | Create a room |
 | `/r/{room_id}` | GET | Room metadata |
@@ -155,7 +155,7 @@ crates/
   supermanager-cli/       # Global CLI for joining/leaving repos
 web/                      # React + Vite frontend
 Dockerfile                # Production image
-fly.toml                  # Fly deployment config
+infra/aws/                # Terraform for the AWS backend
 ```
 
 ## Notes
@@ -173,48 +173,52 @@ Apache License 2.0 with its upstream notices preserved in `vendor/codex/LICENSE`
 and `vendor/codex/NOTICE`. The top-level `NOTICE` file carries forward the
 required Codex attribution for this distribution.
 
-## Deploying to Fly with GitHub Actions and AWS CodeBuild
+## Deploying the backend to AWS
 
-This repo includes a deployment path where GitHub Actions starts an AWS CodeBuild project, and CodeBuild runs `flyctl deploy --remote-only` against the checked-out commit.
+This repo now deploys the backend as:
+
+- ECR image
+- ECS Fargate service
+- ALB on `https://api.supermanager.dev`
+- RDS PostgreSQL
+- Secrets Manager for `DATABASE_URL` and `OPENAI_API_KEY`
 
 Files involved:
 
 - `.github/workflows/deploy-server.yml`
-- `buildspec.deploy.yml`
-- `scripts/deploy-fly.sh`
+- `.github/workflows/test-backend.yml`
+- `infra/aws/**`
+
+### Provision infrastructure
+
+Apply the Terraform stack in `infra/aws` first. The companion guide is at `infra/aws/README.md`.
+
+Key inputs:
+
+- `acm_certificate_arn`
+- `openai_api_key_secret_arn`
+- optional `github_oidc_provider_arn` to create the deploy role
 
 ### GitHub configuration
 
 Add these repository variables under `Settings -> Secrets and variables -> Actions -> Variables`:
 
-- `AWS_REGION`: AWS region that hosts the CodeBuild project, for example `us-west-2`
-- `AWS_CODEBUILD_PROJECT_NAME`: existing CodeBuild project name that should run the deploy
-- `AWS_DEPLOY_ROLE_ARN`: IAM role ARN that GitHub Actions assumes through OIDC
+- `AWS_REGION`
+- `AWS_DEPLOY_ROLE_ARN`
+- `AWS_ECR_REPOSITORY`
+- `AWS_ECS_CLUSTER`
+- `AWS_ECS_SERVICE`
+- `AWS_ECS_TASK_FAMILY`
+- `AWS_ECS_CONTAINER_NAME`
 
-The workflow runs on pushes to `master` when server deployment files change, and it also supports manual `workflow_dispatch`.
+The deploy workflow uses GitHub OIDC with `aws-actions/configure-aws-credentials`, builds the server image, pushes it to ECR, then registers and deploys an updated ECS task definition.
 
-### AWS configuration
+The backend runtime environment is supplied through the ECS task definition:
 
-Create a CodeBuild project that points at this repository and make sure its service role can access the repository source. Configure the project with:
-
-- a Linux image that includes `bash` and `curl`
-- `buildspec.deploy.yml` allowed via buildspec override
-- an environment variable named `FLY_ACCESS_TOKEN` containing a Fly deploy token for the `supermanager` app
-
-The GitHub Actions assumed role needs permission to start the CodeBuild project and read its logs:
-
-- `codebuild:StartBuild`
-- `codebuild:BatchGetBuilds`
-- `logs:GetLogEvents`
-
-The workflow uses `aws-actions/configure-aws-credentials` with GitHub OIDC, so no long-lived AWS keys are required in GitHub.
-
-Set the backend runtime environment on Fly so the API can generate correct dashboard links and install/join commands:
-
-- `SUPERMANAGER_CLI_INSTALL_COMMAND`
-- `SUPERMANAGER_PUBLIC_API_URL`
-- `SUPERMANAGER_PUBLIC_APP_URL`
+- `DATABASE_URL`
 - `OPENAI_API_KEY`
+- `SUPERMANAGER_PUBLIC_API_URL=https://api.supermanager.dev`
+- `SUPERMANAGER_PUBLIC_APP_URL=https://supermanager.dev`
 
 ## Deploying the frontend to Cloudflare Pages
 
@@ -226,7 +230,7 @@ This repo includes a dedicated workflow for the React frontend:
 
 Add these repository variables:
 
-- `SUPERMANAGER_PUBLIC_API_URL`: public backend API origin used at frontend build time
+- `SUPERMANAGER_PUBLIC_API_URL`: public backend API origin used at frontend build time, for example `https://api.supermanager.dev`
 - `CLOUDFLARE_PAGES_PROJECT_NAME`: Cloudflare Pages project name
 
 Add these repository secrets:

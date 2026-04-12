@@ -46,4 +46,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /coordination-server /usr/local/bin/coordination-server
 EXPOSE 8787
-CMD ["coordination-server", "--bind", "0.0.0.0:8787", "--db-path", "/data/supermanager.db"]
+CMD ["coordination-server", "--bind", "0.0.0.0:8787"]

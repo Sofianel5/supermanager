@@ -19,17 +19,22 @@ pub async fn stream_feed(
     headers: axum::http::HeaderMap,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
 {
-    let room = resolve_room(&state, &room_id)?;
+    let room = resolve_room(&state, &room_id).await?;
     let room_id = room.room_id;
 
-    let mut replay = headers
+    let mut replay = if let Some(seq) = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
         .and_then(|s| s.parse::<i64>().ok())
-        .map(|seq| state.db.get_hook_events(&room_id, None, Some(seq), None))
-        .transpose()
-        .map_err(super::internal_error)?
-        .unwrap_or_default();
+    {
+        state
+            .db
+            .get_hook_events(&room_id, None, Some(seq), None)
+            .await
+            .map_err(super::internal_error)?
+    } else {
+        Vec::new()
+    };
     // `get_hook_events` returns newest-first; reverse so replay fires in
     // chronological (oldest → newest) order, matching insertion order.
     replay.reverse();
@@ -41,6 +46,7 @@ pub async fn stream_feed(
     let initial_status = state
         .db
         .get_summary_status(&room_id)
+        .await
         .ok()
         .and_then(|s| s.parse::<SummaryStatus>().ok())
         .unwrap_or(SummaryStatus::Ready);
