@@ -168,12 +168,6 @@ impl RoomSummaryAgent {
             .await
             .map_err(|_| anyhow!("room summary agent is not running"))
     }
-
-    #[cfg(test)]
-    pub(crate) fn test_stub() -> Self {
-        let (command_tx, _command_rx) = mpsc::channel(1);
-        Self { command_tx }
-    }
 }
 
 enum AgentCommand {
@@ -799,7 +793,10 @@ mod tests {
             return;
         };
         let db = test_db.db.clone();
-        let room = db.create_room("Summary Room").await.unwrap();
+        let room = db
+            .create_room("Summary Room", "org_test", "user_test")
+            .await
+            .unwrap();
 
         db.insert_hook_event(
             &room.room_id,

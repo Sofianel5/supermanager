@@ -11,12 +11,16 @@ axum.workspace = true
 clap.workspace = true
 futures-core.workspace = true
 rand = "0.9"
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 uuid.workspace = true
 time.workspace = true
 tokio.workspace = true
+jsonwebtoken.workspace = true
 reporter-protocol = { path = "../reporter-protocol" }
+workos-client = { path = "../workos-client" }
 tower-http = { version = "0.6.8", features = ["cors"] }
 sqlx.workspace = true
 url = "2.5"

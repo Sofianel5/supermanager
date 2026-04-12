@@ -3,6 +3,21 @@ use serde_json::Value;
 use ts_rs::TS;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[ts(export, export_to = "../../../web/src/generated/")]
+pub struct CurrentUserResponse {
+    pub user_id: String,
+    pub display_name: String,
+    pub primary_email: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfigResponse {
+    pub client_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestResponse {
     pub event_id: Uuid,
@@ -42,6 +57,49 @@ pub struct RoomMetadataResponse {
     pub room_id: String,
     pub name: String,
     pub created_at: String,
+    pub viewer_role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateInviteRequest {
+    #[serde(default)]
+    pub target_email: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
+pub struct InviteResponse {
+    pub invite_id: String,
+    pub room_id: String,
+    pub kind: String,
+    pub invite_url: String,
+    #[serde(default)]
+    pub target_email: Option<String>,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcceptInviteRequest {
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
+pub struct AcceptInviteResponse {
+    pub room: RoomMetadataResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliRefreshRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliRefreshResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub access_expires_at: String,
+    pub user: CurrentUserResponse,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]

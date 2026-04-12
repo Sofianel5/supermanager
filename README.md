@@ -219,6 +219,8 @@ The ECS task definition should be managed in Terraform and point at the ECR repo
 
 - `DATABASE_URL`
 - `OPENAI_API_KEY`
+- `SUPERMANAGER_WORKOS_API_KEY`
+- `SUPERMANAGER_WORKOS_CLIENT_ID`
 - `SUPERMANAGER_DATA_DIR=/srv/supermanager`
 - `SUPERMANAGER_PUBLIC_API_URL=https://api.supermanager.dev`
 - `SUPERMANAGER_PUBLIC_APP_URL=https://supermanager.dev`
@@ -236,6 +238,7 @@ This repo includes a dedicated workflow for the React frontend:
 Add these repository variables:
 
 - `SUPERMANAGER_PUBLIC_API_URL`: public backend API origin used at frontend build time, for example `https://api.supermanager.dev`
+- `VITE_WORKOS_CLIENT_ID`: WorkOS client ID used by the React AuthKit client
 - `CLOUDFLARE_PAGES_PROJECT_NAME`: Cloudflare Pages project name
 
 Add these repository secrets:

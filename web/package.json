@@ -10,6 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@workos-inc/authkit-js": "^0.20.0",
+    "@workos-inc/authkit-react": "^0.16.1",
+    "eventsource-parser": "^3.0.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",

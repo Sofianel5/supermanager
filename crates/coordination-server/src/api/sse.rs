@@ -11,15 +11,16 @@ use serde_json::json;
 use tokio::sync::broadcast;
 
 use super::summarize::SummaryStatus;
-use super::{AppState, resolve_room};
+use super::{AppState, auth, resolve_room};
 
 pub async fn stream_feed(
     State(state): State<AppState>,
-    Path(room_id): Path<String>,
     headers: axum::http::HeaderMap,
+    Path(room_id): Path<String>,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)>
 {
-    let room = resolve_room(&state, &room_id).await?;
+    let (_, membership) = auth::ensure_room_member(&state, &headers, &room_id).await?;
+    let room = resolve_room(&state, &membership.room_id).await?;
     let room_id = room.room_id;
 
     let mut replay = if let Some(seq) = headers

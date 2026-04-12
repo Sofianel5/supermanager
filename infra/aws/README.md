@@ -8,6 +8,7 @@ This Terraform stack provisions the AWS-native backend for Supermanager:
 - PostgreSQL on RDS
 - EFS for durable Codex and per-room working state
 - Secrets Manager wiring for `DATABASE_URL`
+- Secrets Manager wiring for `SUPERMANAGER_WORKOS_API_KEY`
 - CloudWatch log group and basic alarms
 - Optional GitHub Actions OIDC deploy role
 
@@ -17,6 +18,8 @@ Set these before `terraform apply`:
 
 - `acm_certificate_arn`
 - `openai_api_key_secret_arn`
+- `workos_api_key_secret_arn`
+- `workos_client_id`
 
 Optionally set:
 
@@ -30,7 +33,9 @@ cd infra/aws
 terraform init
 terraform plan \
   -var='acm_certificate_arn=arn:aws:acm:us-west-2:123456789012:certificate/...' \
-  -var='openai_api_key_secret_arn=arn:aws:secretsmanager:us-west-2:123456789012:secret:supermanager/openai-api-key'
+  -var='openai_api_key_secret_arn=arn:aws:secretsmanager:us-west-2:123456789012:secret:supermanager/openai-api-key' \
+  -var='workos_api_key_secret_arn=arn:aws:secretsmanager:us-west-2:123456789012:secret:supermanager/workos-api-key' \
+  -var='workos_client_id=client_123'
 terraform apply
 ```
 
@@ -46,4 +51,4 @@ After apply, set these repository variables from the Terraform outputs:
 
 The deploy workflow assumes the ECS service already exists, runs only from `master`, pushes the backend image to ECR as `:latest`, and forces a new ECS deployment so the service pulls that tag.
 
-The ECS task definition is managed in Terraform and mounts EFS at `/srv/supermanager`, with `SUPERMANAGER_DATA_DIR=/srv/supermanager` set in the container environment. The service is configured as a single writer during deploys with `desired_count = 1`, `deployment_minimum_healthy_percent = 0`, and `deployment_maximum_percent = 100`.
+The ECS task definition is managed in Terraform and mounts EFS at `/srv/supermanager`, with `SUPERMANAGER_DATA_DIR=/srv/supermanager`, `SUPERMANAGER_WORKOS_CLIENT_ID`, and the `SUPERMANAGER_WORKOS_API_KEY` secret set in the container environment. The service is configured as a single writer during deploys with `desired_count = 1`, `deployment_minimum_healthy_percent = 0`, and `deployment_maximum_percent = 100`.

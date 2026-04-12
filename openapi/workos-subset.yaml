@@ -1,0 +1,406 @@
+openapi: 3.0.3
+info:
+  title: WorkOS Subset
+  version: 0.1.0
+servers:
+  - url: https://api.workos.com
+paths:
+  /sso/jwks/{clientId}:
+    get:
+      operationId: getJwks
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JwksResponse"
+  /user_management/authorize/device:
+    post:
+      operationId: createDeviceAuthorization
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceAuthorizationRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceAuthorizationResponse"
+  /user_management/authenticate:
+    post:
+      operationId: authenticate
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/DeviceAuthenticateRequest"
+                - $ref: "#/components/schemas/RefreshAuthenticateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthenticateResponse"
+  /organizations:
+    post:
+      operationId: createOrganization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganizationRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+  /user_management/organization_memberships:
+    get:
+      operationId: listOrganizationMemberships
+      parameters:
+        - in: query
+          name: organization_id
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: user_id
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: statuses
+          required: false
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationMembershipList"
+    post:
+      operationId: createOrganizationMembership
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganizationMembershipRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationMembership"
+  /user_management/invitations:
+    post:
+      operationId: createInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInvitationRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invitation"
+  /user_management/users/{id}:
+    get:
+      operationId: getUser
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    DeviceAuthorizationRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+      required:
+        - client_id
+    DeviceAuthorizationResponse:
+      type: object
+      properties:
+        device_code:
+          type: string
+        user_code:
+          type: string
+        verification_uri:
+          type: string
+          format: uri
+        verification_uri_complete:
+          type: string
+          format: uri
+        expires_in:
+          type: integer
+        interval:
+          type: integer
+      required:
+        - device_code
+        - user_code
+        - verification_uri
+        - verification_uri_complete
+        - expires_in
+        - interval
+    DeviceAuthenticateRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+        grant_type:
+          type: string
+          const: urn:ietf:params:oauth:grant-type:device_code
+        device_code:
+          type: string
+      required:
+        - client_id
+        - grant_type
+        - device_code
+    RefreshAuthenticateRequest:
+      type: object
+      properties:
+        client_id:
+          type: string
+        client_secret:
+          type: string
+        grant_type:
+          type: string
+          const: refresh_token
+        refresh_token:
+          type: string
+      required:
+        - client_id
+        - client_secret
+        - grant_type
+        - refresh_token
+    AuthenticateResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        organization_id:
+          type: string
+          nullable: true
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+      required:
+        - user
+        - access_token
+        - refresh_token
+    CreateOrganizationRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        external_id:
+          type: string
+          nullable: true
+      required:
+        - name
+    Organization:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - id
+        - name
+        - created_at
+        - updated_at
+    CreateOrganizationMembershipRequest:
+      type: object
+      properties:
+        user_id:
+          type: string
+        organization_id:
+          type: string
+        role_slug:
+          type: string
+          nullable: true
+      required:
+        - user_id
+        - organization_id
+    OrganizationMembership:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        organization_id:
+          type: string
+        status:
+          type: string
+        organization_name:
+          type: string
+          nullable: true
+      required:
+        - id
+        - user_id
+        - organization_id
+        - status
+    OrganizationMembershipList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganizationMembership"
+      required:
+        - data
+    CreateInvitationRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        organization_id:
+          type: string
+          nullable: true
+        inviter_user_id:
+          type: string
+          nullable: true
+        expires_in_days:
+          type: integer
+          nullable: true
+        role_slug:
+          type: string
+          nullable: true
+      required:
+        - email
+    Invitation:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        organization_id:
+          type: string
+          nullable: true
+        inviter_user_id:
+          type: string
+          nullable: true
+        accepted_user_id:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+        token:
+          type: string
+        accept_invitation_url:
+          type: string
+      required:
+        - id
+        - email
+        - organization_id
+        - inviter_user_id
+        - accepted_user_id
+        - expires_at
+        - token
+        - accept_invitation_url
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        first_name:
+          type: string
+          nullable: true
+        last_name:
+          type: string
+          nullable: true
+        profile_picture_url:
+          type: string
+          nullable: true
+      required:
+        - id
+        - email
+        - first_name
+        - last_name
+        - profile_picture_url
+    JwksResponse:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/Jwk"
+      required:
+        - keys
+    Jwk:
+      type: object
+      properties:
+        kty:
+          type: string
+        use:
+          type: string
+          nullable: true
+        kid:
+          type: string
+        alg:
+          type: string
+          nullable: true
+        n:
+          type: string
+        e:
+          type: string
+      required:
+        - kty
+        - kid
+        - n
+        - e

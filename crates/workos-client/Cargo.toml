@@ -1,0 +1,10 @@
+[package]
+name = "workos-client"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+progenitor = { version = "0.13.0", features = ["macro"] }
+reqwest = { version = "0.13", default-features=false, features = ["json", "query", "stream"] }
+serde = { version = "1.0", features = ["derive"] }

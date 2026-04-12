@@ -68,6 +68,16 @@ variable "openai_api_key_secret_arn" {
   type        = string
 }
 
+variable "workos_api_key_secret_arn" {
+  description = "Secrets Manager ARN containing SUPERMANAGER_WORKOS_API_KEY."
+  type        = string
+}
+
+variable "workos_client_id" {
+  description = "WorkOS client ID used by the backend server."
+  type        = string
+}
+
 variable "db_name" {
   description = "PostgreSQL database name."
   type        = string

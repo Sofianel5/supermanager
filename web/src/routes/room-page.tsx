@@ -2,13 +2,16 @@ import {
   startTransition,
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { useAuth } from "../auth";
 import {
+  ApiError,
   api,
   getApiBaseUrl,
   RoomMetadataResponse,
@@ -25,6 +28,8 @@ type ConnectionStatus = "connecting" | "live" | "reconnecting";
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
+  const navigate = useNavigate();
+  const { getAccessToken, isLoading, user } = useAuth();
   const roomInfoDropdownRef = useRef<HTMLDetailsElement | null>(null);
   const [room, setRoom] = useState<RoomMetadataResponse | null>(null);
   const [events, setEvents] = useState<StoredHookEvent[]>([]);
@@ -37,9 +42,22 @@ export function RoomPage() {
   const [error, setError] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteBusy, setInviteBusy] = useState<"link" | "email" | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [latestInvite, setLatestInvite] = useState<{
+    label: string;
+    value: string;
+    detail: string;
+  } | null>(null);
 
   const canonicalRoomId = room?.room_id || roomId;
   const joinCommand = buildJoinCommand(canonicalRoomId);
+  const canManageInvites = room?.viewer_role === "owner";
+  const loginHref = useMemo(
+    () => `/login?next=${encodeURIComponent(`/r/${roomId}`)}`,
+    [roomId],
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -52,7 +70,8 @@ export function RoomPage() {
   }, []);
 
   const refreshSummary = useEffectEvent(async () => {
-    const nextSnapshot = await api.getSummary(roomId);
+    const accessToken = await getAccessToken();
+    const nextSnapshot = await api.getSummary(accessToken, roomId);
     setSnapshot(nextSnapshot);
     setSummaryStatus("ready");
   });
@@ -81,16 +100,28 @@ export function RoomPage() {
       return;
     }
 
+    if (isLoading) {
+      return;
+    }
+
+    if (!user) {
+      navigate(loginHref, { replace: true });
+      return;
+    }
+
     let cancelled = false;
     setConnectionStatus("connecting");
     setError(null);
 
-    Promise.all([
-      api.getRoom(roomId),
-      api.getFeed(roomId, { limit: FEED_LIMIT }),
-      api.getSummary(roomId),
-    ])
-      .then(([nextRoom, feed, nextSnapshot]) => {
+    void (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const [nextRoom, feed, nextSnapshot] = await Promise.all([
+          api.getRoom(accessToken, roomId),
+          api.getFeed(accessToken, roomId, { limit: FEED_LIMIT }),
+          api.getSummary(accessToken, roomId),
+        ]);
+
         if (cancelled) {
           return;
         }
@@ -102,49 +133,64 @@ export function RoomPage() {
           setSnapshot(nextSnapshot);
           setSummaryStatus("ready");
         });
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) {
-          setError(readMessage(loadError));
+      } catch (loadError) {
+        if (cancelled) {
+          return;
         }
-      });
-
-    const stream = api.openRoomStream(roomId);
-
-    stream.onopen = () => {
-      if (!cancelled) {
-        setConnectionStatus("live");
+        if (loadError instanceof ApiError && loadError.status === 401) {
+          navigate(loginHref, { replace: true });
+          return;
+        }
+        setError(readMessage(loadError));
       }
-    };
+    })();
 
-    stream.addEventListener("hook_event", (event) => {
-      try {
-        appendEvent(JSON.parse(event.data) as StoredHookEvent);
-      } catch {
-        // Ignore malformed events from the stream.
-      }
-    });
-
-    stream.addEventListener("summary_status", (event) => {
-      try {
-        const payload = JSON.parse(event.data) as { status?: string };
-        void handleSummaryStatus(payload.status || "ready");
-      } catch {
-        // Ignore malformed summary status events.
-      }
-    });
-
-    stream.onerror = () => {
-      if (!cancelled) {
+    const stream = api.openRoomStream(roomId, () => getAccessToken(), {
+      onOpen() {
+        if (!cancelled) {
+          setConnectionStatus("live");
+        }
+      },
+      onEvent(event) {
+        try {
+          if (event.event === "hook_event") {
+            appendEvent(JSON.parse(event.data) as StoredHookEvent);
+            return;
+          }
+          if (event.event === "summary_status") {
+            const payload = JSON.parse(event.data) as { status?: string };
+            void handleSummaryStatus(payload.status || "ready");
+          }
+        } catch {
+          // Ignore malformed events from the stream.
+        }
+      },
+      onError(streamError) {
+        if (cancelled) {
+          return;
+        }
+        if (streamError instanceof ApiError && streamError.status === 401) {
+          navigate(loginHref, { replace: true });
+          return;
+        }
         setConnectionStatus("reconnecting");
-      }
-    };
+      },
+    });
 
     return () => {
       cancelled = true;
       stream.close();
     };
-  }, [roomId]);
+  }, [
+    appendEvent,
+    getAccessToken,
+    handleSummaryStatus,
+    isLoading,
+    loginHref,
+    navigate,
+    roomId,
+    user,
+  ]);
 
   async function copy(label: string, value: string) {
     await navigator.clipboard.writeText(value);
@@ -168,9 +214,15 @@ export function RoomPage() {
         <div className="section-label">Room</div>
         <h1>{roomId || "unknown"}</h1>
         <p className="message message--error">{error}</p>
-        <Link className="inline-link" to="/">
-          Back to room creation
-        </Link>
+        {error.toLowerCase().includes("sign in") ? (
+          <Link className="inline-link" to={loginHref}>
+            Sign in
+          </Link>
+        ) : (
+          <Link className="inline-link" to="/">
+            Back to room creation
+          </Link>
+        )}
       </main>
     );
   }
@@ -229,6 +281,117 @@ export function RoomPage() {
           />
         </div>
 
+        {canManageInvites && (
+          <section className="room-section">
+            <div className="room-section__head">
+              <span className="section-label">Invites</span>
+              <span className="section-count">Owner</span>
+            </div>
+
+            <div className="invite-grid">
+              <button
+                className="secondary-button invite-action"
+                type="button"
+                disabled={inviteBusy !== null}
+                onClick={async () => {
+                  setInviteBusy("link");
+                  setInviteError(null);
+                  try {
+                    const accessToken = await getAccessToken();
+                    const invite = await api.createLinkInvite(
+                      accessToken,
+                      canonicalRoomId,
+                    );
+                    setLatestInvite({
+                      label: "Invite link",
+                      value: invite.invite_url,
+                      detail: `Expires ${formatDate(invite.expires_at)}`,
+                    });
+                    await copy("Invite link", invite.invite_url);
+                  } catch (inviteLoadError) {
+                    if (inviteLoadError instanceof ApiError && inviteLoadError.status === 401) {
+                      navigate(loginHref, { replace: true });
+                      return;
+                    }
+                    setInviteError(readMessage(inviteLoadError));
+                  } finally {
+                    setInviteBusy(null);
+                  }
+                }}
+              >
+                {inviteBusy === "link" ? "Creating invite…" : "Copy invite link"}
+              </button>
+
+              <form
+                className="invite-form"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  if (!inviteEmail.trim()) {
+                    setInviteError("Email is required.");
+                    return;
+                  }
+                  setInviteBusy("email");
+                  setInviteError(null);
+                  try {
+                    const accessToken = await getAccessToken();
+                    const invite = await api.createEmailInvite(
+                      accessToken,
+                      canonicalRoomId,
+                      inviteEmail.trim(),
+                    );
+                    setLatestInvite({
+                      label: invite.target_email
+                        ? `Email invite for ${invite.target_email}`
+                        : "Email invite",
+                      value: invite.invite_url,
+                      detail: `Expires ${formatDate(invite.expires_at)}`,
+                    });
+                    await copy("Email invite", invite.invite_url);
+                    setInviteEmail("");
+                  } catch (inviteLoadError) {
+                    if (inviteLoadError instanceof ApiError && inviteLoadError.status === 401) {
+                      navigate(loginHref, { replace: true });
+                      return;
+                    }
+                    setInviteError(readMessage(inviteLoadError));
+                  } finally {
+                    setInviteBusy(null);
+                  }
+                }}
+              >
+                <label htmlFor="invite-email">Email invite</label>
+                <div className="invite-form__row">
+                  <input
+                    id="invite-email"
+                    autoComplete="email"
+                    placeholder="alice@example.com"
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(event) => setInviteEmail(event.target.value)}
+                  />
+                  <button disabled={inviteBusy !== null} type="submit">
+                    {inviteBusy === "email" ? "Creating…" : "Create"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {inviteError && <p className="message message--error">{inviteError}</p>}
+
+            {latestInvite && (
+              <>
+                <CopyPanel
+                  copiedValue={copiedValue}
+                  label={latestInvite.label}
+                  onCopy={copy}
+                  value={latestInvite.value}
+                />
+                <p className="message invite-meta">{latestInvite.detail}</p>
+              </>
+            )}
+          </section>
+        )}
+
         <div className="room-section">
           <div className="room-section__head">
             <span className="section-label">Raw feed</span>
@@ -270,12 +433,19 @@ export function RoomPage() {
                 if (!oldest) return;
                 setLoadingMore(true);
                 try {
-                  const page = await api.getFeed(roomId, {
+                  const accessToken = await getAccessToken();
+                  const page = await api.getFeed(accessToken, roomId, {
                     limit: FEED_LIMIT,
                     before: oldest.seq,
                   });
                   setEvents((current) => [...current, ...page.events]);
                   setHasMore(page.events.length === FEED_LIMIT);
+                } catch (loadMoreError) {
+                  if (loadMoreError instanceof ApiError && loadMoreError.status === 401) {
+                    navigate(loginHref, { replace: true });
+                    return;
+                  }
+                  setError(readMessage(loadMoreError));
                 } finally {
                   setLoadingMore(false);
                 }
@@ -453,6 +623,17 @@ function formatRelativeTime(isoTimestamp: string, now: number) {
 
 function readMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
+}
+
+function formatDate(isoTimestamp: string) {
+  const timestamp = Date.parse(isoTimestamp);
+  if (Number.isNaN(timestamp)) {
+    return isoTimestamp;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(timestamp);
 }
 
 function buildJoinCommand(roomId: string) {

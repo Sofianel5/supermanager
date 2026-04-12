@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use anyhow::{Context, Result};
 use rand::Rng;
 use reporter_protocol::{HookTurnReport, Room, RoomSnapshot, StoredHookEvent};
@@ -20,7 +18,22 @@ static MIGRATOR: Migrator = sqlx::migrate!();
 
 #[derive(Clone)]
 pub struct Db {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoomAccessRecord {
+    pub room_id: String,
+    pub workos_organization_id: String,
+    pub owner_workos_user_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct LinkInviteRecord {
+    pub invite_id: String,
+    pub room_id: String,
+    pub expires_at: String,
+    pub revoked_at: Option<String>,
 }
 
 impl Db {
@@ -47,7 +60,12 @@ impl Db {
         Ok(())
     }
 
-    pub async fn create_room(&self, name: &str) -> Result<Room> {
+    pub async fn create_room(
+        &self,
+        name: &str,
+        workos_organization_id: &str,
+        owner_workos_user_id: &str,
+    ) -> Result<Room> {
         for _ in 0..10 {
             let room_id = {
                 let mut rng = rand::rng();
@@ -55,12 +73,14 @@ impl Db {
             };
 
             let insert = sqlx::query(
-                "INSERT INTO rooms (room_id, name)
-                 VALUES ($1, $2)
+                "INSERT INTO rooms (room_id, name, workos_organization_id, owner_workos_user_id)
+                 VALUES ($1, $2, $3, $4)
                  RETURNING created_at",
             )
             .bind(&room_id)
             .bind(name)
+            .bind(workos_organization_id)
+            .bind(owner_workos_user_id)
             .fetch_one(&self.pool)
             .await;
 
@@ -97,6 +117,91 @@ impl Db {
         .with_context(|| format!("failed to fetch room {room_id}"))?;
 
         row.map(map_room).transpose()
+    }
+
+    pub async fn get_room_access(&self, room_id: &str) -> Result<Option<RoomAccessRecord>> {
+        let row = sqlx::query(
+            "SELECT room_id, workos_organization_id, owner_workos_user_id
+             FROM rooms
+             WHERE room_id = $1",
+        )
+        .bind(normalize_room_id(room_id))
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| format!("failed to fetch room access for {room_id}"))?;
+
+        row.map(|row| {
+            Ok(RoomAccessRecord {
+                room_id: row.try_get("room_id")?,
+                workos_organization_id: row.try_get("workos_organization_id")?,
+                owner_workos_user_id: row.try_get("owner_workos_user_id")?,
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn create_link_invite(
+        &self,
+        room_id: &str,
+        created_by_workos_user_id: &str,
+        token_hash: &str,
+        expires_at: OffsetDateTime,
+    ) -> Result<LinkInviteRecord> {
+        let invite_id = format!("invlink_{}", Uuid::new_v4().simple());
+        let row = sqlx::query(
+            "INSERT INTO room_invite_links (
+                invite_id,
+                room_id,
+                token_hash,
+                created_by_workos_user_id,
+                expires_at
+             )
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING revoked_at, created_at",
+        )
+        .bind(&invite_id)
+        .bind(normalize_room_id(room_id))
+        .bind(token_hash)
+        .bind(created_by_workos_user_id)
+        .bind(expires_at)
+        .fetch_one(&self.pool)
+        .await
+        .with_context(|| format!("failed to create invite link for room {room_id}"))?;
+
+        let revoked_at: Option<OffsetDateTime> = row
+            .try_get("revoked_at")
+            .context("failed to decode invite revoked_at")?;
+
+        Ok(LinkInviteRecord {
+            invite_id,
+            room_id: normalize_room_id(room_id),
+            expires_at: format_rfc3339(expires_at),
+            revoked_at: revoked_at.map(format_rfc3339),
+        })
+    }
+
+    pub async fn get_link_invite(&self, token_hash: &str) -> Result<Option<LinkInviteRecord>> {
+        let row = sqlx::query(
+            "SELECT invite_id, room_id, created_by_workos_user_id, expires_at, revoked_at
+             FROM room_invite_links
+             WHERE token_hash = $1",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| "failed to fetch invite link".to_owned())?;
+
+        row.map(|row| {
+            let expires_at: OffsetDateTime = row.try_get("expires_at")?;
+            let revoked_at: Option<OffsetDateTime> = row.try_get("revoked_at")?;
+            Ok(LinkInviteRecord {
+                invite_id: row.try_get("invite_id")?,
+                room_id: row.try_get("room_id")?,
+                expires_at: format_rfc3339(expires_at),
+                revoked_at: revoked_at.map(format_rfc3339),
+            })
+        })
+        .transpose()
     }
 
     pub async fn insert_hook_event(
@@ -346,6 +451,8 @@ fn format_rfc3339(value: OffsetDateTime) -> String {
 pub(crate) mod test_support {
     use super::*;
 
+    use std::str::FromStr;
+
     use sqlx::{Connection, PgConnection};
     use url::Url;
 
@@ -418,6 +525,10 @@ mod tests {
 
     use super::test_support::TestDb;
 
+    async fn create_test_room(db: &Db, name: &str) -> Room {
+        db.create_room(name, "org_test", "user_test").await.unwrap()
+    }
+
     #[tokio::test]
     async fn room_lookup_normalizes_case() {
         let Some(test_db) = TestDb::new().await else {
@@ -425,7 +536,7 @@ mod tests {
             return;
         };
 
-        let room = test_db.db.create_room("Case Test").await.unwrap();
+        let room = create_test_room(&test_db.db, "Case Test").await;
         let fetched = test_db
             .db
             .get_room(&room.room_id.to_ascii_lowercase())
@@ -444,7 +555,7 @@ mod tests {
             return;
         };
 
-        let room = test_db.db.create_room("Summary Default").await.unwrap();
+        let room = create_test_room(&test_db.db, "Summary Default").await;
 
         assert_eq!(
             test_db.db.get_summary(&room.room_id).await.unwrap(),
@@ -465,7 +576,7 @@ mod tests {
             return;
         };
 
-        let room = test_db.db.create_room("Summary Thread").await.unwrap();
+        let room = create_test_room(&test_db.db, "Summary Thread").await;
         test_db
             .db
             .set_summary_thread_id(&room.room_id, "thread_123")
@@ -500,7 +611,7 @@ mod tests {
             return;
         };
 
-        let room = test_db.db.create_room("Hook Events").await.unwrap();
+        let room = create_test_room(&test_db.db, "Hook Events").await;
         let first = test_db
             .db
             .insert_hook_event(

@@ -22,12 +22,13 @@ jobs:
       deployments: write
     env:
       VITE_API_BASE_URL: ${{ vars.SUPERMANAGER_PUBLIC_API_URL }}
+      VITE_WORKOS_CLIENT_ID: ${{ vars.VITE_WORKOS_CLIENT_ID }}
       CLOUDFLARE_PAGES_PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
     steps:
       - name: Validate required configuration
         run: |
           set -euo pipefail
-          for name in VITE_API_BASE_URL CLOUDFLARE_PAGES_PROJECT_NAME; do
+          for name in VITE_API_BASE_URL VITE_WORKOS_CLIENT_ID CLOUDFLARE_PAGES_PROJECT_NAME; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required GitHub Actions variable ${name}"
               exit 1

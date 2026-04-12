@@ -369,6 +369,7 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
         Resource = [
           aws_secretsmanager_secret.database_url.arn,
           var.openai_api_key_secret_arn,
+          var.workos_api_key_secret_arn,
         ]
       },
       {
@@ -498,6 +499,10 @@ resource "aws_ecs_task_definition" "server" {
         {
           name  = "SUPERMANAGER_DATA_DIR"
           value = "/srv/supermanager"
+        },
+        {
+          name  = "SUPERMANAGER_WORKOS_CLIENT_ID"
+          value = var.workos_client_id
         }
       ]
       mountPoints = [
@@ -515,6 +520,10 @@ resource "aws_ecs_task_definition" "server" {
         {
           name      = "OPENAI_API_KEY"
           valueFrom = var.openai_api_key_secret_arn
+        },
+        {
+          name      = "SUPERMANAGER_WORKOS_API_KEY"
+          valueFrom = var.workos_api_key_secret_arn
         }
       ]
       logConfiguration = {

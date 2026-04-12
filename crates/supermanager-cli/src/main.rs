@@ -31,6 +31,23 @@ enum Commands {
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
+    /// Authenticate this machine in the browser.
+    Login {
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+    },
+    /// Show the currently signed-in user.
+    Whoami {
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+    },
+    /// Remove the stored browser login for this machine.
+    Logout,
+    /// Create room invites.
+    Invite {
+        #[command(subcommand)]
+        command: InviteCommands,
+    },
     /// Remove supermanager configuration from the current repo.
     Leave {
         #[arg(long, default_value = ".")]
@@ -64,6 +81,29 @@ enum CreateCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum InviteCommands {
+    /// Create a reusable invite link for a room you own.
+    Link {
+        #[arg(long)]
+        room: Option<String>,
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+    },
+    /// Create an invite restricted to one email address.
+    Email {
+        email: String,
+        #[arg(long)]
+        room: Option<String>,
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let home_dir = supermanager::resolve_home_dir()?;
@@ -86,6 +126,7 @@ fn main() -> Result<()> {
                     server_url: server_url.clone(),
                     name,
                     cwd,
+                    home_dir: home_dir.clone(),
                 })?;
                 let join_outcome = supermanager::join_repo(supermanager::JoinConfig {
                     server_url: server_url,
@@ -137,7 +178,17 @@ fn main() -> Result<()> {
             app_url,
             cwd,
         } => {
-            let room = supermanager::get_room(&server, &room)?;
+            let room = if let Some(invite_token) = supermanager::invite_token_from_input(&room) {
+                if supermanager::whoami(&server, &home_dir).is_err() {
+                    let _ = supermanager::login(supermanager::LoginConfig {
+                        server_url: server.clone(),
+                        home_dir: home_dir.clone(),
+                    })?;
+                }
+                supermanager::accept_invite(&server, &invite_token, &home_dir)?
+            } else {
+                supermanager::get_room(&server, &room, &home_dir)?
+            };
             let outcome = supermanager::join_repo(supermanager::JoinConfig {
                 server_url: server,
                 app_url,
@@ -159,6 +210,78 @@ fn main() -> Result<()> {
             println!();
             print_clipboard_status(&outcome.dashboard_url);
         }
+        Commands::Login { server } => {
+            let outcome = supermanager::login(supermanager::LoginConfig {
+                server_url: server,
+                home_dir,
+            })?;
+
+            println!();
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mSigned in\x1b[0m");
+            println!();
+            println!("    \x1b[2mName\x1b[0m       {}", outcome.user.display_name);
+            println!(
+                "    \x1b[2mEmail\x1b[0m      {}",
+                outcome.user.primary_email
+            );
+        }
+        Commands::Whoami { server } => {
+            let user = supermanager::whoami(&server, &home_dir)?;
+
+            println!();
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mCurrent user\x1b[0m");
+            println!();
+            println!("    \x1b[2mName\x1b[0m       {}", user.display_name);
+            println!("    \x1b[2mEmail\x1b[0m      {}", user.primary_email);
+        }
+        Commands::Logout => {
+            let removed = supermanager::logout(&home_dir)?;
+
+            println!();
+            if removed {
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mSigned out\x1b[0m");
+            } else {
+                println!("  \x1b[33m!\x1b[0m \x1b[1mNo stored login\x1b[0m");
+            }
+        }
+        Commands::Invite { command } => match command {
+            InviteCommands::Link { room, server, cwd } => {
+                let room_id = resolve_invite_room(room, &server, &cwd, &home_dir)?;
+                let invite = supermanager::create_link_invite(&server, &room_id, &home_dir)?;
+
+                println!();
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mInvite link created\x1b[0m");
+                println!();
+                println!("    \x1b[2mRoom\x1b[0m       {}", invite.room_id);
+                println!("    \x1b[2mExpires\x1b[0m    {}", invite.expires_at);
+                println!("    \x1b[2mInvite\x1b[0m     {}", invite.invite_url);
+                println!();
+                print_clipboard_status(&invite.invite_url);
+            }
+            InviteCommands::Email {
+                email,
+                room,
+                server,
+                cwd,
+            } => {
+                let room_id = resolve_invite_room(room, &server, &cwd, &home_dir)?;
+                let invite =
+                    supermanager::create_email_invite(&server, &room_id, &email, &home_dir)?;
+
+                println!();
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mEmail invite created\x1b[0m");
+                println!();
+                println!("    \x1b[2mRoom\x1b[0m       {}", invite.room_id);
+                println!(
+                    "    \x1b[2mEmail\x1b[0m      {}",
+                    invite.target_email.unwrap_or(email)
+                );
+                println!("    \x1b[2mExpires\x1b[0m    {}", invite.expires_at);
+                println!("    \x1b[2mInvite\x1b[0m     {}", invite.invite_url);
+                println!();
+                print_clipboard_status(&invite.invite_url);
+            }
+        },
         Commands::Leave { cwd } => {
             let outcome = supermanager::leave_repo(&cwd, &home_dir)?;
 
@@ -223,7 +346,11 @@ fn main() -> Result<()> {
 fn should_auto_update(command: &Commands) -> bool {
     matches!(
         command,
-        Commands::Create { .. } | Commands::Join { .. } | Commands::Leave { .. } | Commands::List
+        Commands::Create { .. }
+            | Commands::Join { .. }
+            | Commands::Leave { .. }
+            | Commands::List
+            | Commands::Invite { .. }
     )
 }
 
@@ -273,4 +400,22 @@ fn print_self_update_status(outcome: &supermanager::SelfUpdateOutcome) {
             println!();
         }
     }
+}
+
+fn resolve_invite_room(
+    explicit_room: Option<String>,
+    server: &str,
+    cwd: &PathBuf,
+    home_dir: &PathBuf,
+) -> Result<String> {
+    if let Some(room) = explicit_room {
+        return Ok(room);
+    }
+
+    supermanager::joined_room_for_path(home_dir, cwd, server)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no joined room found for {}; pass --room explicitly",
+            cwd.display()
+        )
+    })
 }

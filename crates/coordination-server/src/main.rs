@@ -6,12 +6,12 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use anyhow::Result;
 use axum::{
     Router,
-    http::{HeaderName, Method, header},
+    http::{HeaderName, HeaderValue, Method, header},
     routing::{get, post},
 };
 use clap::Parser;
 use tokio::sync::broadcast;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 use api::{AppState, RoomSummaryAgent, StoragePaths};
 use store::Db;
@@ -59,9 +59,16 @@ async fn main() -> Result<()> {
         storage,
         public_api_url: cli.public_api_url,
         public_app_url: cli.public_app_url,
+        auth: api::AuthConfig::from_env()?,
     };
 
+    let app_origin = HeaderValue::from_str(state.public_app_url.trim_end_matches('/'))?;
+
     let app = Router::new()
+        .route("/v1/auth/config", get(api::auth_config))
+        .route("/v1/me", get(api::current_user))
+        .route("/v1/auth/cli/refresh", post(api::refresh_cli_token))
+        .route("/v1/invites/accept", post(api::accept_invite))
         // ── Room management ──────────────────────────────
         .route("/v1/rooms", post(api::create_room))
         // ── Room-scoped routes ───────────────────────────
@@ -70,14 +77,17 @@ async fn main() -> Result<()> {
         .route("/r/{room_id}/feed/stream", get(api::stream_feed))
         .route("/r/{room_id}/hooks/turn", post(api::ingest_hook_turn))
         .route("/r/{room_id}/summary", get(api::get_manager_summary))
+        .route("/r/{room_id}/invites/link", post(api::create_link_invite))
+        .route("/r/{room_id}/invites/email", post(api::create_email_invite))
         // ── Health ───────────────────────────────────────
         .route("/health", get(api::health))
         .layer(
             CorsLayer::new()
-                .allow_origin(Any)
+                .allow_origin(app_origin)
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
                 .allow_headers([
                     header::CONTENT_TYPE,
+                    header::AUTHORIZATION,
                     HeaderName::from_static("last-event-id"),
                 ]),
         )
