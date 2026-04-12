@@ -2,8 +2,15 @@ mod agent;
 mod sse;
 pub mod summarize;
 
-use std::sync::Arc;
+use std::{
+    fs,
+    fs::OpenOptions,
+    io::{ErrorKind, Write},
+    path::{Path as FsPath, PathBuf},
+    sync::Arc,
+};
 
+use anyhow::Context;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -46,12 +53,51 @@ pub struct HookFeedEvent {
     pub event: StoredHookEvent,
 }
 
+#[derive(Clone, Debug)]
+pub struct StoragePaths {
+    pub data_dir: PathBuf,
+    pub codex_home: PathBuf,
+    pub rooms_dir: PathBuf,
+}
+
+impl StoragePaths {
+    pub fn new(data_dir: PathBuf) -> Self {
+        let codex_home = data_dir.join("codex");
+        let rooms_dir = data_dir.join("rooms");
+        Self {
+            data_dir,
+            codex_home,
+            rooms_dir,
+        }
+    }
+
+    pub fn initialize(&self) -> anyhow::Result<()> {
+        for path in [&self.data_dir, &self.codex_home, &self.rooms_dir] {
+            fs::create_dir_all(path)
+                .with_context(|| format!("failed to create storage dir {}", path.display()))?;
+            verify_dir_writable(path)?;
+        }
+        Ok(())
+    }
+
+    pub fn check_ready(&self) -> anyhow::Result<()> {
+        for path in [&self.data_dir, &self.codex_home, &self.rooms_dir] {
+            if !path.is_dir() {
+                anyhow::bail!("storage dir missing or not a directory: {}", path.display());
+            }
+            verify_dir_writable(path)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Db>,
     pub agent: RoomSummaryAgent,
     pub hook_events: broadcast::Sender<HookFeedEvent>,
     pub summary_events: broadcast::Sender<SummaryStatusEvent>,
+    pub storage: StoragePaths,
     pub public_api_url: String,
     pub public_app_url: String,
 }
@@ -60,6 +106,10 @@ pub struct AppState {
 
 pub async fn health(State(state): State<AppState>) -> Result<&'static str, (StatusCode, String)> {
     state.db.ping().await.map_err(service_unavailable_error)?;
+    state
+        .storage
+        .check_ready()
+        .map_err(service_unavailable_error)?;
     Ok("ok")
 }
 
@@ -190,6 +240,31 @@ fn trim_url(url: &str) -> &str {
     url.trim_end_matches('/')
 }
 
+fn verify_dir_writable(path: &FsPath) -> anyhow::Result<()> {
+    let probe = path.join(format!(".supermanager-write-check-{}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&probe)
+        .with_context(|| format!("failed to open storage probe file {}", probe.display()))?;
+    file.write_all(b"ok")
+        .with_context(|| format!("failed to write storage probe file {}", probe.display()))?;
+    drop(file);
+
+    match fs::remove_file(&probe) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("failed to remove storage probe file {}", probe.display())
+            });
+        }
+    }
+
+    Ok(())
+}
+
 fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
 }
@@ -208,6 +283,7 @@ mod tests {
 
     use crate::store::test_support::TestDb;
     use axum::body::to_bytes;
+    use tempfile::tempdir;
 
     #[test]
     fn cli_join_command_includes_app_url() {
@@ -250,11 +326,15 @@ mod tests {
 
         let (hook_events, _) = broadcast::channel(8);
         let (summary_events, _) = broadcast::channel(8);
+        let tempdir = tempdir().unwrap();
+        let storage = StoragePaths::new(tempdir.path().join("supermanager-data"));
+        storage.initialize().unwrap();
         let state = AppState {
             db: Arc::new(test_db.db.clone()),
             agent: RoomSummaryAgent::test_stub(),
             hook_events,
             summary_events,
+            storage,
             public_api_url: DEFAULT_PUBLIC_API_URL.to_owned(),
             public_app_url: DEFAULT_PUBLIC_APP_URL.to_owned(),
         };
@@ -262,6 +342,34 @@ mod tests {
         let status = health(State(state)).await.unwrap();
 
         assert_eq!(status, "ok");
+        test_db.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn health_fails_when_storage_root_is_missing() {
+        let Some(test_db) = TestDb::new().await else {
+            eprintln!("skipping PostgreSQL test: TEST_DATABASE_URL is not set");
+            return;
+        };
+
+        let (hook_events, _) = broadcast::channel(8);
+        let (summary_events, _) = broadcast::channel(8);
+        let tempdir = tempdir().unwrap();
+        let state = AppState {
+            db: Arc::new(test_db.db.clone()),
+            agent: RoomSummaryAgent::test_stub(),
+            hook_events,
+            summary_events,
+            storage: StoragePaths::new(tempdir.path().join("missing-storage-root")),
+            public_api_url: DEFAULT_PUBLIC_API_URL.to_owned(),
+            public_app_url: DEFAULT_PUBLIC_APP_URL.to_owned(),
+        };
+
+        let error = health(State(state)).await.unwrap_err();
+
+        assert_eq!(error.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(error.1.contains("storage dir missing"));
+
         test_db.cleanup().await;
     }
 
@@ -274,11 +382,15 @@ mod tests {
 
         let (hook_events, _) = broadcast::channel(8);
         let (summary_events, _) = broadcast::channel(8);
+        let tempdir = tempdir().unwrap();
+        let storage = StoragePaths::new(tempdir.path().join("supermanager-data"));
+        storage.initialize().unwrap();
         let state = AppState {
             db: Arc::new(test_db.db.clone()),
             agent: RoomSummaryAgent::test_stub(),
             hook_events,
             summary_events,
+            storage,
             public_api_url: DEFAULT_PUBLIC_API_URL.to_owned(),
             public_app_url: DEFAULT_PUBLIC_APP_URL.to_owned(),
         };

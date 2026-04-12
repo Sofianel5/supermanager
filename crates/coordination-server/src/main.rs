@@ -1,7 +1,7 @@
 mod api;
 mod store;
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use axum::{
@@ -13,7 +13,7 @@ use clap::Parser;
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 
-use api::{AppState, RoomSummaryAgent};
+use api::{AppState, RoomSummaryAgent, StoragePaths};
 use store::Db;
 
 #[derive(Parser, Debug)]
@@ -23,6 +23,8 @@ struct Cli {
     bind: SocketAddr,
     #[arg(long, env = "DATABASE_URL")]
     database_url: String,
+    #[arg(long, env = "SUPERMANAGER_DATA_DIR")]
+    data_dir: PathBuf,
     #[arg(
         long,
         env = "SUPERMANAGER_PUBLIC_API_URL",
@@ -41,17 +43,20 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let db = Arc::new(Db::connect(&cli.database_url).await?);
-    let data_dir = std::env::temp_dir().join("supermanager-data");
+    let storage = StoragePaths::new(cli.data_dir.clone());
+    storage.initialize()?;
 
     let (hook_events, _) = broadcast::channel(256);
     let (summary_events, _) = broadcast::channel(64);
-    let agent = RoomSummaryAgent::start(db.clone(), summary_events.clone(), data_dir).await?;
+    let agent =
+        RoomSummaryAgent::start(db.clone(), summary_events.clone(), storage.clone()).await?;
 
     let state = AppState {
         db,
         agent,
         hook_events,
         summary_events,
+        storage,
         public_api_url: cli.public_api_url,
         public_app_url: cli.public_app_url,
     };

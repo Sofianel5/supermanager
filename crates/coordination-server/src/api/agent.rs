@@ -26,7 +26,10 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::store::{Db, now_rfc3339};
 
-use super::summarize::{SummaryStatus, SummaryStatusEvent, broadcast_status};
+use super::{
+    StoragePaths,
+    summarize::{SummaryStatus, SummaryStatusEvent, broadcast_status},
+};
 
 const SUMMARY_MODEL: &str = "gpt-5.4-mini";
 const CLIENT_NAME: &str = "supermanager_coordination_server";
@@ -109,9 +112,14 @@ impl RoomSummaryAgent {
     pub async fn start(
         db: Arc<Db>,
         summary_events: broadcast::Sender<SummaryStatusEvent>,
-        data_dir: PathBuf,
+        storage: StoragePaths,
     ) -> Result<Self> {
-        let config = Config::load_default_with_cli_overrides(Vec::new())
+        let StoragePaths {
+            codex_home,
+            rooms_dir,
+            ..
+        } = storage;
+        let config = Config::load_default_with_cli_overrides_for_codex_home(codex_home, Vec::new())
             .context("failed to load default Codex config")?;
         let client = InProcessAppServerClient::start(InProcessClientStartArgs {
             arg0_paths: Arg0DispatchPaths::default(),
@@ -133,9 +141,6 @@ impl RoomSummaryAgent {
         .context("failed to start in-process Codex app server")?;
 
         let (command_tx, command_rx) = mpsc::channel(256);
-        let rooms_dir = data_dir.join("rooms");
-        fs::create_dir_all(&rooms_dir)
-            .with_context(|| format!("failed to create rooms dir: {}", rooms_dir.display()))?;
 
         tokio::spawn(async move {
             let loop_state = AgentLoop {
@@ -593,7 +598,7 @@ impl AgentLoop {
     }
 
     fn room_cwd(&self, room_id: &str) -> Result<PathBuf> {
-        let dir = self.rooms_dir.join(room_id);
+        let dir = self.rooms_dir.join(room_id).join("cwd");
         fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create room dir: {}", dir.display()))?;
         Ok(dir)

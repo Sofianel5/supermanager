@@ -222,6 +222,30 @@ resource "aws_security_group" "rds" {
   })
 }
 
+resource "aws_security_group" "efs" {
+  name        = "${var.name}-efs"
+  description = "NFS access from the supermanager ECS tasks"
+  vpc_id      = aws_vpc.this.id
+
+  ingress {
+    from_port       = 2049
+    to_port         = 2049
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.tags, {
+    Name = "${var.name}-efs-sg"
+  })
+}
+
 resource "aws_ecr_repository" "server" {
   name                 = "${var.name}-server"
   image_tag_mutability = "MUTABLE"
@@ -237,6 +261,45 @@ resource "aws_cloudwatch_log_group" "server" {
   name              = "/ecs/${var.name}-server"
   retention_in_days = var.log_retention_days
   tags              = local.tags
+}
+
+resource "aws_efs_file_system" "server" {
+  encrypted = true
+
+  tags = merge(local.tags, {
+    Name = "${var.name}-efs"
+  })
+}
+
+resource "aws_efs_access_point" "server" {
+  file_system_id = aws_efs_file_system.server.id
+
+  posix_user {
+    gid = 0
+    uid = 0
+  }
+
+  root_directory {
+    path = "/supermanager"
+
+    creation_info {
+      owner_gid   = 0
+      owner_uid   = 0
+      permissions = "0755"
+    }
+  }
+
+  tags = merge(local.tags, {
+    Name = "${var.name}-efs-ap"
+  })
+}
+
+resource "aws_efs_mount_target" "server" {
+  for_each = aws_subnet.private
+
+  file_system_id  = aws_efs_file_system.server.id
+  subnet_id       = each.value.id
+  security_groups = [aws_security_group.efs.id]
 }
 
 resource "random_password" "db_password" {
@@ -422,6 +485,19 @@ resource "aws_ecs_task_definition" "server" {
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
+  volume {
+    name = "server-data"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.server.id
+      transit_encryption = "ENABLED"
+
+      authorization_config {
+        access_point_id = aws_efs_access_point.server.id
+      }
+    }
+  }
+
   container_definitions = jsonencode([
     {
       name      = var.container_name
@@ -442,6 +518,17 @@ resource "aws_ecs_task_definition" "server" {
         {
           name  = "SUPERMANAGER_PUBLIC_APP_URL"
           value = var.public_app_url
+        },
+        {
+          name  = "SUPERMANAGER_DATA_DIR"
+          value = "/srv/supermanager"
+        }
+      ]
+      mountPoints = [
+        {
+          sourceVolume  = "server-data"
+          containerPath = "/srv/supermanager"
+          readOnly      = false
         }
       ]
       secrets = [
@@ -474,8 +561,8 @@ resource "aws_ecs_service" "server" {
   task_definition                    = aws_ecs_task_definition.server.arn
   desired_count                      = 1
   launch_type                        = "FARGATE"
-  deployment_minimum_healthy_percent = 100
-  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
   health_check_grace_period_seconds  = 60
 
   network_configuration {
@@ -490,7 +577,7 @@ resource "aws_ecs_service" "server" {
     container_port   = var.container_port
   }
 
-  depends_on = [aws_lb_listener.https]
+  depends_on = [aws_lb_listener.https, aws_efs_mount_target.server]
 
   tags = local.tags
 }
@@ -625,21 +712,9 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
         Effect = "Allow"
         Action = [
           "ecs:DescribeServices",
-          "ecs:DescribeTaskDefinition",
-          "ecs:RegisterTaskDefinition",
           "ecs:UpdateService",
         ]
         Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "iam:PassRole",
-        ]
-        Resource = [
-          aws_iam_role.ecs_task.arn,
-          aws_iam_role.ecs_task_execution.arn,
-        ]
       },
     ]
   })
