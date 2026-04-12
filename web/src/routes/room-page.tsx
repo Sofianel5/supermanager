@@ -17,7 +17,7 @@ import {
 } from "../api";
 
 const FEED_LIMIT = 10;
-const DEFAULT_SERVER_URL = "https://supermanager.fly.dev";
+const DEFAULT_SERVER_URL = "https://api.supermanager.dev";
 const DEFAULT_APP_URL = "https://supermanager.dev";
 
 type SummaryStatus = "idle" | "ready" | "generating" | "error";

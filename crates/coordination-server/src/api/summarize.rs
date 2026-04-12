@@ -44,13 +44,13 @@ pub struct SummaryStatusEvent {
     pub status: SummaryStatus,
 }
 
-pub fn broadcast_status(
+pub async fn broadcast_status(
     db: &Db,
     summary_events: &broadcast::Sender<SummaryStatusEvent>,
     room_id: &str,
     status: SummaryStatus,
 ) {
-    let _ = db.set_summary_status(room_id, status.as_str());
+    let _ = db.set_summary_status(room_id, status.as_str()).await;
     let _ = summary_events.send(SummaryStatusEvent {
         room_id: room_id.to_owned(),
         status,

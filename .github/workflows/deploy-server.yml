@@ -1,0 +1,113 @@
+name: Deploy Server
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/deploy-server.yml
+      - Cargo.toml
+      - Cargo.lock
+      - Dockerfile
+      - .dockerignore
+      - crates/**
+      - vendor/**
+      - .gitmodules
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-server-ecs
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy to ECS
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      AWS_ECR_REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
+      AWS_ECS_CLUSTER: ${{ vars.AWS_ECS_CLUSTER }}
+      AWS_ECS_SERVICE: ${{ vars.AWS_ECS_SERVICE }}
+      AWS_ECS_TASK_FAMILY: ${{ vars.AWS_ECS_TASK_FAMILY }}
+      AWS_ECS_CONTAINER_NAME: ${{ vars.AWS_ECS_CONTAINER_NAME }}
+    steps:
+      - name: Validate required configuration
+        run: |
+          set -euo pipefail
+          for name in \
+            AWS_REGION \
+            AWS_DEPLOY_ROLE_ARN \
+            AWS_ECR_REPOSITORY \
+            AWS_ECS_CLUSTER \
+            AWS_ECS_SERVICE \
+            AWS_ECS_TASK_FAMILY \
+            AWS_ECS_CONTAINER_NAME
+          do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub Actions variable ${name}"
+              exit 1
+            fi
+          done
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image_uri="${ECR_REGISTRY}/${AWS_ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build --tag "${image_uri}" .
+          docker push "${image_uri}"
+          echo "image_uri=${image_uri}" >> "${GITHUB_OUTPUT}"
+
+      - name: Fetch current task definition
+        run: |
+          set -euo pipefail
+          aws ecs describe-task-definition \
+            --task-definition "${AWS_ECS_TASK_FAMILY}" \
+            --query taskDefinition \
+            | jq 'del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )' \
+            > task-definition.json
+
+      - name: Render task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.AWS_ECS_CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image_uri }}
+
+      - name: Deploy task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.AWS_ECS_SERVICE }}
+          cluster: ${{ env.AWS_ECS_CLUSTER }}
+          wait-for-service-stability: true

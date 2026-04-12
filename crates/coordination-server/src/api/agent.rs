@@ -6,11 +6,11 @@ use codex_app_server_client::{
     InProcessServerEvent,
 };
 use codex_app_server_protocol::{
-    AskForApproval, ClientRequest, DynamicToolCallOutputContentItem,
-    DynamicToolCallParams, DynamicToolCallResponse, DynamicToolSpec, JSONRPCErrorError, RequestId,
-    SandboxMode, ServerNotification, ServerRequest, ThreadResumeParams, ThreadResumeResponse,
-    ThreadStartParams, ThreadStartResponse, TurnStartParams, TurnStartResponse, TurnStatus,
-    TurnSteerParams, TurnSteerResponse, UserInput,
+    AskForApproval, ClientRequest, DynamicToolCallOutputContentItem, DynamicToolCallParams,
+    DynamicToolCallResponse, DynamicToolSpec, JSONRPCErrorError, RequestId, SandboxMode,
+    ServerNotification, ServerRequest, ThreadResumeParams, ThreadResumeResponse, ThreadStartParams,
+    ThreadStartResponse, TurnStartParams, TurnStartResponse, TurnStatus, TurnSteerParams,
+    TurnSteerResponse, UserInput,
 };
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::{
@@ -162,12 +162,6 @@ impl RoomSummaryAgent {
             .send(AgentCommand::EnqueueEvent { room_id, event })
             .await
             .map_err(|_| anyhow!("room summary agent is not running"))
-    }
-
-    #[cfg(test)]
-    pub fn noop() -> Self {
-        let (command_tx, _command_rx) = mpsc::channel(1);
-        Self { command_tx }
     }
 }
 
@@ -322,10 +316,10 @@ impl SummaryTool {
         }
     }
 
-    fn execute(self, db: &Db, room_id: &str) -> Result<DynamicToolCallResponse> {
+    async fn execute(self, db: &Db, room_id: &str) -> Result<DynamicToolCallResponse> {
         match self {
             Self::GetSnapshot => {
-                let snapshot = db.get_summary(room_id)?;
+                let snapshot = db.get_summary(room_id).await?;
                 Ok(tool_success(serde_json::to_string_pretty(&snapshot)?))
             }
             Self::SetBluf { markdown } => {
@@ -334,6 +328,7 @@ impl SummaryTool {
                     snapshot.bluf_markdown = markdown;
                     Ok((true, tool_success("updated BLUF")))
                 })
+                .await
             }
             Self::SetOverview { markdown } => {
                 let markdown = markdown.trim().to_owned();
@@ -341,6 +336,7 @@ impl SummaryTool {
                     snapshot.overview_markdown = markdown;
                     Ok((true, tool_success("updated overview")))
                 })
+                .await
             }
             Self::SetEmployeeCard {
                 employee_name,
@@ -375,6 +371,7 @@ impl SummaryTool {
                         tool_success(format!("updated employee card for {employee_name}")),
                     ))
                 })
+                .await
             }
             Self::RemoveEmployeeCard { employee_name } => {
                 let employee_name = employee_name.trim().to_owned();
@@ -394,6 +391,7 @@ impl SummaryTool {
                     };
                     Ok((changed, tool_success(message)))
                 })
+                .await
             }
         }
     }
@@ -450,7 +448,7 @@ impl AgentLoop {
     async fn handle_server_request(&mut self, request: ServerRequest) -> Result<()> {
         match request {
             ServerRequest::DynamicToolCall { request_id, params } => {
-                let response = self.execute_tool_call(&params);
+                let response = self.execute_tool_call(&params).await;
                 let result = serde_json::to_value(response?)?;
                 self.client
                     .resolve_server_request(request_id, result)
@@ -503,7 +501,7 @@ impl AgentLoop {
                     TurnStatus::Completed => SummaryStatus::Ready,
                     _ => SummaryStatus::Error,
                 };
-                broadcast_status(self.db.as_ref(), &self.summary_events, &room_id, status);
+                broadcast_status(self.db.as_ref(), &self.summary_events, &room_id, status).await;
             }
             _ => {}
         }
@@ -543,9 +541,7 @@ impl AgentLoop {
                     }
                 }
                 Err(error) => {
-                    eprintln!(
-                        "[room_summary_agent] steer failed for room {room_id}: {error}"
-                    );
+                    eprintln!("[room_summary_agent] steer failed for room {room_id}: {error}");
                 }
             }
         } else {
@@ -554,7 +550,8 @@ impl AgentLoop {
                 &self.summary_events,
                 room_id,
                 SummaryStatus::Generating,
-            );
+            )
+            .await;
             let request_id = self.next_request_id();
             match self
                 .client
@@ -574,15 +571,14 @@ impl AgentLoop {
                     }
                 }
                 Err(error) => {
-                    eprintln!(
-                        "[room_summary_agent] turn start failed for room {room_id}: {error}"
-                    );
+                    eprintln!("[room_summary_agent] turn start failed for room {room_id}: {error}");
                     broadcast_status(
                         self.db.as_ref(),
                         &self.summary_events,
                         room_id,
                         SummaryStatus::Error,
-                    );
+                    )
+                    .await;
                 }
             }
         }
@@ -609,7 +605,7 @@ impl AgentLoop {
         let cwd = self.room_cwd(room_id)?;
         let cwd_str = cwd.display().to_string();
 
-        let stored_thread_id = self.db.get_summary_thread_id(room_id)?;
+        let stored_thread_id = self.db.get_summary_thread_id(room_id).await?;
         let thread_id = if let Some(thread_id) = stored_thread_id {
             match self.resume_thread(&thread_id, &cwd_str).await {
                 Ok(thread_id) => thread_id,
@@ -626,12 +622,16 @@ impl AgentLoop {
 
         self.db
             .set_summary_thread_id(room_id, &thread_id)
+            .await
             .with_context(|| format!("failed to persist thread id for room {room_id}"))?;
 
-        let room = self.rooms.entry(room_id.to_owned()).or_insert_with(|| RoomState {
-            thread_id: None,
-            active_turn: None,
-        });
+        let room = self
+            .rooms
+            .entry(room_id.to_owned())
+            .or_insert_with(|| RoomState {
+                thread_id: None,
+                active_turn: None,
+            });
         room.thread_id = Some(thread_id.clone());
         self.thread_to_room
             .insert(thread_id.clone(), room_id.to_owned());
@@ -682,7 +682,10 @@ impl AgentLoop {
         Ok(response.thread.id)
     }
 
-    fn execute_tool_call(&self, params: &DynamicToolCallParams) -> Result<DynamicToolCallResponse> {
+    async fn execute_tool_call(
+        &self,
+        params: &DynamicToolCallParams,
+    ) -> Result<DynamicToolCallResponse> {
         let Some(room_id) = self.thread_to_room.get(&params.thread_id) else {
             return Ok(tool_failure(format!(
                 "unknown room thread: {}",
@@ -690,8 +693,11 @@ impl AgentLoop {
             )));
         };
 
-        match SummaryTool::parse(params).and_then(|tool| tool.execute(self.db.as_ref(), room_id)) {
-            Ok(response) => Ok(response),
+        match SummaryTool::parse(params) {
+            Ok(tool) => match tool.execute(self.db.as_ref(), room_id).await {
+                Ok(response) => Ok(response),
+                Err(error) => Ok(tool_failure(error.to_string())),
+            },
             Err(error) => Ok(tool_failure(error.to_string())),
         }
     }
@@ -703,15 +709,15 @@ impl AgentLoop {
     }
 }
 
-fn mutate_summary<T>(
+async fn mutate_summary<T>(
     db: &Db,
     room_id: &str,
     mutate: impl FnOnce(&mut RoomSnapshot) -> Result<(bool, T)>,
 ) -> Result<T> {
-    let mut snapshot = db.get_summary(room_id)?;
+    let mut snapshot = db.get_summary(room_id).await?;
     let (changed, output) = mutate(&mut snapshot)?;
     if changed {
-        db.set_summary(room_id, &snapshot)?;
+        db.set_summary(room_id, &snapshot).await?;
     }
 
     Ok(output)
@@ -772,14 +778,17 @@ fn tool_failure(message: impl Into<String>) -> DynamicToolCallResponse {
 mod tests {
     use super::*;
 
+    use crate::store::test_support::TestDb;
     use reporter_protocol::HookTurnReport;
-    use tempfile::TempDir;
 
-    #[test]
-    fn set_employee_card_uses_latest_employee_timestamp() {
-        let tempdir = TempDir::new().unwrap();
-        let db = Db::open(&tempdir.path().join("agent-tools.sqlite")).unwrap();
-        let room = db.create_room("Summary Room").unwrap();
+    #[tokio::test]
+    async fn set_employee_card_uses_latest_employee_timestamp() {
+        let Some(test_db) = TestDb::new().await else {
+            eprintln!("skipping PostgreSQL test: TEST_DATABASE_URL is not set");
+            return;
+        };
+        let db = test_db.db.clone();
+        let room = db.create_room("Summary Room").await.unwrap();
 
         db.insert_hook_event(
             &room.room_id,
@@ -791,6 +800,7 @@ mod tests {
                 payload: json!({ "last_assistant_message": "First update" }),
             },
         )
+        .await
         .unwrap();
 
         let response = SummaryTool::SetEmployeeCard {
@@ -798,11 +808,12 @@ mod tests {
             markdown: "- Shipped the agent runtime.".to_owned(),
         }
         .execute(&db, &room.room_id)
+        .await
         .unwrap();
 
         assert!(response.success);
 
-        let snapshot = db.get_summary(&room.room_id).unwrap();
+        let snapshot = db.get_summary(&room.room_id).await.unwrap();
         assert_eq!(snapshot.employees.len(), 1);
         assert_eq!(snapshot.employees[0].employee_name, "Alice Example");
         assert_eq!(
@@ -810,6 +821,8 @@ mod tests {
             "- Shipped the agent runtime."
         );
         assert!(!snapshot.employees[0].last_update_at.is_empty());
+
+        test_db.cleanup().await;
     }
 
     #[test]
@@ -831,5 +844,4 @@ mod tests {
         assert!(rendered.contains("branch: feature/agent"));
         assert!(rendered.contains("\"hook_event_name\": \"Stop\""));
     }
-
 }

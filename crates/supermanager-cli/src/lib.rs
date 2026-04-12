@@ -34,7 +34,7 @@ const HOOK_TIMEOUT_SECONDS: u64 = 10;
 const REPORT_TIMEOUT_SECONDS: u64 = 5;
 const API_TIMEOUT_SECONDS: u64 = 10;
 
-pub const DEFAULT_SERVER_URL: &str = "https://supermanager.fly.dev";
+pub const DEFAULT_SERVER_URL: &str = "https://api.supermanager.dev";
 pub const DEFAULT_APP_URL: &str = "https://supermanager.dev";
 
 pub struct JoinConfig {
@@ -138,11 +138,12 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     let employee_name = detect_employee_name(&repo_dir)?;
     let server_url = normalize_url(&config.server_url);
     let app_url = normalize_url(&config.app_url);
-    let dashboard_url = format!("{}/r/{}", app_url, config.room_id);
+    let room_id = config.room_id.trim().to_ascii_uppercase();
+    let dashboard_url = format!("{}/r/{}", app_url, room_id);
 
     let room_config = RepoRoomConfig {
         server_url,
-        room_id: config.room_id.clone(),
+        room_id: room_id.clone(),
     };
 
     upsert_repo_room_config(&config.home_dir, &repo_dir, room_config)?;
@@ -167,7 +168,7 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     upsert_command_hook(&repo_dir.join(CODEX_HOOKS_JSON), "Stop", CODEX_HOOK_COMMAND)?;
 
     Ok(JoinOutcome {
-        room_id: config.room_id,
+        room_id,
         employee_name,
         dashboard_url,
         repo_dir,
@@ -833,7 +834,7 @@ mod tests {
         assert!(hooks.contains(CODEX_HOOK_COMMAND));
         assert_eq!(
             outcome.dashboard_url,
-            "https://app.supermanager.test/r/bright-fox"
+            "https://app.supermanager.test/r/BRIGHT-FOX"
         );
 
         fs::remove_dir_all(root).unwrap();
@@ -869,7 +870,7 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .room_id,
-            "bright-fox"
+            "BRIGHT-FOX"
         );
 
         fs::remove_dir_all(root).unwrap();
@@ -1003,14 +1004,14 @@ mod tests {
         config.repos.insert(
             repo_key(&repo_b),
             RepoRoomConfig {
-                server_url: "https://supermanager.fly.dev".to_owned(),
+                server_url: "https://api.supermanager.dev".to_owned(),
                 room_id: "ALPHA1".to_owned(),
             },
         );
         config.repos.insert(
             repo_key(&repo_a),
             RepoRoomConfig {
-                server_url: "https://supermanager.fly.dev".to_owned(),
+                server_url: "https://api.supermanager.dev".to_owned(),
                 room_id: "ALPHA1".to_owned(),
             },
         );
@@ -1028,7 +1029,7 @@ mod tests {
 
         assert_eq!(outcome.rooms.len(), 2);
         assert_eq!(outcome.rooms[0].room_id, "ALPHA1");
-        assert_eq!(outcome.rooms[0].server_url, "https://supermanager.fly.dev");
+        assert_eq!(outcome.rooms[0].server_url, "https://api.supermanager.dev");
         assert_eq!(
             outcome.rooms[0].repo_dirs,
             vec![
