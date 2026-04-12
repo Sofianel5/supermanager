@@ -45,8 +45,7 @@ pub struct AuthConfig {
     member_role_slug: String,
     email_invite_days: i64,
     link_invite_days: i64,
-    public_client: workos_client::Client,
-    management_client: workos_client::Client,
+    client: workos_client::Client,
     jwks_cache: Arc<RwLock<Option<CachedJwks>>>,
 }
 
@@ -105,8 +104,7 @@ impl AuthConfig {
             DEFAULT_LINK_INVITE_DAYS,
         )?;
 
-        let public_client = build_workos_client(&base_url, None)?;
-        let management_client = build_workos_client(&base_url, Some(&api_key))?;
+        let client = build_workos_client(&base_url, &api_key)?;
 
         Ok(Self {
             api_key,
@@ -116,8 +114,7 @@ impl AuthConfig {
             member_role_slug,
             email_invite_days,
             link_invite_days,
-            public_client,
-            management_client,
+            client,
             jwks_cache: Arc::new(RwLock::new(None)),
         })
     }
@@ -131,7 +128,7 @@ impl AuthConfig {
         name: &str,
     ) -> Result<workos_client::types::Organization> {
         workos_ok(
-            self.management_client
+            self.client
                 .create_organization(&CreateOrganizationRequest {
                     external_id: None,
                     name: name.to_owned(),
@@ -142,7 +139,7 @@ impl AuthConfig {
     }
 
     async fn get_user(&self, user_id: &str) -> Result<User> {
-        workos_ok(self.management_client.get_user(user_id).await).await
+        workos_ok(self.client.get_user(user_id).await).await
     }
 
     async fn ensure_membership(&self, user_id: &str, organization_id: &str) -> Result<()> {
@@ -155,7 +152,7 @@ impl AuthConfig {
         }
 
         workos_ok(
-            self.management_client
+            self.client
                 .create_organization_membership(&CreateOrganizationMembershipRequest {
                     organization_id: organization_id.to_owned(),
                     role_slug: Some(self.member_role_slug.clone()),
@@ -173,7 +170,7 @@ impl AuthConfig {
         organization_id: &str,
     ) -> Result<Vec<workos_client::types::OrganizationMembership>> {
         let response = workos_ok(
-            self.management_client
+            self.client
                 .list_organization_memberships(Some(organization_id), None, Some(user_id))
                 .await,
         )
@@ -188,7 +185,7 @@ impl AuthConfig {
         email: &str,
     ) -> Result<workos_client::types::Invitation> {
         workos_ok(
-            self.management_client
+            self.client
                 .create_invitation(&CreateInvitationRequest {
                     email: email.to_owned(),
                     expires_in_days: Some(self.email_invite_days),
@@ -256,7 +253,7 @@ impl AuthConfig {
             .unwrap_or(true);
 
         if force_refresh || is_stale {
-            *guard = Some(fetch_jwks(&self.public_client, &self.client_id).await?);
+            *guard = Some(fetch_jwks(&self.client, &self.client_id).await?);
         }
 
         Ok(guard
@@ -499,26 +496,20 @@ pub(crate) async fn ensure_room_member(
     ))
 }
 
-fn build_workos_client(
-    base_url: &str,
-    bearer_token: Option<&str>,
-) -> Result<workos_client::Client> {
-    let mut builder =
-        workos_client::reqwest::Client::builder().timeout(std::time::Duration::from_secs(15));
-    if let Some(token) = bearer_token {
-        let mut headers = workos_client::reqwest::header::HeaderMap::new();
-        headers.insert(
-            header::AUTHORIZATION,
-            format!("Bearer {token}")
-                .parse()
-                .context("invalid WorkOS API key")?,
-        );
-        builder = builder.default_headers(headers);
-    }
+fn build_workos_client(base_url: &str, api_key: &str) -> Result<workos_client::Client> {
+    let mut headers = workos_client::reqwest::header::HeaderMap::new();
+    headers.insert(
+        header::AUTHORIZATION,
+        format!("Bearer {api_key}")
+            .parse()
+            .context("invalid WorkOS API key")?,
+    );
 
     Ok(workos_client::Client::new_with_client(
         base_url,
-        builder
+        workos_client::reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .default_headers(headers)
             .build()
             .context("failed to build WorkOS HTTP client")?,
     ))
