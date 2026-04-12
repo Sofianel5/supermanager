@@ -29,7 +29,7 @@ locals {
 
   alarm_actions = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
   api_url       = "https://${var.api_domain}"
-  database_url  = format(
+  database_url = format(
     "postgres://%s:%s@%s:%d/%s?sslmode=require",
     var.db_username,
     urlencode(random_password.db_password.result),
@@ -104,32 +104,8 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-resource "aws_eip" "nat" {
-  domain = "vpc"
-
-  tags = merge(local.tags, {
-    Name = "${var.name}-nat-eip"
-  })
-}
-
-resource "aws_nat_gateway" "this" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = values(aws_subnet.public)[0].id
-
-  tags = merge(local.tags, {
-    Name = "${var.name}-nat"
-  })
-
-  depends_on = [aws_internet_gateway.this]
-}
-
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.this.id
-  }
 
   tags = merge(local.tags, {
     Name = "${var.name}-private-rt"
@@ -566,9 +542,9 @@ resource "aws_ecs_service" "server" {
   health_check_grace_period_seconds  = 60
 
   network_configuration {
-    subnets          = [for subnet in values(aws_subnet.private) : subnet.id]
+    subnets          = [for subnet in values(aws_subnet.public) : subnet.id]
     security_groups  = [aws_security_group.ecs.id]
-    assign_public_ip = false
+    assign_public_ip = true
   }
 
   load_balancer {

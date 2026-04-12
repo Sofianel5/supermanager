@@ -1,7 +1,7 @@
 variable "aws_region" {
   description = "AWS region for all backend resources."
   type        = string
-  default     = "us-west-2"
+  default     = "us-west-1"
 }
 
 variable "name" {
