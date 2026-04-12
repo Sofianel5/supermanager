@@ -203,17 +203,15 @@ Key inputs:
 
 Add these repository variables under `Settings -> Secrets and variables -> Actions -> Variables`:
 
-- `AWS_REGION`
-- `AWS_DEPLOY_ROLE_ARN`
-- `AWS_ECR_REPOSITORY`
-- `AWS_ECS_CLUSTER`
-- `AWS_ECS_SERVICE`
-- `AWS_ECS_TASK_FAMILY`
-- `AWS_ECS_CONTAINER_NAME`
+- `AWS_REGION` from `aws_region`
+- `AWS_DEPLOY_ROLE_ARN` from `github_actions_role_arn`
+- `AWS_ECR_REPOSITORY` from `ecr_repository_name`
+- `AWS_ECS_CLUSTER` from `ecs_cluster_name`
+- `AWS_ECS_SERVICE` from `ecs_service_name`
 
-The deploy workflow uses GitHub OIDC with `aws-actions/configure-aws-credentials`, builds the server image, pushes it to ECR, then registers and deploys an updated ECS task definition.
+The deploy workflow runs only from `master`, uses GitHub OIDC with `aws-actions/configure-aws-credentials`, pushes the server image to ECR as `:latest`, then forces a new ECS deployment so the service pulls that tag.
 
-The backend runtime environment is supplied through the ECS task definition:
+The ECS task definition should be managed in Terraform and point at the ECR repository's `:latest` tag. The backend runtime environment is still supplied there:
 
 - `DATABASE_URL`
 - `OPENAI_API_KEY`

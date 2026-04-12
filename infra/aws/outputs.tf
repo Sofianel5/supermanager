@@ -8,9 +8,19 @@ output "api_url" {
   value       = local.api_url
 }
 
+output "aws_region" {
+  description = "AWS region used for backend resources."
+  value       = var.aws_region
+}
+
 output "ecr_repository_url" {
   description = "ECR repository URL used by the server image."
   value       = aws_ecr_repository.server.repository_url
+}
+
+output "ecr_repository_name" {
+  description = "ECR repository name used by the deploy workflow."
+  value       = aws_ecr_repository.server.name
 }
 
 output "ecs_cluster_name" {
@@ -21,16 +31,6 @@ output "ecs_cluster_name" {
 output "ecs_service_name" {
   description = "ECS service name for deploy workflow configuration."
   value       = aws_ecs_service.server.name
-}
-
-output "ecs_task_family" {
-  description = "Task definition family used by the deploy workflow."
-  value       = aws_ecs_task_definition.server.family
-}
-
-output "container_name" {
-  description = "Container name used by the deploy workflow when updating the image."
-  value       = var.container_name
 }
 
 output "database_url_secret_arn" {
