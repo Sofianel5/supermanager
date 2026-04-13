@@ -8,9 +8,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
 use anyhow::{Context, Result, anyhow, bail};
 use reporter_protocol::{
     CreateRoomRequest, CreateRoomResponse, HookTurnReport, RoomMetadataResponse,
@@ -746,7 +743,7 @@ fn open_url(url: &str) -> Result<()> {
     let mut last_error = None;
     for (program, args) in commands {
         let result = Command::new(program)
-            .args(args)
+            .args(*args)
             .arg(url)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
