@@ -135,7 +135,6 @@ struct ViewerOrganization {
     organization_id: String,
     organization_name: String,
     organization_slug: String,
-    role: String,
 }
 
 #[derive(Debug, Deserialize)]
