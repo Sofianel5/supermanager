@@ -24,7 +24,7 @@ use summarize::SummaryStatusEvent;
 
 pub use agent::RoomSummaryAgent;
 pub use auth::{
-    AuthConfig, accept_invite, auth_config, create_email_invite, create_link_invite, current_user,
+    AuthConfig, auth_config, create_email_invite, create_reporter_token, current_user,
     refresh_cli_token,
 };
 pub use sse::stream_feed;
@@ -111,7 +111,7 @@ pub async fn create_room(
     Json(req): Json<CreateRoomRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::require_user(&state, &headers).await?;
-    let room = auth::create_room_for_owner(&state, &req.name, &user.user_id).await?;
+    let room = auth::create_room_for_user(&state, &req.name, &user.user_id).await?;
     Ok((
         StatusCode::CREATED,
         Json(CreateRoomResponse {
@@ -132,9 +132,7 @@ pub async fn ingest_hook_turn(
     Path(room_id): Path<String>,
     Json(report): Json<HookTurnReport>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let (_, membership) = auth::ensure_room_member(&state, &headers, &room_id).await?;
-    let room = resolve_room(&state, &membership.room_id).await?;
-    let room_id = room.room_id;
+    let room_id = auth::authorize_hook_ingest(&state, &headers, &room_id).await?;
 
     let stored = state
         .db

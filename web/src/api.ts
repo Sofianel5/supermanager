@@ -1,6 +1,5 @@
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import type {
-  AcceptInviteResponse,
   FeedResponse,
   CurrentUserResponse,
   InviteResponse,
@@ -9,7 +8,6 @@ import type {
 } from "./generated";
 
 export type {
-  AcceptInviteResponse,
   CurrentUserResponse,
   EmployeeSnapshot,
   FeedResponse,
@@ -83,13 +81,6 @@ export const api = {
   getCurrentUser(accessToken: string) {
     return requestJson<CurrentUserResponse>("/v1/me", accessToken);
   },
-  createLinkInvite(accessToken: string, roomId: string) {
-    return requestJson<InviteResponse>(
-      `/r/${encodeURIComponent(roomId)}/invites/link`,
-      accessToken,
-      { method: "POST" },
-    );
-  },
   createEmailInvite(accessToken: string, roomId: string, targetEmail: string) {
     return requestJson<InviteResponse>(
       `/r/${encodeURIComponent(roomId)}/invites/email`,
@@ -100,13 +91,6 @@ export const api = {
         body: JSON.stringify({ target_email: targetEmail }),
       },
     );
-  },
-  acceptInvite(accessToken: string, token: string) {
-    return requestJson<AcceptInviteResponse>("/v1/invites/accept", accessToken, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
   },
   getRoom(accessToken: string, roomId: string) {
     return requestJson<RoomMetadataResponse>(

@@ -68,7 +68,6 @@ async fn main() -> Result<()> {
         .route("/v1/auth/config", get(api::auth_config))
         .route("/v1/me", get(api::current_user))
         .route("/v1/auth/cli/refresh", post(api::refresh_cli_token))
-        .route("/v1/invites/accept", post(api::accept_invite))
         // ── Room management ──────────────────────────────
         .route("/v1/rooms", post(api::create_room))
         // ── Room-scoped routes ───────────────────────────
@@ -77,7 +76,10 @@ async fn main() -> Result<()> {
         .route("/r/{room_id}/feed/stream", get(api::stream_feed))
         .route("/r/{room_id}/hooks/turn", post(api::ingest_hook_turn))
         .route("/r/{room_id}/summary", get(api::get_manager_summary))
-        .route("/r/{room_id}/invites/link", post(api::create_link_invite))
+        .route(
+            "/r/{room_id}/reporter-token",
+            post(api::create_reporter_token),
+        )
         .route("/r/{room_id}/invites/email", post(api::create_email_invite))
         // ── Health ───────────────────────────────────────
         .route("/health", get(api::health))

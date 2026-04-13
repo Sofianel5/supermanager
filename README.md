@@ -238,7 +238,6 @@ This repo includes a dedicated workflow for the React frontend:
 Add these repository variables:
 
 - `SUPERMANAGER_PUBLIC_API_URL`: public backend API origin used at frontend build time, for example `https://api.supermanager.dev`
-- `VITE_WORKOS_CLIENT_ID`: WorkOS client ID used by the React AuthKit client
 - `CLOUDFLARE_PAGES_PROJECT_NAME`: Cloudflare Pages project name
 
 Add these repository secrets:

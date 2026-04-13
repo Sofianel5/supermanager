@@ -22,6 +22,11 @@ pub struct Db {
 }
 
 #[derive(Debug, Clone)]
+pub struct WorkspaceAccessRecord {
+    pub workspace_id: Uuid,
+}
+
+#[derive(Debug, Clone)]
 pub struct RoomAccessRecord {
     pub room_id: String,
     pub workos_organization_id: String,
@@ -29,11 +34,8 @@ pub struct RoomAccessRecord {
 }
 
 #[derive(Debug, Clone)]
-pub struct LinkInviteRecord {
-    pub invite_id: String,
+pub struct ReporterTokenRecord {
     pub room_id: String,
-    pub expires_at: String,
-    pub revoked_at: Option<String>,
 }
 
 impl Db {
@@ -60,12 +62,48 @@ impl Db {
         Ok(())
     }
 
-    pub async fn create_room(
+    pub async fn create_workspace(
         &self,
         name: &str,
         workos_organization_id: &str,
         owner_workos_user_id: &str,
-    ) -> Result<Room> {
+    ) -> Result<WorkspaceAccessRecord> {
+        let workspace_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO workspaces (workspace_id, name, workos_organization_id, owner_workos_user_id)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(workspace_id)
+        .bind(name)
+        .bind(workos_organization_id)
+        .bind(owner_workos_user_id)
+        .execute(&self.pool)
+        .await
+        .context("failed to insert workspace into PostgreSQL")?;
+
+        Ok(WorkspaceAccessRecord { workspace_id })
+    }
+
+    pub async fn get_owned_workspace(
+        &self,
+        owner_workos_user_id: &str,
+    ) -> Result<Option<WorkspaceAccessRecord>> {
+        let row = sqlx::query(
+            "SELECT workspace_id
+             FROM workspaces
+             WHERE owner_workos_user_id = $1
+             ORDER BY created_at ASC
+             LIMIT 1",
+        )
+        .bind(owner_workos_user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| format!("failed to fetch owned workspace for {owner_workos_user_id}"))?;
+
+        row.map(map_workspace_access).transpose()
+    }
+
+    pub async fn create_room(&self, workspace_id: Uuid, name: &str) -> Result<Room> {
         for _ in 0..10 {
             let room_id = {
                 let mut rng = rand::rng();
@@ -73,14 +111,13 @@ impl Db {
             };
 
             let insert = sqlx::query(
-                "INSERT INTO rooms (room_id, name, workos_organization_id, owner_workos_user_id)
-                 VALUES ($1, $2, $3, $4)
+                "INSERT INTO rooms (room_id, name, workspace_id)
+                 VALUES ($1, $2, $3)
                  RETURNING created_at",
             )
             .bind(&room_id)
             .bind(name)
-            .bind(workos_organization_id)
-            .bind(owner_workos_user_id)
+            .bind(workspace_id)
             .fetch_one(&self.pool)
             .await;
 
@@ -121,87 +158,84 @@ impl Db {
 
     pub async fn get_room_access(&self, room_id: &str) -> Result<Option<RoomAccessRecord>> {
         let row = sqlx::query(
-            "SELECT room_id, workos_organization_id, owner_workos_user_id
+            "SELECT
+                rooms.room_id,
+                workspaces.workos_organization_id,
+                workspaces.owner_workos_user_id
              FROM rooms
-             WHERE room_id = $1",
+             INNER JOIN workspaces ON workspaces.workspace_id = rooms.workspace_id
+             WHERE rooms.room_id = $1",
         )
         .bind(normalize_room_id(room_id))
         .fetch_optional(&self.pool)
         .await
         .with_context(|| format!("failed to fetch room access for {room_id}"))?;
 
-        row.map(|row| {
-            Ok(RoomAccessRecord {
-                room_id: row.try_get("room_id")?,
-                workos_organization_id: row.try_get("workos_organization_id")?,
-                owner_workos_user_id: row.try_get("owner_workos_user_id")?,
-            })
-        })
-        .transpose()
+        row.map(map_room_access).transpose()
     }
 
-    pub async fn create_link_invite(
+    pub async fn create_reporter_token(
         &self,
         room_id: &str,
         created_by_workos_user_id: &str,
+        repo_root: Option<&str>,
         token_hash: &str,
-        expires_at: OffsetDateTime,
-    ) -> Result<LinkInviteRecord> {
-        let invite_id = format!("invlink_{}", Uuid::new_v4().simple());
-        let row = sqlx::query(
-            "INSERT INTO room_invite_links (
-                invite_id,
+    ) -> Result<()> {
+        let token_id = format!("rpt_{}", Uuid::new_v4().simple());
+        sqlx::query(
+            "INSERT INTO room_reporter_tokens (
+                token_id,
                 room_id,
                 token_hash,
-                created_by_workos_user_id,
-                expires_at
+                repo_root,
+                created_by_workos_user_id
              )
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING revoked_at, created_at",
+             VALUES ($1, $2, $3, $4, $5)",
         )
-        .bind(&invite_id)
+        .bind(token_id)
         .bind(normalize_room_id(room_id))
         .bind(token_hash)
+        .bind(repo_root)
         .bind(created_by_workos_user_id)
-        .bind(expires_at)
-        .fetch_one(&self.pool)
+        .execute(&self.pool)
         .await
-        .with_context(|| format!("failed to create invite link for room {room_id}"))?;
-
-        let revoked_at: Option<OffsetDateTime> = row
-            .try_get("revoked_at")
-            .context("failed to decode invite revoked_at")?;
-
-        Ok(LinkInviteRecord {
-            invite_id,
-            room_id: normalize_room_id(room_id),
-            expires_at: format_rfc3339(expires_at),
-            revoked_at: revoked_at.map(format_rfc3339),
-        })
+        .with_context(|| format!("failed to create reporter token for room {room_id}"))?;
+        Ok(())
     }
 
-    pub async fn get_link_invite(&self, token_hash: &str) -> Result<Option<LinkInviteRecord>> {
+    pub async fn get_reporter_token(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<ReporterTokenRecord>> {
         let row = sqlx::query(
-            "SELECT invite_id, room_id, created_by_workos_user_id, expires_at, revoked_at
-             FROM room_invite_links
+            "SELECT room_id
+             FROM room_reporter_tokens
              WHERE token_hash = $1",
         )
         .bind(token_hash)
         .fetch_optional(&self.pool)
         .await
-        .with_context(|| "failed to fetch invite link".to_owned())?;
+        .with_context(|| "failed to fetch reporter token".to_owned())?;
 
         row.map(|row| {
-            let expires_at: OffsetDateTime = row.try_get("expires_at")?;
-            let revoked_at: Option<OffsetDateTime> = row.try_get("revoked_at")?;
-            Ok(LinkInviteRecord {
-                invite_id: row.try_get("invite_id")?,
+            Ok(ReporterTokenRecord {
                 room_id: row.try_get("room_id")?,
-                expires_at: format_rfc3339(expires_at),
-                revoked_at: revoked_at.map(format_rfc3339),
             })
         })
         .transpose()
+    }
+
+    pub async fn touch_reporter_token(&self, token_hash: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE room_reporter_tokens
+             SET last_used_at = NOW()
+             WHERE token_hash = $1",
+        )
+        .bind(token_hash)
+        .execute(&self.pool)
+        .await
+        .with_context(|| "failed to update reporter token usage".to_owned())?;
+        Ok(())
     }
 
     pub async fn insert_hook_event(
@@ -409,6 +443,20 @@ fn map_room(row: PgRow) -> Result<Room> {
     })
 }
 
+fn map_workspace_access(row: PgRow) -> Result<WorkspaceAccessRecord> {
+    Ok(WorkspaceAccessRecord {
+        workspace_id: row.try_get("workspace_id")?,
+    })
+}
+
+fn map_room_access(row: PgRow) -> Result<RoomAccessRecord> {
+    Ok(RoomAccessRecord {
+        room_id: row.try_get("room_id")?,
+        workos_organization_id: row.try_get("workos_organization_id")?,
+        owner_workos_user_id: row.try_get("owner_workos_user_id")?,
+    })
+}
+
 fn map_stored_hook_event(row: PgRow) -> Result<StoredHookEvent> {
     Ok(StoredHookEvent {
         seq: row.try_get("seq")?,
@@ -526,7 +574,12 @@ mod tests {
     use super::test_support::TestDb;
 
     async fn create_test_room(db: &Db, name: &str) -> Room {
-        db.create_room(name, "org_test", "user_test").await.unwrap()
+        let org_id = format!("org_{}", Uuid::new_v4().simple());
+        let workspace = db
+            .create_workspace("Workspace", &org_id, "user_test")
+            .await
+            .unwrap();
+        db.create_room(workspace.workspace_id, name).await.unwrap()
     }
 
     #[tokio::test]

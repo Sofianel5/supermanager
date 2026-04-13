@@ -9,14 +9,15 @@ use axum::{
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use rand::distr::{Alphanumeric, SampleString};
 use reporter_protocol::{
-    AcceptInviteRequest, AcceptInviteResponse, AuthConfigResponse, CliRefreshRequest,
-    CliRefreshResponse, CreateInviteRequest, CurrentUserResponse, InviteResponse, Room,
-    RoomMetadataResponse,
+    AuthConfigResponse, CliRefreshRequest, CliRefreshResponse, CreateInviteRequest,
+    CreateReporterTokenRequest, CreateReporterTokenResponse, CurrentUserResponse, InviteResponse,
+    Room,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::sync::RwLock;
+use url::Url;
 use workos_client::{
     self,
     types::{
@@ -25,16 +26,16 @@ use workos_client::{
     },
 };
 
-use crate::store::{LinkInviteRecord, RoomAccessRecord};
+use crate::store::{RoomAccessRecord, normalize_room_id};
 
-use super::{AppState, internal_error, resolve_room, trim_url};
+use super::{AppState, internal_error, trim_url};
 
 const DEFAULT_WORKOS_BASE_URL: &str = "https://api.workos.com";
 const DEFAULT_MEMBER_ROLE: &str = "member";
 const DEFAULT_EMAIL_INVITE_DAYS: i64 = 7;
-const DEFAULT_LINK_INVITE_DAYS: i64 = 14;
 const JWKS_CACHE_MINUTES: i64 = 60;
-const LINK_TOKEN_LENGTH: usize = 48;
+const REPORTER_TOKEN_LENGTH: usize = 48;
+const REPORTER_TOKEN_PREFIX: &str = "sm_ingest_";
 
 #[derive(Clone, Debug)]
 pub struct AuthConfig {
@@ -44,7 +45,6 @@ pub struct AuthConfig {
     issuer: String,
     member_role_slug: String,
     email_invite_days: i64,
-    link_invite_days: i64,
     client: workos_client::Client,
     jwks_cache: Arc<RwLock<Option<CachedJwks>>>,
 }
@@ -99,10 +99,6 @@ impl AuthConfig {
             "SUPERMANAGER_WORKOS_EMAIL_INVITE_DAYS",
             DEFAULT_EMAIL_INVITE_DAYS,
         )?;
-        let link_invite_days = optional_env_i64(
-            "SUPERMANAGER_WORKOS_LINK_INVITE_DAYS",
-            DEFAULT_LINK_INVITE_DAYS,
-        )?;
 
         let client = build_workos_client(&base_url, &api_key)?;
 
@@ -113,7 +109,6 @@ impl AuthConfig {
             issuer,
             member_role_slug,
             email_invite_days,
-            link_invite_days,
             client,
             jwks_cache: Arc::new(RwLock::new(None)),
         })
@@ -123,7 +118,25 @@ impl AuthConfig {
         &self.client_id
     }
 
-    async fn create_room_organization(
+    fn api_hostname(&self) -> Option<String> {
+        if trim_url(&self.base_url) == DEFAULT_WORKOS_BASE_URL {
+            return None;
+        }
+        Url::parse(&self.base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(ToOwned::to_owned))
+    }
+
+    fn api_base_url(&self) -> Option<String> {
+        let base_url = trim_url(&self.base_url).to_owned();
+        if base_url == DEFAULT_WORKOS_BASE_URL {
+            None
+        } else {
+            Some(base_url)
+        }
+    }
+
+    async fn create_workspace_organization(
         &self,
         name: &str,
     ) -> Result<workos_client::types::Organization> {
@@ -266,6 +279,8 @@ impl AuthConfig {
 pub async fn auth_config(State(state): State<AppState>) -> Json<AuthConfigResponse> {
     Json(AuthConfigResponse {
         client_id: state.auth.client_id().to_owned(),
+        api_hostname: state.auth.api_hostname(),
+        api_base_url: state.auth.api_base_url(),
     })
 }
 
@@ -301,35 +316,26 @@ pub async fn refresh_cli_token(
     Ok(Json(response))
 }
 
-pub async fn create_link_invite(
+pub async fn create_reporter_token(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(room_id): Path<String>,
-) -> Result<Json<InviteResponse>, (StatusCode, String)> {
+    Json(request): Json<CreateReporterTokenRequest>,
+) -> Result<Json<CreateReporterTokenResponse>, (StatusCode, String)> {
     let (user, membership) = ensure_room_member(&state, &headers, &room_id).await?;
-    require_owner(&membership)?;
-
-    let token = generate_link_token();
-    let expires_at = OffsetDateTime::now_utc() + Duration::days(state.auth.link_invite_days);
-    let invite = state
+    let token = generate_reporter_token();
+    state
         .db
-        .create_link_invite(
+        .create_reporter_token(
             &membership.room_id,
             &user.user_id,
+            request.repo_root.as_deref(),
             &hash_token(&token),
-            expires_at,
         )
         .await
         .map_err(internal_error)?;
 
-    Ok(Json(InviteResponse {
-        invite_id: invite.invite_id,
-        room_id: invite.room_id,
-        kind: "link".to_owned(),
-        invite_url: format!("{}/invite/{}", trim_url(&state.public_app_url), token),
-        target_email: None,
-        expires_at: invite.expires_at,
-    }))
+    Ok(Json(CreateReporterTokenResponse { token }))
 }
 
 pub async fn create_email_invite(
@@ -368,55 +374,18 @@ pub async fn create_email_invite(
         .await
         .map_err(internal_error)?;
 
+    let room_id = membership.room_id;
+
     Ok(Json(InviteResponse {
-        invite_id: invitation.id,
-        room_id: membership.room_id,
-        kind: "email".to_owned(),
-        invite_url: invitation.accept_invitation_url,
-        target_email: Some(invitation.email),
+        room_id: room_id.clone(),
+        target_email: Some(target_email.to_owned()),
         expires_at: invitation.expires_at,
-    }))
-}
-
-pub async fn accept_invite(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(request): Json<AcceptInviteRequest>,
-) -> Result<Json<AcceptInviteResponse>, (StatusCode, String)> {
-    let user = require_user(&state, &headers).await?;
-    let invite = state
-        .db
-        .get_link_invite(&hash_token(&request.token))
-        .await
-        .map_err(internal_error)?
-        .ok_or((StatusCode::NOT_FOUND, "invite not found".to_owned()))?;
-
-    enforce_link_invite_valid(&invite)?;
-
-    let room_access = state
-        .db
-        .get_room_access(&invite.room_id)
-        .await
-        .map_err(internal_error)?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            format!("room not found: {}", invite.room_id),
-        ))?;
-
-    state
-        .auth
-        .ensure_membership(&user.user_id, &room_access.workos_organization_id)
-        .await
-        .map_err(internal_error)?;
-
-    let room = resolve_room(&state, &invite.room_id).await?;
-    Ok(Json(AcceptInviteResponse {
-        room: RoomMetadataResponse {
-            room_id: room.room_id,
-            name: room.name,
-            created_at: room.created_at,
-            viewer_role: viewer_role(&room_access, &user.user_id),
-        },
+        invite_url: Some(invitation_redirect_url(
+            &state.public_app_url,
+            &room_id,
+            &invitation.token,
+            &invitation.accept_invitation_url,
+        )),
     }))
 }
 
@@ -426,6 +395,10 @@ pub(crate) async fn require_user(
 ) -> Result<AuthenticatedUser, (StatusCode, String)> {
     let token =
         bearer_token(headers).ok_or((StatusCode::UNAUTHORIZED, "sign in required".to_owned()))?;
+    if token.starts_with(REPORTER_TOKEN_PREFIX) {
+        return Err((StatusCode::UNAUTHORIZED, "sign in required".to_owned()));
+    }
+
     let claims = state
         .auth
         .verify_access_token(token)
@@ -436,29 +409,82 @@ pub(crate) async fn require_user(
     })
 }
 
-pub(crate) async fn create_room_for_owner(
+pub(crate) async fn authorize_hook_ingest(
+    state: &AppState,
+    headers: &HeaderMap,
+    room_id: &str,
+) -> Result<String, (StatusCode, String)> {
+    if let Some(token) = bearer_token(headers)
+        && token.starts_with(REPORTER_TOKEN_PREFIX)
+    {
+        let token_hash = hash_token(token);
+        let record = state
+            .db
+            .get_reporter_token(&token_hash)
+            .await
+            .map_err(internal_error)?
+            .ok_or((
+                StatusCode::UNAUTHORIZED,
+                "invalid reporter token".to_owned(),
+            ))?;
+        let room_id = normalize_room_id(room_id);
+        if record.room_id != room_id {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "reporter token does not match room".to_owned(),
+            ));
+        }
+        state
+            .db
+            .touch_reporter_token(&token_hash)
+            .await
+            .map_err(internal_error)?;
+        return Ok(room_id);
+    }
+
+    let (_, membership) = ensure_room_member(state, headers, room_id).await?;
+    Ok(membership.room_id)
+}
+
+pub(crate) async fn create_room_for_user(
     state: &AppState,
     name: &str,
-    owner_user_id: &str,
+    user_id: &str,
 ) -> Result<Room, (StatusCode, String)> {
     let name = name.trim();
     if name.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "room name is required".to_owned()));
     }
 
-    let organization = state
-        .auth
-        .create_room_organization(name)
+    let workspace = match state
+        .db
+        .get_owned_workspace(user_id)
         .await
-        .map_err(internal_error)?;
-    state
-        .auth
-        .ensure_membership(owner_user_id, &organization.id)
-        .await
-        .map_err(internal_error)?;
+        .map_err(internal_error)?
+    {
+        Some(workspace) => workspace,
+        None => {
+            let organization = state
+                .auth
+                .create_workspace_organization(name)
+                .await
+                .map_err(internal_error)?;
+            state
+                .auth
+                .ensure_membership(user_id, &organization.id)
+                .await
+                .map_err(internal_error)?;
+            state
+                .db
+                .create_workspace(name, &organization.id, user_id)
+                .await
+                .map_err(internal_error)?
+        }
+    };
+
     state
         .db
-        .create_room(name, &organization.id, owner_user_id)
+        .create_room(workspace.workspace_id, name)
         .await
         .map_err(internal_error)
 }
@@ -482,15 +508,18 @@ pub(crate) async fn ensure_room_member(
         .await
         .map_err(internal_error)?;
 
-    if memberships.is_empty() {
+    if memberships
+        .iter()
+        .all(|membership| membership.status != "active")
+    {
         return Err((StatusCode::FORBIDDEN, "room access denied".to_owned()));
     }
 
     let role = viewer_role(&room_access, &user.user_id);
     Ok((
-        user.clone(),
+        user,
         RoomMembership {
-            room_id: room_access.room_id,
+            room_id: room_access.room_id.clone(),
             role,
         },
     ))
@@ -605,7 +634,7 @@ fn require_owner(membership: &RoomMembership) -> Result<(), (StatusCode, String)
     } else {
         Err((
             StatusCode::FORBIDDEN,
-            "only room owners can manage invites".to_owned(),
+            "only workspace owners can manage invites".to_owned(),
         ))
     }
 }
@@ -645,31 +674,32 @@ fn format_rfc3339(timestamp: OffsetDateTime) -> String {
         .unwrap_or_else(|_| timestamp.unix_timestamp().to_string())
 }
 
-fn parse_rfc3339(value: &str) -> Result<OffsetDateTime> {
-    OffsetDateTime::parse(value, &Rfc3339).with_context(|| format!("invalid timestamp: {value}"))
-}
-
-fn generate_link_token() -> String {
+fn generate_reporter_token() -> String {
     let mut rng = rand::rng();
-    Alphanumeric.sample_string(&mut rng, LINK_TOKEN_LENGTH)
+    format!(
+        "{REPORTER_TOKEN_PREFIX}{}",
+        Alphanumeric.sample_string(&mut rng, REPORTER_TOKEN_LENGTH)
+    )
 }
 
 fn hash_token(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
 }
 
-fn enforce_link_invite_valid(invite: &LinkInviteRecord) -> Result<(), (StatusCode, String)> {
-    if invite.revoked_at.is_some() {
-        return Err((StatusCode::GONE, "invite has been revoked".to_owned()));
-    }
-
-    let expires_at = parse_rfc3339(&invite.expires_at)
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    if expires_at <= OffsetDateTime::now_utc() {
-        return Err((StatusCode::GONE, "invite has expired".to_owned()));
-    }
-
-    Ok(())
+fn invitation_redirect_url(
+    app_url: &str,
+    room_id: &str,
+    token: &str,
+    fallback_url: &str,
+) -> String {
+    let login_url = format!("{}/login", trim_url(app_url));
+    let Ok(mut url) = Url::parse(&login_url) else {
+        return fallback_url.to_owned();
+    };
+    url.query_pairs_mut()
+        .append_pair("invitation_token", token)
+        .append_pair("next", &format!("/r/{room_id}"));
+    url.into()
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {

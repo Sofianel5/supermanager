@@ -83,15 +83,6 @@ enum CreateCommands {
 
 #[derive(Subcommand, Debug)]
 enum InviteCommands {
-    /// Create a reusable invite link for a room you own.
-    Link {
-        #[arg(long)]
-        room: Option<String>,
-        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
-        server: String,
-        #[arg(long, default_value = ".")]
-        cwd: PathBuf,
-    },
     /// Create an invite restricted to one email address.
     Email {
         email: String,
@@ -122,6 +113,7 @@ fn main() -> Result<()> {
                 app_url,
                 cwd,
             } => {
+                let _ = supermanager::ensure_login(&server_url, &home_dir)?;
                 let outcome = supermanager::create_room(supermanager::CreateRoomConfig {
                     server_url: server_url.clone(),
                     name,
@@ -178,17 +170,8 @@ fn main() -> Result<()> {
             app_url,
             cwd,
         } => {
-            let room = if let Some(invite_token) = supermanager::invite_token_from_input(&room) {
-                if supermanager::whoami(&server, &home_dir).is_err() {
-                    let _ = supermanager::login(supermanager::LoginConfig {
-                        server_url: server.clone(),
-                        home_dir: home_dir.clone(),
-                    })?;
-                }
-                supermanager::accept_invite(&server, &invite_token, &home_dir)?
-            } else {
-                supermanager::get_room(&server, &room, &home_dir)?
-            };
+            let _ = supermanager::ensure_login(&server, &home_dir)?;
+            let room = supermanager::get_room(&server, &room, &home_dir)?;
             let outcome = supermanager::join_repo(supermanager::JoinConfig {
                 server_url: server,
                 app_url,
@@ -245,25 +228,13 @@ fn main() -> Result<()> {
             }
         }
         Commands::Invite { command } => match command {
-            InviteCommands::Link { room, server, cwd } => {
-                let room_id = resolve_invite_room(room, &server, &cwd, &home_dir)?;
-                let invite = supermanager::create_link_invite(&server, &room_id, &home_dir)?;
-
-                println!();
-                println!("  \x1b[32m✓\x1b[0m \x1b[1mInvite link created\x1b[0m");
-                println!();
-                println!("    \x1b[2mRoom\x1b[0m       {}", invite.room_id);
-                println!("    \x1b[2mExpires\x1b[0m    {}", invite.expires_at);
-                println!("    \x1b[2mInvite\x1b[0m     {}", invite.invite_url);
-                println!();
-                print_clipboard_status(&invite.invite_url);
-            }
             InviteCommands::Email {
                 email,
                 room,
                 server,
                 cwd,
             } => {
+                let _ = supermanager::ensure_login(&server, &home_dir)?;
                 let room_id = resolve_invite_room(room, &server, &cwd, &home_dir)?;
                 let invite =
                     supermanager::create_email_invite(&server, &room_id, &email, &home_dir)?;
@@ -277,9 +248,11 @@ fn main() -> Result<()> {
                     invite.target_email.unwrap_or(email)
                 );
                 println!("    \x1b[2mExpires\x1b[0m    {}", invite.expires_at);
-                println!("    \x1b[2mInvite\x1b[0m     {}", invite.invite_url);
-                println!();
-                print_clipboard_status(&invite.invite_url);
+                if let Some(invite_url) = invite.invite_url.as_deref() {
+                    println!("    \x1b[2mInvite\x1b[0m     {invite_url}");
+                    println!();
+                    print_clipboard_status(invite_url);
+                }
             }
         },
         Commands::Leave { cwd } => {
@@ -356,7 +329,7 @@ fn should_auto_update(command: &Commands) -> bool {
 
 fn print_clipboard_status(text: &str) {
     match supermanager::copy_to_clipboard(text) {
-        Ok(()) => println!("  \x1b[32m✓\x1b[0m Dashboard URL copied to clipboard"),
+        Ok(()) => println!("  \x1b[32m✓\x1b[0m Copied to clipboard"),
         Err(error) => eprintln!("  \x1b[33m!\x1b[0m Clipboard: {error}"),
     }
 }

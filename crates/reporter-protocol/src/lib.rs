@@ -16,6 +16,10 @@ pub struct CurrentUserResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfigResponse {
     pub client_id: String,
+    #[serde(default)]
+    pub api_hostname: Option<String>,
+    #[serde(default)]
+    pub api_base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,24 +73,12 @@ pub struct CreateInviteRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../web/src/generated/")]
 pub struct InviteResponse {
-    pub invite_id: String,
     pub room_id: String,
-    pub kind: String,
-    pub invite_url: String,
     #[serde(default)]
     pub target_email: Option<String>,
     pub expires_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AcceptInviteRequest {
-    pub token: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../../web/src/generated/")]
-pub struct AcceptInviteResponse {
-    pub room: RoomMetadataResponse,
+    #[serde(default)]
+    pub invite_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +92,17 @@ pub struct CliRefreshResponse {
     pub refresh_token: String,
     pub access_expires_at: String,
     pub user: CurrentUserResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateReporterTokenRequest {
+    #[serde(default)]
+    pub repo_root: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateReporterTokenResponse {
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]

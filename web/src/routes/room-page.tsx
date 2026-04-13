@@ -14,6 +14,7 @@ import {
   ApiError,
   api,
   getApiBaseUrl,
+  InviteResponse,
   RoomMetadataResponse,
   RoomSnapshot,
   StoredHookEvent,
@@ -43,13 +44,9 @@ export function RoomPage() {
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteBusy, setInviteBusy] = useState<"link" | "email" | null>(null);
+  const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
-  const [latestInvite, setLatestInvite] = useState<{
-    label: string;
-    value: string;
-    detail: string;
-  } | null>(null);
+  const [latestInvite, setLatestInvite] = useState<InviteResponse | null>(null);
 
   const canonicalRoomId = room?.room_id || roomId;
   const joinCommand = buildJoinCommand(canonicalRoomId);
@@ -289,39 +286,6 @@ export function RoomPage() {
             </div>
 
             <div className="invite-grid">
-              <button
-                className="secondary-button invite-action"
-                type="button"
-                disabled={inviteBusy !== null}
-                onClick={async () => {
-                  setInviteBusy("link");
-                  setInviteError(null);
-                  try {
-                    const accessToken = await getAccessToken();
-                    const invite = await api.createLinkInvite(
-                      accessToken,
-                      canonicalRoomId,
-                    );
-                    setLatestInvite({
-                      label: "Invite link",
-                      value: invite.invite_url,
-                      detail: `Expires ${formatDate(invite.expires_at)}`,
-                    });
-                    await copy("Invite link", invite.invite_url);
-                  } catch (inviteLoadError) {
-                    if (inviteLoadError instanceof ApiError && inviteLoadError.status === 401) {
-                      navigate(loginHref, { replace: true });
-                      return;
-                    }
-                    setInviteError(readMessage(inviteLoadError));
-                  } finally {
-                    setInviteBusy(null);
-                  }
-                }}
-              >
-                {inviteBusy === "link" ? "Creating invite…" : "Copy invite link"}
-              </button>
-
               <form
                 className="invite-form"
                 onSubmit={async (event) => {
@@ -330,8 +294,9 @@ export function RoomPage() {
                     setInviteError("Email is required.");
                     return;
                   }
-                  setInviteBusy("email");
+                  setInviteBusy(true);
                   setInviteError(null);
+                  setLatestInvite(null);
                   try {
                     const accessToken = await getAccessToken();
                     const invite = await api.createEmailInvite(
@@ -339,14 +304,10 @@ export function RoomPage() {
                       canonicalRoomId,
                       inviteEmail.trim(),
                     );
-                    setLatestInvite({
-                      label: invite.target_email
-                        ? `Email invite for ${invite.target_email}`
-                        : "Email invite",
-                      value: invite.invite_url,
-                      detail: `Expires ${formatDate(invite.expires_at)}`,
-                    });
-                    await copy("Email invite", invite.invite_url);
+                    setLatestInvite(invite);
+                    if (invite.invite_url) {
+                      await copy("Email invite", invite.invite_url);
+                    }
                     setInviteEmail("");
                   } catch (inviteLoadError) {
                     if (inviteLoadError instanceof ApiError && inviteLoadError.status === 401) {
@@ -355,7 +316,7 @@ export function RoomPage() {
                     }
                     setInviteError(readMessage(inviteLoadError));
                   } finally {
-                    setInviteBusy(null);
+                    setInviteBusy(false);
                   }
                 }}
               >
@@ -369,8 +330,8 @@ export function RoomPage() {
                     value={inviteEmail}
                     onChange={(event) => setInviteEmail(event.target.value)}
                   />
-                  <button disabled={inviteBusy !== null} type="submit">
-                    {inviteBusy === "email" ? "Creating…" : "Create"}
+                  <button disabled={inviteBusy} type="submit">
+                    {inviteBusy ? "Creating…" : "Create"}
                   </button>
                 </div>
               </form>
@@ -380,13 +341,20 @@ export function RoomPage() {
 
             {latestInvite && (
               <>
-                <CopyPanel
-                  copiedValue={copiedValue}
-                  label={latestInvite.label}
-                  onCopy={copy}
-                  value={latestInvite.value}
-                />
-                <p className="message invite-meta">{latestInvite.detail}</p>
+                <p className="message invite-meta">
+                  {latestInvite.target_email
+                    ? `Sent to ${latestInvite.target_email}. `
+                    : ""}
+                  Expires {formatDate(latestInvite.expires_at)}
+                </p>
+                {latestInvite.invite_url && (
+                  <CopyPanel
+                    copiedValue={copiedValue}
+                    label="Email invite"
+                    onCopy={copy}
+                    value={latestInvite.invite_url}
+                  />
+                )}
               </>
             )}
           </section>

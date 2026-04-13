@@ -793,8 +793,12 @@ mod tests {
             return;
         };
         let db = test_db.db.clone();
+        let workspace = db
+            .create_workspace("Workspace", "org_test", "user_test")
+            .await
+            .unwrap();
         let room = db
-            .create_room("Summary Room", "org_test", "user_test")
+            .create_room(workspace.workspace_id, "Summary Room")
             .await
             .unwrap();
 

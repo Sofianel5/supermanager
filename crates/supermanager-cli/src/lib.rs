@@ -11,8 +11,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use reporter_protocol::{
     AuthConfigResponse, CliRefreshRequest, CliRefreshResponse, CreateInviteRequest,
-    CreateRoomRequest, CreateRoomResponse, CurrentUserResponse, HookTurnReport, InviteResponse,
-    RoomMetadataResponse,
+    CreateReporterTokenRequest, CreateReporterTokenResponse, CreateRoomRequest, CreateRoomResponse,
+    CurrentUserResponse, HookTurnReport, InviteResponse, RoomMetadataResponse,
 };
 use reqwest::blocking::{Client, Response};
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,7 @@ const LOGIN_POLL_TIMEOUT_SECONDS: u64 = 180;
 
 pub const DEFAULT_SERVER_URL: &str = "https://api.supermanager.dev";
 pub const DEFAULT_APP_URL: &str = "https://supermanager.dev";
+const DEFAULT_WORKOS_BASE_URL: &str = "https://api.workos.com";
 
 pub struct JoinConfig {
     pub server_url: String,
@@ -112,6 +113,7 @@ struct StoredAuth {
 struct RepoRoomConfig {
     server_url: String,
     room_id: String,
+    reporter_token: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -186,10 +188,24 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     let app_url = normalize_url(&config.app_url);
     let room_id = config.room_id.trim().to_ascii_uppercase();
     let dashboard_url = format!("{}/r/{}", app_url, room_id);
+    let http = build_http_client(API_TIMEOUT_SECONDS)?;
+    let mut auth = require_auth(&server_url, &config.home_dir)?;
+    let reporter_token: CreateReporterTokenResponse = authorized_json(
+        &http,
+        &server_url,
+        &config.home_dir,
+        &mut auth,
+        http.post(format!("{server_url}/r/{room_id}/reporter-token"))
+            .json(&CreateReporterTokenRequest {
+                repo_root: Some(repo_dir.display().to_string()),
+            }),
+        "create reporter token",
+    )?;
 
     let room_config = RepoRoomConfig {
         server_url,
         room_id: room_id.clone(),
+        reporter_token: reporter_token.token,
     };
 
     upsert_repo_room_config(&config.home_dir, &repo_dir, room_config)?;
@@ -241,7 +257,11 @@ pub fn login(config: LoginConfig) -> Result<LoginOutcome> {
     let server_url = normalize_url(&config.server_url);
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let auth_config = fetch_auth_config(&http, &server_url)?;
-    let device = start_device_login(&http, &auth_config.client_id)?;
+    let workos_base_url = auth_config
+        .api_base_url
+        .as_deref()
+        .unwrap_or(DEFAULT_WORKOS_BASE_URL);
+    let device = start_device_login(&http, workos_base_url, &auth_config.client_id)?;
 
     open_browser(&device.verification_uri_complete).with_context(|| {
         format!(
@@ -260,7 +280,12 @@ pub fn login(config: LoginConfig) -> Result<LoginOutcome> {
             bail!("timed out waiting for browser login");
         }
 
-        match poll_device_login(&http, &auth_config.client_id, &device.device_code)? {
+        match poll_device_login(
+            &http,
+            workos_base_url,
+            &auth_config.client_id,
+            &device.device_code,
+        )? {
             DevicePoll::Pending => {
                 std::thread::sleep(poll_interval);
             }
@@ -297,22 +322,15 @@ pub fn whoami(server_url: &str, home_dir: &Path) -> Result<CurrentUserResponse> 
     current_user_request(&http, &server_url, home_dir, &mut auth)
 }
 
-pub fn create_link_invite(
-    server_url: &str,
-    room_id: &str,
-    home_dir: &Path,
-) -> Result<InviteResponse> {
-    let server_url = normalize_url(server_url);
-    let mut auth = require_auth(&server_url, home_dir)?;
-    let http = build_http_client(API_TIMEOUT_SECONDS)?;
-    authorized_json(
-        &http,
-        &server_url,
-        home_dir,
-        &mut auth,
-        http.post(format!("{server_url}/r/{room_id}/invites/link")),
-        "create link invite",
-    )
+pub fn ensure_login(server_url: &str, home_dir: &Path) -> Result<CurrentUserResponse> {
+    match whoami(server_url, home_dir) {
+        Ok(user) => Ok(user),
+        Err(_) => login(LoginConfig {
+            server_url: server_url.to_owned(),
+            home_dir: home_dir.to_path_buf(),
+        })
+        .map(|outcome| outcome.user),
+    }
 }
 
 pub fn create_email_invite(
@@ -335,29 +353,6 @@ pub fn create_email_invite(
             }),
         "create email invite",
     )
-}
-
-pub fn accept_invite(
-    server_url: &str,
-    token: &str,
-    home_dir: &Path,
-) -> Result<RoomMetadataResponse> {
-    let server_url = normalize_url(server_url);
-    let mut auth = require_auth(&server_url, home_dir)?;
-    let http = build_http_client(API_TIMEOUT_SECONDS)?;
-    let response: reporter_protocol::AcceptInviteResponse = authorized_json(
-        &http,
-        &server_url,
-        home_dir,
-        &mut auth,
-        http.post(format!("{server_url}/v1/invites/accept")).json(
-            &reporter_protocol::AcceptInviteRequest {
-                token: token.to_owned(),
-            },
-        ),
-        "accept invite",
-    )?;
-    Ok(response.room)
 }
 
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
@@ -471,16 +466,12 @@ pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
     );
 
     let http = build_http_client(REPORT_TIMEOUT_SECONDS)?;
-    let mut auth = require_auth(&room_config.server_url, home_dir)?;
-
-    let response = authorized_send(
-        &http,
-        &room_config.server_url,
-        home_dir,
-        &mut auth,
-        http.post(url).json(&report),
-        "post hook turn report",
-    )?;
+    let response = http
+        .post(url)
+        .bearer_auth(&room_config.reporter_token)
+        .json(&report)
+        .send()
+        .context("failed to post hook turn report")?;
     ensure_success(response, "post hook turn report")?;
 
     Ok(())
@@ -548,10 +539,14 @@ fn fetch_auth_config(http: &Client, server_url: &str) -> Result<AuthConfigRespon
 
 fn start_device_login(
     http: &Client,
+    workos_base_url: &str,
     client_id: &str,
 ) -> Result<workos_client::types::DeviceAuthorizationResponse> {
     let response = http
-        .post("https://api.workos.com/user_management/authorize/device")
+        .post(format!(
+            "{}/user_management/authorize/device",
+            workos_base_url.trim_end_matches('/')
+        ))
         .json(&DeviceAuthorizationRequest {
             client_id: client_id.to_owned(),
         })
@@ -563,9 +558,17 @@ fn start_device_login(
         .context("failed to parse device-login response JSON")
 }
 
-fn poll_device_login(http: &Client, client_id: &str, device_code: &str) -> Result<DevicePoll> {
+fn poll_device_login(
+    http: &Client,
+    workos_base_url: &str,
+    client_id: &str,
+    device_code: &str,
+) -> Result<DevicePoll> {
     let response = http
-        .post("https://api.workos.com/user_management/authenticate")
+        .post(format!(
+            "{}/user_management/authenticate",
+            workos_base_url.trim_end_matches('/')
+        ))
         .json(&AuthenticateBody::DeviceAuthenticateRequest(
             DeviceAuthenticateRequest {
                 client_id: client_id.to_owned(),
@@ -777,27 +780,6 @@ fn token_expired(iso_timestamp: &str) -> bool {
     match timestamp {
         Ok(timestamp) => timestamp <= time::OffsetDateTime::now_utc() + time::Duration::minutes(1),
         Err(_) => true,
-    }
-}
-
-pub fn invite_token_from_input(input: &str) -> Option<String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if !trimmed.contains("://") {
-        return None;
-    }
-    let url = reqwest::Url::parse(trimmed).ok()?;
-    let segments = url.path_segments()?.collect::<Vec<_>>();
-    let token = segments
-        .windows(2)
-        .find(|window| window[0] == "invite")
-        .map(|window| window[1].to_owned())?;
-    if token.trim().is_empty() {
-        None
-    } else {
-        Some(token)
     }
 }
 
