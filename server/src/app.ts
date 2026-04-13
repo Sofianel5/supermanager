@@ -166,19 +166,18 @@ export function createApp(context: AppContext) {
         );
         const room = await context.db.createRoom(
           membership.organization_id,
-          membership.organization_slug,
           viewer.user.id,
           name,
         );
 
         return status(201, {
           room_id: room.room_id,
-          organization_slug: room.organization_slug,
+          organization_slug: membership.organization_slug,
           dashboard_url: dashboardUrl(context.config.publicAppUrl, room.room_id),
           join_command: cliJoinCommand(
             context.config.publicApiUrl,
             room.room_id,
-            room.organization_slug,
+            membership.organization_slug,
           ),
         });
       },

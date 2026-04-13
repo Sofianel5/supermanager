@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, type RoomListEntry, type ViewerOrganization, type ViewerResponse } from "../api";
 import { authClient } from "../auth-client";
 import { CopyPanel } from "../components/copy-panel";
-import { readAuthError, readMessage } from "../utils";
+import { readAuthError, readMessage, useCopyHandler } from "../utils";
 
 const INSTALL_COMMAND = "curl -fsSL https://supermanager.dev/install.sh | sh";
 const LOGIN_COMMAND = "supermanager login";
@@ -14,7 +14,7 @@ export function AppPage() {
   const [rooms, setRooms] = useState<RoomListEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [copiedValue, setCopiedValue] = useState<string | null>(null);
+  const { copiedValue, copy } = useCopyHandler();
   const [organizationName, setOrganizationName] = useState("");
   const [organizationSlug, setOrganizationSlug] = useState("");
   const [roomName, setRoomName] = useState("");
@@ -28,59 +28,28 @@ export function AppPage() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadWorkspace() {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const nextViewer = await api.getMe();
-        if (cancelled) {
-          return;
-        }
-
-        setViewer(nextViewer);
-        const nextActiveOrganization = pickActiveOrganization(nextViewer);
-        if (!nextActiveOrganization) {
-          setRooms([]);
-          return;
-        }
-
-        const nextRooms = await api.listRooms(nextActiveOrganization.organization_slug);
-        if (cancelled) {
-          return;
-        }
-
-        setRooms(nextRooms.rooms);
-      } catch (loadError: unknown) {
-        if (!cancelled) {
-          setError(readMessage(loadError));
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    void loadWorkspace();
+    void loadWorkspace().then(() => {
+      if (cancelled) return;
+    });
 
     return () => {
       cancelled = true;
     };
   }, []);
 
-  async function refreshWorkspace(preferredOrganizationSlug?: string) {
+  async function loadWorkspace(preferredOrganizationSlug?: string) {
     setIsLoading(true);
     setError(null);
 
     try {
       const nextViewer = await api.getMe();
       setViewer(nextViewer);
-      const nextActiveOrganization =
-        nextViewer.organizations.find(
-          (organization) =>
-            organization.organization_slug === preferredOrganizationSlug,
-        ) ?? pickActiveOrganization(nextViewer);
+      const nextActiveOrganization = preferredOrganizationSlug
+        ? nextViewer.organizations.find(
+            (organization) =>
+              organization.organization_slug === preferredOrganizationSlug,
+          ) ?? pickActiveOrganization(nextViewer)
+        : pickActiveOrganization(nextViewer);
 
       if (!nextActiveOrganization) {
         setRooms([]);
@@ -95,14 +64,6 @@ export function AppPage() {
       setIsLoading(false);
       setPendingAction(null);
     }
-  }
-
-  async function copy(label: string, value: string) {
-    await navigator.clipboard.writeText(value);
-    setCopiedValue(label);
-    window.setTimeout(() => {
-      setCopiedValue((current) => (current === label ? null : current));
-    }, 1800);
   }
 
   async function handleSignOut() {
@@ -129,7 +90,7 @@ export function AppPage() {
       return;
     }
 
-    await refreshWorkspace(organization.organization_slug);
+    await loadWorkspace(organization.organization_slug);
   }
 
   async function handleCreateOrganization(event: FormEvent<HTMLFormElement>) {
@@ -158,7 +119,7 @@ export function AppPage() {
 
     setOrganizationName("");
     setOrganizationSlug("");
-    await refreshWorkspace(slug);
+    await loadWorkspace(slug);
   }
 
   async function handleCreateRoom(event: FormEvent<HTMLFormElement>) {

@@ -113,24 +113,20 @@ export class Db {
     userId: string,
     organizationId: string,
   ): Promise<OrganizationMembership | null> {
-    const [row] = await this.client<OrganizationMembershipRow[]>`
-      SELECT
-        organization.id AS organization_id,
-        organization.name AS organization_name,
-        organization.slug AS organization_slug,
-        member.role AS role
-      FROM member
-      INNER JOIN organization ON organization.id = member.organization_id
-      WHERE member.user_id = ${userId}
-        AND member.organization_id = ${organizationId}
-    `;
-
-    return row ? mapOrganizationMembership(row) : null;
+    return this.findOrganizationMembership(userId, "organization_id", organizationId);
   }
 
   async getOrganizationMembershipBySlug(
     userId: string,
     organizationSlug: string,
+  ): Promise<OrganizationMembership | null> {
+    return this.findOrganizationMembership(userId, "slug", organizationSlug);
+  }
+
+  private async findOrganizationMembership(
+    userId: string,
+    filterColumn: "organization_id" | "slug",
+    filterValue: string,
   ): Promise<OrganizationMembership | null> {
     const [row] = await this.client<OrganizationMembershipRow[]>`
       SELECT
@@ -141,7 +137,7 @@ export class Db {
       FROM member
       INNER JOIN organization ON organization.id = member.organization_id
       WHERE member.user_id = ${userId}
-        AND organization.slug = ${organizationSlug}
+        AND ${filterColumn === "slug" ? this.client`organization.slug = ${filterValue}` : this.client`member.organization_id = ${filterValue}`}
     `;
 
     return row ? mapOrganizationMembership(row) : null;
@@ -149,10 +145,9 @@ export class Db {
 
   async createRoom(
     organizationId: string,
-    organizationSlug: string,
     createdByUserId: string,
     name: string,
-  ): Promise<RoomRecord> {
+  ): Promise<{ room_id: string; name: string; created_at: string }> {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const roomId = generateRoomCode();
 
@@ -167,9 +162,6 @@ export class Db {
           room_id: roomId,
           name,
           created_at: toRfc3339(row?.created_at),
-          organization_id: organizationId,
-          organization_slug: organizationSlug,
-          created_by_user_id: createdByUserId,
         };
       } catch (error) {
         if (isUniqueViolation(error)) {
@@ -198,6 +190,24 @@ export class Db {
     `;
 
     return rows.map((row) => mapRoom(row));
+  }
+
+  async getRoomWithAccessCheck(roomId: string, userId: string): Promise<RoomRecord | null> {
+    const [row] = await this.client<RoomRow[]>`
+      SELECT
+        rooms.room_id,
+        rooms.name,
+        rooms.created_at,
+        rooms.organization_id,
+        organization.slug AS organization_slug,
+        rooms.created_by_user_id
+      FROM rooms
+      INNER JOIN organization ON organization.id = rooms.organization_id
+      INNER JOIN member ON member.organization_id = rooms.organization_id AND member.user_id = ${userId}
+      WHERE rooms.room_id = ${normalizeRoomId(roomId)}
+    `;
+
+    return row ? mapRoom(row) : null;
   }
 
   async getRoom(roomId: string): Promise<RoomRecord | null> {

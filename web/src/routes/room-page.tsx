@@ -16,7 +16,7 @@ import {
   type StoredHookEvent,
 } from "../api";
 import { CopyPanel } from "../components/copy-panel";
-import { readMessage } from "../utils";
+import { readMessage, useCopyHandler } from "../utils";
 
 const FEED_LIMIT = 10;
 const DEFAULT_SERVER_URL = "https://api.supermanager.dev";
@@ -36,7 +36,7 @@ export function RoomPage() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copiedValue, setCopiedValue] = useState<string | null>(null);
+  const { copiedValue, copy } = useCopyHandler();
   const [clock, setClock] = useState(() => Date.now());
 
   const canonicalRoomId = room?.room_id || roomId;
@@ -146,14 +146,6 @@ export function RoomPage() {
       stream.close();
     };
   }, [roomId]);
-
-  async function copy(label: string, value: string) {
-    await navigator.clipboard.writeText(value);
-    setCopiedValue(label);
-    window.setTimeout(() => {
-      setCopiedValue((current) => (current === label ? null : current));
-    }, 1800);
-  }
 
   function closeRoomInfo() {
     const dropdown = roomInfoDropdownRef.current;
