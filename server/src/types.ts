@@ -7,12 +7,6 @@ export interface FeedResponse {
   events: StoredHookEvent[];
 }
 
-export interface Room {
-  room_id: string;
-  name: string;
-  created_at: string;
-}
-
 export interface CreateRoomRequest {
   name: string;
   organization_slug?: string | null;
@@ -30,6 +24,7 @@ export interface RoomMetadataResponse {
   name: string;
   created_at: string;
   organization_slug: string;
+  join_command: string;
 }
 
 export interface RoomListEntry {

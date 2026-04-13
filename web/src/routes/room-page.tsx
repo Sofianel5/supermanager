@@ -10,7 +10,6 @@ import remarkGfm from "remark-gfm";
 import { Link, useParams } from "react-router-dom";
 import {
   api,
-  getApiBaseUrl,
   type RoomMetadataResponse,
   type RoomSnapshot,
   type StoredHookEvent,
@@ -19,7 +18,6 @@ import { CopyPanel } from "../components/copy-panel";
 import { readMessage, useCopyHandler } from "../utils";
 
 const FEED_LIMIT = 10;
-const DEFAULT_SERVER_URL = "https://api.supermanager.dev";
 
 type SummaryStatus = "idle" | "ready" | "generating" | "error";
 type ConnectionStatus = "connecting" | "live" | "reconnecting";
@@ -40,7 +38,6 @@ export function RoomPage() {
   const [clock, setClock] = useState(() => Date.now());
 
   const canonicalRoomId = room?.room_id || roomId;
-  const joinCommand = buildJoinCommand(canonicalRoomId, room?.organization_slug);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -201,7 +198,7 @@ export function RoomPage() {
                 copiedValue={copiedValue}
                 label="Join another repo"
                 onCopy={copy}
-                value={joinCommand}
+                value={room?.join_command ?? `supermanager join ${canonicalRoomId}`}
               />
             </div>
           </details>
@@ -425,22 +422,4 @@ function formatRelativeTime(isoTimestamp: string, now: number) {
     return `${Math.floor(seconds / 3600)}h ago`;
   }
   return `${Math.floor(seconds / 86400)}d ago`;
-}
-
-function buildJoinCommand(roomId: string, organizationSlug?: string) {
-  const apiBaseUrl = getApiBaseUrl();
-  const parts = ["supermanager", "join", roomId];
-
-  if (organizationSlug) {
-    parts.push("--org", shellQuote(organizationSlug));
-  }
-  if (apiBaseUrl !== DEFAULT_SERVER_URL) {
-    parts.push("--server", shellQuote(apiBaseUrl));
-  }
-
-  return parts.join(" ");
-}
-
-function shellQuote(value: string) {
-  return `"${value.replaceAll("\"", "\\\"")}"`;
 }
