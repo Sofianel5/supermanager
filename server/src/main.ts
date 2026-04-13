@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { createFetchHandler } from "./app";
+import { createApp } from "./app";
 import { loadConfig } from "./config";
 import { Db } from "./db";
 import { runMigrations } from "./migrations";
@@ -10,7 +10,7 @@ import { SummaryAgentHost } from "./summary/agent-host";
 
 async function main(): Promise<void> {
   const cwd = process.cwd();
-  const config = await loadConfig(process.argv.slice(2), cwd);
+  const config = await loadConfig(Bun.argv.slice(2), cwd);
   const db = await Db.connect(config.databaseUrl);
   await runMigrations(db.client, path.join(cwd, "migrations"));
 
@@ -25,11 +25,34 @@ async function main(): Promise<void> {
     storage,
   });
   await agent.start();
+  const app = createApp({
+    config,
+    db,
+    storage,
+    agent,
+    feedHub,
+  });
+  app.compile();
 
-  const shutdown = async (): Promise<void> => {
-    await agent.stop().catch(() => undefined);
-    await db.close().catch(() => undefined);
+  const server = Bun.serve({
+    hostname: config.bind.host,
+    idleTimeout: 0,
+    port: config.bind.port,
+    fetch: app.handle,
+  });
+
+  let shutdownPromise: Promise<void> | null = null;
+  const shutdown = (): Promise<void> => {
+    if (!shutdownPromise) {
+      shutdownPromise = (async () => {
+        await server.stop(true).catch(() => undefined);
+        await agent.stop().catch(() => undefined);
+        await db.close().catch(() => undefined);
+      })();
+    }
+    return shutdownPromise;
   };
+
   process.once("SIGINT", () => {
     void shutdown().finally(() => process.exit(0));
   });
@@ -37,18 +60,7 @@ async function main(): Promise<void> {
     void shutdown().finally(() => process.exit(0));
   });
 
-  Bun.serve({
-    hostname: config.bind.host,
-    port: config.bind.port,
-    fetch: createFetchHandler({
-      config,
-      db,
-      storage,
-      agent,
-      feedHub,
-    }),
-  });
-  console.log(`coordination-server listening on http://${config.bind.host}:${config.bind.port}`);
+  console.log(`coordination-server listening on ${server.url}`);
 }
 
 void main().catch((error) => {

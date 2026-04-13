@@ -1,6 +1,6 @@
 # Supermanager
 
-Supermanager is a room-based coordination system for coding agents. The coordination server is a Bun/TypeScript service that owns room creation, hook ingest, PostgreSQL storage, SSE, and agent orchestration. A separate Rust `summary-agent` process owns the in-process Codex runtime. A React frontend owns the landing page and live room dashboard.
+Supermanager is a room-based coordination system for coding agents. The coordination server is a Bun/Elysia TypeScript service that owns room creation, hook ingest, PostgreSQL storage, SSE, and agent orchestration. A separate Rust `summary-agent` process owns the in-process Codex runtime. A React frontend owns the landing page and live room dashboard.
 
 ## Setup
 
@@ -36,6 +36,14 @@ You can also configure these through environment variables:
 - `OPENAI_API_KEY`
 
 In local development the Bun server automatically starts the Rust summary agent through `cargo run -p summary-agent`. For packaged environments, point `SUPERMANAGER_SUMMARY_AGENT_BIN` at a compiled `summary-agent` binary.
+
+For production packaging, compile the server to a standalone Bun executable:
+
+```sh
+cd server
+bun run build
+./.build/supermanager-server
+```
 
 ### 2. Start the frontend
 
