@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { createApp } from "./app";
 import { createAuthServices } from "./auth";
-import { loadConfig } from "./config";
+import { loadConfig, trimUrl } from "./config";
 import { Db } from "./db";
 import { runMigrations } from "./migrations";
 import { FeedStreamHub } from "./sse";
@@ -19,7 +19,10 @@ async function main(): Promise<void> {
   const storage = new StoragePaths(config.dataDir);
   await storage.initialize();
 
-  const feedHub = new FeedStreamHub();
+  const feedHub = new FeedStreamHub([
+    trimUrl(config.publicApiUrl),
+    trimUrl(config.publicAppUrl),
+  ]);
   const agent = new SummaryAgentHost({
     config,
     db,

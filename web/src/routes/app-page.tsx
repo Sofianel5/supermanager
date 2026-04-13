@@ -2,6 +2,8 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type RoomListEntry, type ViewerOrganization, type ViewerResponse } from "../api";
 import { authClient } from "../auth-client";
+import { CopyPanel } from "../components/copy-panel";
+import { readAuthError, readMessage } from "../utils";
 
 const INSTALL_COMMAND = "curl -fsSL https://supermanager.dev/install.sh | sh";
 const LOGIN_COMMAND = "supermanager login";
@@ -384,27 +386,6 @@ export function AppPage() {
   );
 }
 
-function CopyPanel({
-  copiedValue,
-  label,
-  onCopy,
-  value,
-}: {
-  copiedValue: string | null;
-  label: string;
-  onCopy: (label: string, value: string) => Promise<void>;
-  value: string;
-}) {
-  return (
-    <button className="copy-sheet" type="button" onClick={() => onCopy(label, value)}>
-      <span className="copy-label">
-        {label} {copiedValue === label ? "copied" : "click to copy"}
-      </span>
-      <code>{value}</code>
-    </button>
-  );
-}
-
 function pickActiveOrganization(viewer: ViewerResponse | null) {
   if (!viewer) {
     return null;
@@ -438,10 +419,3 @@ function formatDate(value: string) {
   }).format(timestamp);
 }
 
-function readAuthError(error: { message?: string; status: number; statusText: string }) {
-  return error.message || error.statusText || `Request failed with ${error.status}`;
-}
-
-function readMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Request failed.";
-}

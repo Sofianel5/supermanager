@@ -137,6 +137,10 @@ async function resolveSummaryAgentCommand(
   };
 }
 
+export function trimUrl(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
 async function findCargoWorkspace(cwd: string): Promise<string | null> {
   const candidates = [cwd, path.resolve(cwd, "..")];
   for (const candidate of candidates) {

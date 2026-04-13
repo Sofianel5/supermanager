@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { authClient } from "../auth-client";
+import { readAuthError } from "../utils";
 
 type DeviceStatus = "approved" | "denied" | "pending" | null;
 
@@ -211,6 +212,3 @@ function statusToTone(status: NonNullable<DeviceStatus>) {
   return "error";
 }
 
-function readAuthError(error: { message?: string; status: number; statusText: string }) {
-  return error.message || error.statusText || `Request failed with ${error.status}`;
-}
