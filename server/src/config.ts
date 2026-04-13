@@ -40,8 +40,6 @@ export async function loadConfig(argv: string[], cwd: string): Promise<ServerCon
       bind: { type: "string", default: "127.0.0.1:8787" },
       "database-url": { type: "string" },
       "data-dir": { type: "string" },
-      "public-api-url": { type: "string", default: "http://127.0.0.1:8787" },
-      "public-app-url": { type: "string", default: "http://127.0.0.1:5173" },
       "summary-agent-bin": { type: "string" },
     },
     allowPositionals: false,
@@ -61,10 +59,8 @@ export async function loadConfig(argv: string[], cwd: string): Promise<ServerCon
     bind: parseBindAddress(parsed.values.bind),
     databaseUrl,
     dataDir,
-    publicApiUrl:
-      parsed.values["public-api-url"] ?? Bun.env.SUPERMANAGER_PUBLIC_API_URL ?? "http://127.0.0.1:8787",
-    publicAppUrl:
-      parsed.values["public-app-url"] ?? Bun.env.SUPERMANAGER_PUBLIC_APP_URL ?? "http://127.0.0.1:5173",
+    publicApiUrl: readRequiredEnv(["SUPERMANAGER_PUBLIC_API_URL"]),
+    publicAppUrl: readRequiredEnv(["SUPERMANAGER_PUBLIC_APP_URL"]),
     auth: {
       secret: readRequiredEnv(["BETTER_AUTH_SECRET", "AUTH_SECRET"]),
       google: {
@@ -87,7 +83,7 @@ function readRequiredEnv(names: string[]): string {
   for (const name of names) {
     const value = Bun.env[name]?.trim();
     if (value) {
-      return value;
+      return trimUrl(value);
     }
   }
 

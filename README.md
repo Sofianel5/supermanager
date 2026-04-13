@@ -16,22 +16,12 @@ export GOOGLE_CLIENT_ID='replace-me'
 export GOOGLE_CLIENT_SECRET='replace-me'
 export GITHUB_CLIENT_ID='replace-me'
 export GITHUB_CLIENT_SECRET='replace-me'
+export SUPERMANAGER_PUBLIC_API_URL='http://127.0.0.1:8787'
+export SUPERMANAGER_PUBLIC_APP_URL='http://127.0.0.1:5173'
 bun run src/main.ts
 ```
 
-By default it listens on `http://127.0.0.1:8787` and expects the frontend on `http://127.0.0.1:5173`.
-
-To customize the public URLs explicitly:
-
-```sh
-bun run src/main.ts \
-  --database-url 'postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable' \
-  --data-dir '../.supermanager-data' \
-  --public-api-url 'http://127.0.0.1:8787' \
-  --public-app-url 'http://127.0.0.1:5173'
-```
-
-You can also configure these through environment variables:
+The server reads runtime config from environment variables:
 
 - `DATABASE_URL`
 - `BETTER_AUTH_SECRET` or `AUTH_SECRET`
@@ -52,6 +42,8 @@ For production packaging, compile the server to a standalone Bun executable:
 ```sh
 cd server
 bun run build
+SUPERMANAGER_PUBLIC_API_URL='https://api.supermanager.dev' \
+SUPERMANAGER_PUBLIC_APP_URL='https://supermanager.dev' \
 ./.build/supermanager-server
 ```
 
