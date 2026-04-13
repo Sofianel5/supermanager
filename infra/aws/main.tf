@@ -368,6 +368,11 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
         ]
         Resource = [
           aws_secretsmanager_secret.database_url.arn,
+          var.better_auth_secret_arn,
+          var.google_client_id_secret_arn,
+          var.google_client_secret_arn,
+          var.github_client_id_secret_arn,
+          var.github_client_secret_arn,
           var.openai_api_key_secret_arn,
         ]
       },
@@ -511,6 +516,26 @@ resource "aws_ecs_task_definition" "server" {
         {
           name      = "DATABASE_URL"
           valueFrom = aws_secretsmanager_secret.database_url.arn
+        },
+        {
+          name      = "BETTER_AUTH_SECRET"
+          valueFrom = var.better_auth_secret_arn
+        },
+        {
+          name      = "GOOGLE_CLIENT_ID"
+          valueFrom = var.google_client_id_secret_arn
+        },
+        {
+          name      = "GOOGLE_CLIENT_SECRET"
+          valueFrom = var.google_client_secret_arn
+        },
+        {
+          name      = "GITHUB_CLIENT_ID"
+          valueFrom = var.github_client_id_secret_arn
+        },
+        {
+          name      = "GITHUB_CLIENT_SECRET"
+          valueFrom = var.github_client_secret_arn
         },
         {
           name      = "OPENAI_API_KEY"

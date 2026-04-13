@@ -68,6 +68,31 @@ variable "openai_api_key_secret_arn" {
   type        = string
 }
 
+variable "better_auth_secret_arn" {
+  description = "Secrets Manager ARN containing BETTER_AUTH_SECRET."
+  type        = string
+}
+
+variable "google_client_id_secret_arn" {
+  description = "Secrets Manager ARN containing GOOGLE_CLIENT_ID."
+  type        = string
+}
+
+variable "google_client_secret_arn" {
+  description = "Secrets Manager ARN containing GOOGLE_CLIENT_SECRET."
+  type        = string
+}
+
+variable "github_client_id_secret_arn" {
+  description = "Secrets Manager ARN containing GITHUB_CLIENT_ID."
+  type        = string
+}
+
+variable "github_client_secret_arn" {
+  description = "Secrets Manager ARN containing GITHUB_CLIENT_SECRET."
+  type        = string
+}
+
 variable "db_name" {
   description = "PostgreSQL database name."
   type        = string

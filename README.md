@@ -218,6 +218,11 @@ Apply the Terraform stack in `infra/aws` first. The companion guide is at `infra
 Key inputs:
 
 - `acm_certificate_arn`
+- `better_auth_secret_arn`
+- `google_client_id_secret_arn`
+- `google_client_secret_arn`
+- `github_client_id_secret_arn`
+- `github_client_secret_arn`
 - `openai_api_key_secret_arn`
 - optional `github_oidc_provider_arn` to create the deploy role
 
