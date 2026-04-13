@@ -15,18 +15,53 @@ export interface Room {
 
 export interface CreateRoomRequest {
   name: string;
+  organization_slug?: string | null;
 }
 
 export interface CreateRoomResponse {
   room_id: string;
   dashboard_url: string;
   join_command: string;
+  organization_slug: string;
 }
 
 export interface RoomMetadataResponse {
   room_id: string;
   name: string;
   created_at: string;
+  organization_slug: string;
+}
+
+export interface RoomListEntry {
+  room_id: string;
+  name: string;
+  created_at: string;
+  organization_slug: string;
+}
+
+export interface ConnectionResponse {
+  api_key: string;
+  api_key_id: string;
+  dashboard_url: string;
+  room_id: string;
+}
+
+export interface OrganizationMembership {
+  organization_id: string;
+  organization_name: string;
+  organization_slug: string;
+  role: string;
+}
+
+export interface ViewerResponse {
+  active_organization_id: string | null;
+  organizations: OrganizationMembership[];
+  user: {
+    email: string;
+    id: string;
+    image: string | null;
+    name: string;
+  };
 }
 
 export interface EmployeeSnapshot {

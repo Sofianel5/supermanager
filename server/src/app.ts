@@ -1,6 +1,11 @@
 import { cors } from "@elysiajs/cors";
 import { Elysia, status, t } from "elysia";
 
+import {
+  HOOK_WRITE_PERMISSIONS,
+  ROOM_CONNECTION_KEY_CONFIG,
+  type SupermanagerAuth,
+} from "./auth";
 import type { ServerConfig } from "./config";
 import { Db } from "./db";
 import type { FeedStreamHub } from "./sse";
@@ -8,7 +13,6 @@ import type { StoragePaths } from "./storage";
 import type { SummaryAgentHost } from "./summary/agent-host";
 
 const DEFAULT_PUBLIC_API_URL = "https://api.supermanager.dev";
-const DEFAULT_PUBLIC_APP_URL = "https://supermanager.dev";
 const FEED_PAGE_DEFAULT = 10;
 const FEED_PAGE_MAX = 100;
 
@@ -18,6 +22,16 @@ const roomParams = t.Object({
 
 const createRoomBody = t.Object({
   name: t.String(),
+  organization_slug: t.Optional(t.Nullable(t.String())),
+});
+
+const createConnectionBody = t.Object({
+  name: t.Optional(t.Nullable(t.String())),
+  repo_root: t.String(),
+});
+
+const listRoomsQuery = t.Object({
+  organization_slug: t.Optional(t.String()),
 });
 
 const feedQuery = t.Object({
@@ -38,6 +52,7 @@ const hookTurnBody = t.Object({
 });
 
 export interface AppContext {
+  auth: SupermanagerAuth;
   config: ServerConfig;
   db: Db;
   storage: StoragePaths;
@@ -46,14 +61,22 @@ export interface AppContext {
 }
 
 export function createApp(context: AppContext) {
+  const allowedOrigins = [
+    trimUrl(context.config.publicApiUrl),
+    trimUrl(context.config.publicAppUrl),
+  ];
+
   return new Elysia()
     .use(
       cors({
-        allowedHeaders: ["Content-Type", "Last-Event-ID"],
+        allowedHeaders: ["Authorization", "Content-Type", "Last-Event-ID", "X-API-Key"],
+        credentials: true,
+        exposeHeaders: ["set-auth-token"],
         methods: ["GET", "POST", "OPTIONS"],
-        origin: true,
+        origin: allowedOrigins,
       }),
     )
+    .mount(context.auth.handler)
     .onError(({ code, error }) => {
       if (code === "NOT_FOUND") {
         return new Response("not found", { status: 404 });
@@ -84,22 +107,71 @@ export function createApp(context: AppContext) {
         return status(503, formatError(error));
       }
     })
+    .get("/v1/me", async ({ request }) => {
+      const viewer = await requireViewer(context.auth, request.headers);
+      const organizations = await context.db.listOrganizationsForUser(viewer.user.id);
+
+      return {
+        active_organization_id: viewer.session.activeOrganizationId ?? null,
+        organizations,
+        user: {
+          email: viewer.user.email,
+          id: viewer.user.id,
+          image: viewer.user.image ?? null,
+          name: normalizeDisplayName(viewer.user.name, viewer.user.email),
+        },
+      };
+    })
+    .get(
+      "/v1/rooms",
+      async ({ query, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          query.organization_slug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+
+        return {
+          organization_slug: membership.organization_slug,
+          rooms: await context.db.listRoomsForOrganization(membership.organization_id),
+        };
+      },
+      {
+        query: listRoomsQuery,
+      },
+    )
     .post(
       "/v1/rooms",
-      async ({ body }) => {
+      async ({ body, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
         const name = body.name.trim();
         if (!name) {
           return status(400, "name must be a non-empty string");
         }
 
-        const room = await context.db.createRoom(name);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          body.organization_slug ?? undefined,
+          viewer.session.activeOrganizationId ?? null,
+        );
+        const room = await context.db.createRoom(
+          membership.organization_id,
+          membership.organization_slug,
+          viewer.user.id,
+          name,
+        );
+
         return status(201, {
           room_id: room.room_id,
+          organization_slug: room.organization_slug,
           dashboard_url: dashboardUrl(context.config.publicAppUrl, room.room_id),
           join_command: cliJoinCommand(
             context.config.publicApiUrl,
-            context.config.publicAppUrl,
             room.room_id,
+            room.organization_slug,
           ),
         });
       },
@@ -108,17 +180,16 @@ export function createApp(context: AppContext) {
       },
     )
     .get(
-      "/r/:roomId",
-      async ({ params }) => {
-        const room = await context.db.getRoom(params.roomId);
-        if (!room) {
-          return status(404, `room not found: ${params.roomId}`);
-        }
+      "/v1/rooms/:roomId",
+      async ({ params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
 
         return {
           room_id: room.room_id,
           name: room.name,
           created_at: room.created_at,
+          organization_slug: room.organization_slug,
         };
       },
       {
@@ -126,12 +197,10 @@ export function createApp(context: AppContext) {
       },
     )
     .get(
-      "/r/:roomId/feed",
-      async ({ params, query }) => {
-        const room = await context.db.getRoom(params.roomId);
-        if (!room) {
-          return status(404, `room not found: ${params.roomId}`);
-        }
+      "/v1/rooms/:roomId/feed",
+      async ({ params, query, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
 
         const before = query.before;
         const limit = clampLimit(query.limit);
@@ -144,12 +213,10 @@ export function createApp(context: AppContext) {
       },
     )
     .get(
-      "/r/:roomId/feed/stream",
-      async ({ headers, params }) => {
-        const room = await context.db.getRoom(params.roomId);
-        if (!room) {
-          return status(404, `room not found: ${params.roomId}`);
-        }
+      "/v1/rooms/:roomId/feed/stream",
+      async ({ headers, params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
 
         const replay =
           headers["last-event-id"] == null
@@ -163,7 +230,10 @@ export function createApp(context: AppContext) {
 
         replay.reverse();
         const initialStatus = await context.db.getSummaryStatus(room.room_id);
-        const client = context.feedHub.register(room.room_id);
+        const client = context.feedHub.register(
+          room.room_id,
+          request.headers.get("origin"),
+        );
 
         for (const event of replay) {
           client.sendHookEvent(event);
@@ -178,11 +248,65 @@ export function createApp(context: AppContext) {
       },
     )
     .post(
-      "/r/:roomId/hooks/turn",
-      async ({ body, params }) => {
-        const room = await context.db.getRoom(params.roomId);
+      "/v1/rooms/:roomId/connections",
+      async ({ body, params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
+
+        const repoRoot = body.repo_root.trim();
+        if (!repoRoot) {
+          return status(400, "repo_root must be a non-empty string");
+        }
+
+        const created = await context.auth.api.createApiKey({
+          body: {
+            configId: ROOM_CONNECTION_KEY_CONFIG,
+            metadata: {
+              createdByUserId: viewer.user.id,
+              organizationSlug: room.organization_slug,
+              repoRoot,
+              roomId: room.room_id,
+            },
+            name: buildConnectionName(body.name, repoRoot),
+            organizationId: room.organization_id,
+            permissions: HOOK_WRITE_PERMISSIONS,
+          },
+        });
+
+        return status(201, {
+          api_key: created.key,
+          api_key_id: created.id,
+          dashboard_url: dashboardUrl(context.config.publicAppUrl, room.room_id),
+          room_id: room.room_id,
+        });
+      },
+      {
+        body: createConnectionBody,
+        params: roomParams,
+      },
+    )
+    .post(
+      "/v1/hooks/turn",
+      async ({ body, request }) => {
+        const verification = await context.auth.api.verifyApiKey({
+          body: {
+            configId: ROOM_CONNECTION_KEY_CONFIG,
+            key: readRequiredHeader(request.headers, "x-api-key"),
+            permissions: HOOK_WRITE_PERMISSIONS,
+          },
+        });
+
+        if (!verification.valid || !verification.key) {
+          throw httpError(401, "invalid api key");
+        }
+
+        const metadata = parseConnectionMetadata(verification.key.metadata);
+        const room = await context.db.getRoom(metadata.roomId);
         if (!room) {
-          return status(404, `room not found: ${params.roomId}`);
+          throw httpError(404, `room not found: ${metadata.roomId}`);
+        }
+        if (room.organization_id !== verification.key.referenceId) {
+          throw httpError(403, "api key organization mismatch");
         }
 
         const employeeName = body.employee_name.trim();
@@ -218,16 +342,13 @@ export function createApp(context: AppContext) {
       },
       {
         body: hookTurnBody,
-        params: roomParams,
       },
     )
     .get(
-      "/r/:roomId/summary",
-      async ({ params }) => {
-        const room = await context.db.getRoom(params.roomId);
-        if (!room) {
-          return status(404, `room not found: ${params.roomId}`);
-        }
+      "/v1/rooms/:roomId/summary",
+      async ({ params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
 
         return context.db.getSummary(room.room_id);
       },
@@ -246,22 +367,110 @@ function dashboardUrl(appUrl: string, roomId: string): string {
   return `${trimUrl(appUrl)}/r/${roomId}`;
 }
 
-function cliJoinCommand(apiUrl: string, appUrl: string, roomId: string): string {
+function cliJoinCommand(
+  apiUrl: string,
+  roomId: string,
+  organizationSlug: string,
+): string {
   const normalizedApiUrl = trimUrl(apiUrl);
-  const normalizedAppUrl = trimUrl(appUrl);
+  const parts = ["supermanager", "join", roomId, "--org", shellQuote(organizationSlug)];
 
-  if (
-    normalizedApiUrl === DEFAULT_PUBLIC_API_URL &&
-    normalizedAppUrl === DEFAULT_PUBLIC_APP_URL
-  ) {
-    return `supermanager join ${roomId}`;
+  if (normalizedApiUrl !== DEFAULT_PUBLIC_API_URL) {
+    parts.push("--server", shellQuote(normalizedApiUrl));
   }
 
-  return `supermanager join ${roomId} --server "${normalizedApiUrl}" --app-url "${normalizedAppUrl}"`;
+  return parts.join(" ");
+}
+
+async function requireViewer(auth: SupermanagerAuth, headers: Headers) {
+  const session = await auth.api.getSession({ headers });
+  if (!session) {
+    throw httpError(401, "authentication required");
+  }
+  return session;
+}
+
+async function resolveOrganizationMembership(
+  db: Db,
+  userId: string,
+  organizationSlug: string | undefined,
+  activeOrganizationId: string | null,
+) {
+  if (organizationSlug) {
+    const membership = await db.getOrganizationMembershipBySlug(userId, organizationSlug);
+    if (!membership) {
+      throw httpError(403, `organization not available: ${organizationSlug}`);
+    }
+    return membership;
+  }
+
+  if (activeOrganizationId) {
+    const membership = await db.getOrganizationMembershipById(userId, activeOrganizationId);
+    if (membership) {
+      return membership;
+    }
+  }
+
+  throw httpError(400, "select an organization first");
+}
+
+async function requireRoomAccess(db: Db, userId: string, roomId: string) {
+  const room = await db.getRoom(roomId);
+  if (!room) {
+    throw httpError(404, `room not found: ${roomId}`);
+  }
+
+  const membership = await db.getOrganizationMembershipById(userId, room.organization_id);
+  if (!membership) {
+    throw httpError(403, "forbidden");
+  }
+
+  return room;
+}
+
+function parseConnectionMetadata(metadata: unknown): { roomId: string } {
+  if (metadata && typeof metadata === "object" && "roomId" in metadata) {
+    const roomId = (metadata as { roomId?: unknown }).roomId;
+    if (typeof roomId === "string" && roomId.trim()) {
+      return { roomId };
+    }
+  }
+
+  throw httpError(401, "api key metadata is invalid");
+}
+
+function buildConnectionName(name: string | null | undefined, repoRoot: string) {
+  const trimmedName = name?.trim();
+  if (trimmedName) {
+    return trimmedName;
+  }
+
+  return repoRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? repoRoot;
+}
+
+function normalizeDisplayName(name: string | null | undefined, email: string) {
+  const trimmed = name?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : email;
+}
+
+function readRequiredHeader(headers: Headers, name: string) {
+  const value = headers.get(name)?.trim();
+  if (!value) {
+    throw httpError(401, `missing ${name}`);
+  }
+  return value;
+}
+
+function httpError(statusCode: number, message: string) {
+  return Object.assign(new Error(message), { status: statusCode });
 }
 
 function trimUrl(url: string): string {
   return url.replace(/\/+$/, "");
+}
+
+function shellQuote(value: string): string {
+  return `"${value.replaceAll("\"", "\\\"")}"`;
 }
 
 function formatError(error: unknown): string {

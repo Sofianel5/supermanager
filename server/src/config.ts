@@ -12,12 +12,24 @@ export interface SummaryAgentCommand {
   cwd: string;
 }
 
+export interface OAuthProviderConfig {
+  clientId: string;
+  clientSecret: string;
+}
+
+export interface AuthConfig {
+  secret: string;
+  google: OAuthProviderConfig;
+  github: OAuthProviderConfig;
+}
+
 export interface ServerConfig {
   bind: BindAddress;
   databaseUrl: string;
   dataDir: string;
   publicApiUrl: string;
   publicAppUrl: string;
+  auth: AuthConfig;
   summaryAgent: SummaryAgentCommand;
 }
 
@@ -53,11 +65,33 @@ export async function loadConfig(argv: string[], cwd: string): Promise<ServerCon
       parsed.values["public-api-url"] ?? Bun.env.SUPERMANAGER_PUBLIC_API_URL ?? "http://127.0.0.1:8787",
     publicAppUrl:
       parsed.values["public-app-url"] ?? Bun.env.SUPERMANAGER_PUBLIC_APP_URL ?? "http://127.0.0.1:5173",
+    auth: {
+      secret: readRequiredEnv(["BETTER_AUTH_SECRET", "AUTH_SECRET"]),
+      google: {
+        clientId: readRequiredEnv(["GOOGLE_CLIENT_ID"]),
+        clientSecret: readRequiredEnv(["GOOGLE_CLIENT_SECRET"]),
+      },
+      github: {
+        clientId: readRequiredEnv(["GITHUB_CLIENT_ID"]),
+        clientSecret: readRequiredEnv(["GITHUB_CLIENT_SECRET"]),
+      },
+    },
     summaryAgent: await resolveSummaryAgentCommand(
       parsed.values["summary-agent-bin"] ?? Bun.env.SUPERMANAGER_SUMMARY_AGENT_BIN ?? null,
       cwd,
     ),
   };
+}
+
+function readRequiredEnv(names: string[]): string {
+  for (const name of names) {
+    const value = Bun.env[name]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  throw new Error(`missing required environment variable: ${names.join(" or ")}`);
 }
 
 function parseBindAddress(raw: string): BindAddress {

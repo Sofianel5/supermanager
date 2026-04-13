@@ -1,4 +1,8 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import type { ReactNode } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { authClient, sanitizeReturnTo } from "./auth-client";
+import { AppPage } from "./routes/app-page";
+import { DevicePage } from "./routes/device-page";
 import { LandingPage } from "./routes/landing-page";
 import { RoomPage } from "./routes/room-page";
 
@@ -7,9 +11,62 @@ export function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        <Route path="/r/:roomId" element={<RoomPage />} />
+        <Route
+          path="/app"
+          element={
+            <RequireSession>
+              <AppPage />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/device"
+          element={
+            <RequireSession>
+              <DevicePage />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/r/:roomId"
+          element={
+            <RequireSession>
+              <RoomPage />
+            </RequireSession>
+          }
+        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );
+}
+
+function RequireSession({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  const session = authClient.useSession();
+
+  if (session.isPending) {
+    return (
+      <main className="shell shell--centered">
+        <div className="status-block">
+          <span className="eyebrow">supermanager</span>
+          <h1>Checking your session…</h1>
+        </div>
+      </main>
+    );
+  }
+
+  if (!session.data) {
+    const returnTo = sanitizeReturnTo(
+      `${location.pathname}${location.search}${location.hash}`,
+    );
+    return (
+      <Navigate
+        replace
+        to={`/?returnTo=${encodeURIComponent(returnTo)}`}
+      />
+    );
+  }
+
+  return children;
 }

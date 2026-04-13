@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { createApp } from "./app";
+import { createAuthServices } from "./auth";
 import { loadConfig } from "./config";
 import { Db } from "./db";
 import { runMigrations } from "./migrations";
@@ -12,6 +13,7 @@ async function main(): Promise<void> {
   const cwd = process.cwd();
   const config = await loadConfig(Bun.argv.slice(2), cwd);
   const db = await Db.connect(config.databaseUrl);
+  const auth = createAuthServices(config);
   await runMigrations(db.client, path.join(cwd, "migrations"));
 
   const storage = new StoragePaths(config.dataDir);
@@ -26,6 +28,7 @@ async function main(): Promise<void> {
   });
   await agent.start();
   const app = createApp({
+    auth: auth.auth,
     config,
     db,
     storage,
@@ -47,6 +50,7 @@ async function main(): Promise<void> {
       shutdownPromise = (async () => {
         await server.stop(true).catch(() => undefined);
         await agent.stop().catch(() => undefined);
+        await auth.close().catch(() => undefined);
         await db.close().catch(() => undefined);
       })();
     }

@@ -1,6 +1,6 @@
 # Supermanager
 
-Supermanager is a room-based coordination system for coding agents. The coordination server is a Bun/Elysia TypeScript service that owns room creation, hook ingest, PostgreSQL storage, SSE, and agent orchestration. A separate Rust `summary-agent` process owns the in-process Codex runtime. A React frontend owns the landing page and live room dashboard.
+Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, room storage, hook ingest, PostgreSQL state, SSE, and agent orchestration. A separate Rust `summary-agent` process owns the in-process Codex runtime. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live room dashboard.
 
 ## Setup
 
@@ -11,6 +11,11 @@ cd server
 bun install
 export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
 export SUPERMANAGER_DATA_DIR='../.supermanager-data'
+export BETTER_AUTH_SECRET='replace-me'
+export GOOGLE_CLIENT_ID='replace-me'
+export GOOGLE_CLIENT_SECRET='replace-me'
+export GITHUB_CLIENT_ID='replace-me'
+export GITHUB_CLIENT_SECRET='replace-me'
 bun run src/main.ts
 ```
 
@@ -29,6 +34,11 @@ bun run src/main.ts \
 You can also configure these through environment variables:
 
 - `DATABASE_URL`
+- `BETTER_AUTH_SECRET` or `AUTH_SECRET`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
 - `SUPERMANAGER_DATA_DIR`
 - `SUPERMANAGER_PUBLIC_API_URL`
 - `SUPERMANAGER_PUBLIC_APP_URL`
@@ -49,8 +59,8 @@ bun run build
 
 ```sh
 cd web
-VITE_API_BASE_URL='http://127.0.0.1:8787' corepack pnpm install
-VITE_API_BASE_URL='http://127.0.0.1:8787' corepack pnpm dev
+VITE_API_BASE_URL='http://127.0.0.1:8787' bun install
+VITE_API_BASE_URL='http://127.0.0.1:8787' bun run dev
 ```
 
 ### 3. Install the CLI once per machine
@@ -78,55 +88,45 @@ supermanager update
 
 Set `SUPERMANAGER_AUTO_UPDATE=0` to disable the automatic daily check.
 
-### 4. Create a room
+### 4. Sign in and create an organization
 
-Create the room from the CLI:
+Open `http://127.0.0.1:5173`, continue with Google or GitHub, and create the private organization that will own your rooms.
 
-```sh
-supermanager create room
-```
-
-That uses the current git repo name as the room name by default, and it must be run inside a git repo. To pick one explicitly:
+Then authenticate the CLI on any machine that will report repo activity:
 
 ```sh
-supermanager create room "My Team"
+supermanager login --server "http://127.0.0.1:8787"
 ```
 
-The command creates the room, automatically joins the current repo to it, prints the room code, a join command you can run in other repos, the dashboard URL, and copies the dashboard URL to your clipboard.
-
-You can still create a room in the browser or call the API directly:
+If your account belongs to multiple organizations, pass the slug explicitly:
 
 ```sh
-curl -sS http://127.0.0.1:8787/v1/rooms \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"My Team"}'
+supermanager login --server "http://127.0.0.1:8787" --org "<org-slug>"
 ```
 
-The response includes:
+### 5. Create a room from the CLI
 
-- `dashboard_url`
-- `room_id` as a 6-character case-insensitive alphanumeric code
-- `join_command`
+Create the room from inside a git repo:
 
-### 5. Join repos to the room
+```sh
+supermanager create room --server "http://127.0.0.1:8787" --org "<org-slug>"
+```
+
+That uses the current git repo name as the room name by default, joins the current repo automatically, prints a dashboard URL, and prints a join command for additional repos. To pick the room name explicitly:
+
+```sh
+supermanager create room "My Team" --server "http://127.0.0.1:8787" --org "<org-slug>"
+```
+
+### 6. Join more repos to the room
 
 The repo where you ran `supermanager create room` is already connected. Run the join command inside each additional git repo you want connected:
 
 ```sh
-supermanager join <room-code>
+supermanager join <room-id> --server "http://127.0.0.1:8787" --org "<org-slug>"
 ```
 
-That command verifies the room exists, configures the repo hooks, prints the dashboard URL, and copies the dashboard URL to your clipboard.
-
-For local development or custom deployments, override the API and app origins explicitly:
-
-```sh
-supermanager join <room-code> \
-  --server "http://127.0.0.1:8787" \
-  --app-url "http://127.0.0.1:5173"
-```
-
-That command installs repo-local Claude Code and Codex hooks for the current repo only. Claude uses `.claude/settings.local.json`; Codex uses `.codex/hooks.json` and ensures `[features]` contains `codex_hooks = true` in `.codex/config.toml`. Both hooks call the native `supermanager hook-report` subcommand, and room settings are stored machine-locally in `$HOME/.supermanager/repos.json`.
+That command verifies org membership, mints a repo-scoped API key, installs repo-local Claude Code and Codex hooks for the current repo only, and stores the repo key machine-locally in `$HOME/.supermanager/repos.json`. Claude uses `.claude/settings.local.json`; Codex uses `.codex/hooks.json` and ensures `[features]` contains `codex_hooks = true` in `.codex/config.toml`.
 
 To remove the repo from supermanager later:
 
@@ -140,27 +140,31 @@ To list every room this machine is currently joined to:
 supermanager list
 ```
 
-### 6. Use the dashboard
+### 7. Use the dashboard
 
-Open the room dashboard:
+Open the workspace in the browser:
 
 ```sh
-open "http://127.0.0.1:5173/r/<room-code>"
+open "http://127.0.0.1:5173/app"
 ```
 
-The frontend reads room metadata, feed, and a structured room summary from the API and watches summary generation status over SSE.
+From there you can switch organizations, generate invite links, approve CLI device logins, and open room dashboards at `/r/<room-id>`. Signed-out users are redirected back to login; wrong-org room access returns `403`.
 
 ## API
 
 | Endpoint | Method | Description |
 |---|---|---|
+| `/api/auth/*` | various | Better Auth session, social OAuth, organization, device authorization, and API-key endpoints |
 | `/health` | GET | Health check |
-| `/v1/rooms` | POST | Create a room |
-| `/r/{room_id}` | GET | Room metadata |
-| `/r/{room_id}/feed` | GET | Get raw room hook events, newest first |
-| `/r/{room_id}/feed/stream` | GET | SSE stream of hook-event and summary-status events |
-| `/r/{room_id}/hooks/turn` | POST | Submit a hook-captured turn event |
-| `/r/{room_id}/summary` | GET | Read the current room summary JSON (`bluf_markdown`, `overview_markdown`, `employees[]`) |
+| `/v1/me` | GET | Signed-in user plus organization memberships |
+| `/v1/rooms` | GET | List rooms for the selected organization |
+| `/v1/rooms` | POST | Create a room in the selected organization |
+| `/v1/rooms/{room_id}` | GET | Room metadata |
+| `/v1/rooms/{room_id}/feed` | GET | Raw room hook events, newest first |
+| `/v1/rooms/{room_id}/feed/stream` | GET | SSE stream of hook-event and summary-status events |
+| `/v1/rooms/{room_id}/connections` | POST | Mint a repo-scoped API key for the room |
+| `/v1/hooks/turn` | POST | Submit a hook-captured turn event using `x-api-key` |
+| `/v1/rooms/{room_id}/summary` | GET | Read the current room summary JSON (`bluf_markdown`, `overview_markdown`, `employees[]`) |
 
 ## Project structure
 
@@ -200,7 +204,7 @@ This repo now deploys the backend as:
 - ALB on `https://api.supermanager.dev`
 - RDS PostgreSQL
 - EFS mounted at `/srv/supermanager` for durable room-agent state
-- Secrets Manager for `DATABASE_URL` and `OPENAI_API_KEY`
+- Secrets Manager for `DATABASE_URL`, auth secrets, and `OPENAI_API_KEY`
 
 Files involved:
 
@@ -232,6 +236,11 @@ The deploy workflow runs only from `master`, uses GitHub OIDC with `aws-actions/
 The ECS task definition should be managed in Terraform and point at the ECR repository's `:latest` tag. The backend runtime environment is still supplied there:
 
 - `DATABASE_URL`
+- `BETTER_AUTH_SECRET`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
 - `OPENAI_API_KEY`
 - `SUPERMANAGER_DATA_DIR=/srv/supermanager`
 - `SUPERMANAGER_PUBLIC_API_URL=https://api.supermanager.dev`

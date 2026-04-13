@@ -1,7 +1,8 @@
 import {
   type EmployeeSnapshot,
   type HookTurnReport,
-  type Room,
+  type OrganizationMembership,
+  type RoomListEntry,
   type RoomSnapshot,
   type StoredHookEvent,
   type SummaryStatus,
@@ -19,6 +20,16 @@ interface RoomRow {
   room_id: unknown;
   name: unknown;
   created_at: unknown;
+  organization_id: unknown;
+  organization_slug: unknown;
+  created_by_user_id: unknown;
+}
+
+interface OrganizationMembershipRow {
+  organization_id: unknown;
+  organization_name: unknown;
+  organization_slug: unknown;
+  role: unknown;
 }
 
 interface InsertHookEventRow {
@@ -43,6 +54,11 @@ interface SummaryRow {
 
 interface SummaryStatusRow {
   status: unknown;
+}
+
+export interface RoomRecord extends RoomListEntry {
+  created_by_user_id: string;
+  organization_id: string;
 }
 
 export class Db {
@@ -77,14 +93,73 @@ export class Db {
     await this.client`SELECT 1`;
   }
 
-  async createRoom(name: string): Promise<Room> {
+  async listOrganizationsForUser(userId: string): Promise<OrganizationMembership[]> {
+    const rows = await this.client<OrganizationMembershipRow[]>`
+      SELECT
+        organization.id AS organization_id,
+        organization.name AS organization_name,
+        organization.slug AS organization_slug,
+        member.role AS role
+      FROM member
+      INNER JOIN organization ON organization.id = member.organization_id
+      WHERE member.user_id = ${userId}
+      ORDER BY organization.name ASC, organization.created_at ASC
+    `;
+
+    return rows.map(mapOrganizationMembership);
+  }
+
+  async getOrganizationMembershipById(
+    userId: string,
+    organizationId: string,
+  ): Promise<OrganizationMembership | null> {
+    const [row] = await this.client<OrganizationMembershipRow[]>`
+      SELECT
+        organization.id AS organization_id,
+        organization.name AS organization_name,
+        organization.slug AS organization_slug,
+        member.role AS role
+      FROM member
+      INNER JOIN organization ON organization.id = member.organization_id
+      WHERE member.user_id = ${userId}
+        AND member.organization_id = ${organizationId}
+    `;
+
+    return row ? mapOrganizationMembership(row) : null;
+  }
+
+  async getOrganizationMembershipBySlug(
+    userId: string,
+    organizationSlug: string,
+  ): Promise<OrganizationMembership | null> {
+    const [row] = await this.client<OrganizationMembershipRow[]>`
+      SELECT
+        organization.id AS organization_id,
+        organization.name AS organization_name,
+        organization.slug AS organization_slug,
+        member.role AS role
+      FROM member
+      INNER JOIN organization ON organization.id = member.organization_id
+      WHERE member.user_id = ${userId}
+        AND organization.slug = ${organizationSlug}
+    `;
+
+    return row ? mapOrganizationMembership(row) : null;
+  }
+
+  async createRoom(
+    organizationId: string,
+    organizationSlug: string,
+    createdByUserId: string,
+    name: string,
+  ): Promise<RoomRecord> {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const roomId = generateRoomCode();
 
       try {
         const [row] = await this.client<CreateRoomRow[]>`
-          INSERT INTO rooms (room_id, name)
-          VALUES (${roomId}, ${name})
+          INSERT INTO rooms (room_id, organization_id, created_by_user_id, name)
+          VALUES (${roomId}, ${organizationId}, ${createdByUserId}, ${name})
           RETURNING created_at
         `;
 
@@ -92,6 +167,9 @@ export class Db {
           room_id: roomId,
           name,
           created_at: toRfc3339(row?.created_at),
+          organization_id: organizationId,
+          organization_slug: organizationSlug,
+          created_by_user_id: createdByUserId,
         };
       } catch (error) {
         if (isUniqueViolation(error)) {
@@ -104,12 +182,38 @@ export class Db {
     throw new Error("failed to generate unique room code after 10 attempts");
   }
 
-  async getRoom(roomId: string): Promise<Room | null> {
-    const [row] = await this.client<RoomRow[]>`
-      SELECT room_id, name, created_at
+  async listRoomsForOrganization(organizationId: string): Promise<RoomListEntry[]> {
+    const rows = await this.client<RoomRow[]>`
+      SELECT
+        rooms.room_id,
+        rooms.name,
+        rooms.created_at,
+        rooms.organization_id,
+        organization.slug AS organization_slug,
+        rooms.created_by_user_id
       FROM rooms
-      WHERE room_id = ${normalizeRoomId(roomId)}
+      INNER JOIN organization ON organization.id = rooms.organization_id
+      WHERE rooms.organization_id = ${organizationId}
+      ORDER BY rooms.created_at DESC, rooms.room_id DESC
     `;
+
+    return rows.map((row) => mapRoom(row));
+  }
+
+  async getRoom(roomId: string): Promise<RoomRecord | null> {
+    const [row] = await this.client<RoomRow[]>`
+      SELECT
+        rooms.room_id,
+        rooms.name,
+        rooms.created_at,
+        rooms.organization_id,
+        organization.slug AS organization_slug,
+        rooms.created_by_user_id
+      FROM rooms
+      INNER JOIN organization ON organization.id = rooms.organization_id
+      WHERE rooms.room_id = ${normalizeRoomId(roomId)}
+    `;
+
     return row ? mapRoom(row) : null;
   }
 
@@ -229,11 +333,23 @@ function parseSummaryStatus(value: unknown): SummaryStatus {
   throw new Error(`unknown summary status: ${String(value)}`);
 }
 
-function mapRoom(row: RoomRow): Room {
+function mapOrganizationMembership(row: OrganizationMembershipRow): OrganizationMembership {
+  return {
+    organization_id: readString(row.organization_id, "organization_id"),
+    organization_name: readString(row.organization_name, "organization_name"),
+    organization_slug: readString(row.organization_slug, "organization_slug"),
+    role: readString(row.role, "role"),
+  };
+}
+
+function mapRoom(row: RoomRow): RoomRecord {
   return {
     room_id: readString(row.room_id, "room_id"),
     name: readString(row.name, "name"),
     created_at: toRfc3339(row.created_at),
+    organization_id: readString(row.organization_id, "organization_id"),
+    organization_slug: readString(row.organization_slug, "organization_slug"),
+    created_by_user_id: readString(row.created_by_user_id, "created_by_user_id"),
   };
 }
 
