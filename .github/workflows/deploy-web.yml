@@ -36,20 +36,17 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-
-      - name: Enable Corepack
-        run: corepack enable
+          bun-version: latest
 
       - name: Install web dependencies
         working-directory: web
-        run: corepack pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build web app
         working-directory: web
-        run: corepack pnpm build
+        run: bun run build
 
       - name: Deploy Pages site
         uses: cloudflare/wrangler-action@v3
