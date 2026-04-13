@@ -1,12 +1,12 @@
 import path from "node:path";
 
-import { createFetchHandler } from "./app.js";
-import { loadConfig } from "./config.js";
-import { Db } from "./db.js";
-import { runMigrations } from "./migrations.js";
-import { FeedStreamHub } from "./sse.js";
-import { StoragePaths } from "./storage.js";
-import { SummaryAgentHost } from "./summary/agent-host.js";
+import { createFetchHandler } from "./app";
+import { loadConfig } from "./config";
+import { Db } from "./db";
+import { runMigrations } from "./migrations";
+import { FeedStreamHub } from "./sse";
+import { StoragePaths } from "./storage";
+import { SummaryAgentHost } from "./summary/agent-host";
 
 async function main(): Promise<void> {
   const cwd = process.cwd();

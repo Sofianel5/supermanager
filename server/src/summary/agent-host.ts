@@ -1,10 +1,10 @@
-import type { Db } from "../db.js";
-import type { FeedStreamHub } from "../sse.js";
-import type { StoragePaths } from "../storage.js";
-import type { StoredHookEvent } from "../types.js";
-import type { ServerConfig } from "../config.js";
-import type { AgentMessage, HostMessage } from "./protocol.js";
-import { applySummaryToolCall } from "./tool-executor.js";
+import type { Db } from "../db";
+import type { FeedStreamHub } from "../sse";
+import type { StoragePaths } from "../storage";
+import type { StoredHookEvent } from "../types";
+import type { ServerConfig } from "../config";
+import type { AgentMessage, HostMessage } from "./protocol";
+import { applySummaryToolCall } from "./tool-executor";
 
 interface SummaryAgentHostOptions {
   config: ServerConfig;

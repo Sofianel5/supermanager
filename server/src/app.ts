@@ -1,6 +1,6 @@
-import type { ServerConfig } from "./config.js";
-import { Db } from "./db.js";
-import { BadRequestError, NotFoundError, formatError } from "./http/errors.js";
+import type { ServerConfig } from "./config";
+import { Db } from "./db";
+import { BadRequestError, NotFoundError, formatError } from "./http/errors";
 import {
   clampInteger,
   matchRoomPath,
@@ -9,12 +9,12 @@ import {
   parseLastEventId,
   parseOptionalInteger,
   readJson,
-} from "./http/requests.js";
-import { jsonResponse, noContentResponse, textResponse } from "./http/responses.js";
-import { FeedStreamHub } from "./sse.js";
-import { StoragePaths } from "./storage.js";
-import { SummaryAgentHost } from "./summary/agent-host.js";
-import type { Room } from "./types.js";
+} from "./http/requests";
+import { jsonResponse, noContentResponse, textResponse } from "./http/responses";
+import { FeedStreamHub } from "./sse";
+import { StoragePaths } from "./storage";
+import { SummaryAgentHost } from "./summary/agent-host";
+import type { Room } from "./types";
 
 const DEFAULT_PUBLIC_API_URL = "https://api.supermanager.dev";
 const DEFAULT_PUBLIC_APP_URL = "https://supermanager.dev";

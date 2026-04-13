@@ -6,7 +6,7 @@ import {
   type StoredHookEvent,
   type SummaryStatus,
   emptyRoomSnapshot,
-} from "./types.js";
+} from "./types";
 
 const ROOM_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const ROOM_CODE_LENGTH = 6;
