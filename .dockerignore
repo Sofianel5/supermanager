@@ -3,3 +3,10 @@ target/
 data/
 .git/
 **/node_modules
+crates/supermanager-cli/
+web/
+infra/
+.github/
+.claude/
+.codex/
+.agents/

@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
-COPY vendor/codex ./vendor/codex
+COPY vendor/codex/codex-rs ./vendor/codex/codex-rs
 COPY crates/reporter-protocol/Cargo.toml   crates/reporter-protocol/Cargo.toml
 COPY crates/summary-agent/Cargo.toml       crates/summary-agent/Cargo.toml
 
@@ -29,8 +29,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo build --release -p summary-agent || true
 
-COPY crates ./crates
-RUN find crates -name '*.rs' -exec touch {} +
+COPY crates/reporter-protocol ./crates/reporter-protocol
+COPY crates/summary-agent ./crates/summary-agent
+RUN find crates/reporter-protocol crates/summary-agent -name '*.rs' -exec touch {} +
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
