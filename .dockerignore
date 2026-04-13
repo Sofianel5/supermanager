@@ -3,7 +3,8 @@ target/
 data/
 .git/
 **/node_modules
-crates/supermanager-cli/
+crates/supermanager-cli/**
+!crates/supermanager-cli/Cargo.toml
 web/
 infra/
 .github/

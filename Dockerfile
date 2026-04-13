@@ -19,10 +19,12 @@ COPY Cargo.toml Cargo.lock ./
 COPY vendor/codex/codex-rs ./vendor/codex/codex-rs
 COPY crates/reporter-protocol/Cargo.toml   crates/reporter-protocol/Cargo.toml
 COPY crates/summary-agent/Cargo.toml       crates/summary-agent/Cargo.toml
+COPY crates/supermanager-cli/Cargo.toml    crates/supermanager-cli/Cargo.toml
 
-RUN mkdir -p crates/reporter-protocol/src crates/summary-agent/src \
+RUN mkdir -p crates/reporter-protocol/src crates/summary-agent/src crates/supermanager-cli/src \
  && echo '// stub'       > crates/reporter-protocol/src/lib.rs \
- && echo 'fn main() {}'  > crates/summary-agent/src/main.rs
+ && echo 'fn main() {}'  > crates/summary-agent/src/main.rs \
+ && echo 'fn main() {}'  > crates/supermanager-cli/src/main.rs
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
