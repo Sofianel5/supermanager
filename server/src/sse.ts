@@ -9,7 +9,7 @@ export class FeedStreamClient {
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   private closed = false;
 
-  constructor(onClose: () => void) {
+  constructor(onClose: () => void, origin: string | null) {
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         this.controller = controller;
@@ -21,15 +21,19 @@ export class FeedStreamClient {
       },
     });
 
-    this.response = new Response(stream, {
-      headers: {
-        "access-control-allow-origin": "*",
-        "cache-control": "no-cache, no-transform",
-        connection: "keep-alive",
-        "content-type": "text/event-stream; charset=utf-8",
-        "x-accel-buffering": "no",
-      },
+    const headers = new Headers({
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "content-type": "text/event-stream; charset=utf-8",
+      "x-accel-buffering": "no",
     });
+    if (origin) {
+      headers.set("access-control-allow-credentials", "true");
+      headers.set("access-control-allow-origin", origin);
+      headers.set("vary", "Origin");
+    }
+
+    this.response = new Response(stream, { headers });
     this.keepAliveTimer = setInterval(() => {
       this.enqueue(": keep-alive\n\n");
     }, 15_000);
@@ -84,7 +88,7 @@ export class FeedStreamClient {
 export class FeedStreamHub {
   private readonly rooms = new Map<string, Set<FeedStreamClient>>();
 
-  register(roomId: string): FeedStreamClient {
+  register(roomId: string, origin: string | null): FeedStreamClient {
     let client: FeedStreamClient;
     const listeners = this.rooms.get(roomId) ?? new Set<FeedStreamClient>();
 
@@ -95,7 +99,7 @@ export class FeedStreamHub {
       }
     };
 
-    client = new FeedStreamClient(cleanup);
+    client = new FeedStreamClient(cleanup, origin);
     listeners.add(client);
     this.rooms.set(roomId, listeners);
 

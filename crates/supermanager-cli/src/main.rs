@@ -16,6 +16,15 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Authenticate this machine with the supermanager server.
+    Login {
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// Remove the stored supermanager login for this machine.
+    Logout,
     /// Create new resources in supermanager.
     Create {
         #[command(subcommand)]
@@ -26,8 +35,8 @@ enum Commands {
         room: String,
         #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
         server: String,
-        #[arg(long, env = "SUPERMANAGER_APP_URL", default_value = supermanager::DEFAULT_APP_URL)]
-        app_url: String,
+        #[arg(long)]
+        org: Option<String>,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
@@ -57,8 +66,8 @@ enum CreateCommands {
         name: Option<String>,
         #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
         server_url: String,
-        #[arg(long, env = "SUPERMANAGER_APP_URL", default_value = supermanager::DEFAULT_APP_URL)]
-        app_url: String,
+        #[arg(long)]
+        org: Option<String>,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
@@ -75,21 +84,52 @@ fn main() -> Result<()> {
     }
 
     match cli.command {
+        Commands::Login { server, org } => {
+            let outcome = supermanager::login(supermanager::LoginConfig {
+                home_dir,
+                organization_slug: org,
+                server_url: server,
+            })?;
+
+            println!();
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mLogged in\x1b[0m");
+            println!();
+            println!("    \x1b[2mServer\x1b[0m     {}", outcome.server_url);
+            if let Some(org_slug) = outcome.active_org_slug {
+                println!("    \x1b[2mOrg\x1b[0m        {}", org_slug);
+            } else {
+                println!("    \x1b[2mOrg\x1b[0m        choose later with `--org <slug>`");
+            }
+            println!();
+        }
+        Commands::Logout => {
+            let removed = supermanager::logout(&home_dir)?;
+
+            println!();
+            if removed {
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mLogged out\x1b[0m");
+            } else {
+                println!("  \x1b[33m!\x1b[0m \x1b[1mNo stored login\x1b[0m");
+            }
+            println!();
+        }
         Commands::Create { command } => match command {
             CreateCommands::Room {
                 name,
                 server_url,
-                app_url,
+                org,
                 cwd,
             } => {
                 let outcome = supermanager::create_room(supermanager::CreateRoomConfig {
+                    home_dir: home_dir.clone(),
+                    organization_slug: org.clone(),
                     server_url: server_url.clone(),
                     name,
                     cwd,
                 })?;
                 let join_outcome = supermanager::join_repo(supermanager::JoinConfig {
                     server_url: server_url,
-                    app_url: app_url,
+                    organization_slug: org,
                     room_id: outcome.room_id.clone(),
                     repo_dir: outcome.repo_dir.clone(),
                     home_dir,
@@ -134,14 +174,13 @@ fn main() -> Result<()> {
         Commands::Join {
             room,
             server,
-            app_url,
+            org,
             cwd,
         } => {
-            let room = supermanager::get_room(&server, &room)?;
             let outcome = supermanager::join_repo(supermanager::JoinConfig {
                 server_url: server,
-                app_url,
-                room_id: room.room_id,
+                organization_slug: org,
+                room_id: room,
                 repo_dir: cwd,
                 home_dir,
             })?;
@@ -200,6 +239,7 @@ fn main() -> Result<()> {
             for room in outcome.rooms {
                 println!();
                 println!("    \x1b[2mRoom\x1b[0m       {}", room.room_id);
+                println!("    \x1b[2mOrg\x1b[0m        {}", room.organization_slug);
                 println!("    \x1b[2mServer\x1b[0m     {}", room.server_url);
                 if let Some((first_repo, other_repos)) = room.repo_dirs.split_first() {
                     println!("    \x1b[2mRepos\x1b[0m      {}", first_repo.display());
@@ -223,7 +263,11 @@ fn main() -> Result<()> {
 fn should_auto_update(command: &Commands) -> bool {
     matches!(
         command,
-        Commands::Create { .. } | Commands::Join { .. } | Commands::Leave { .. } | Commands::List
+        Commands::Create { .. }
+            | Commands::Join { .. }
+            | Commands::Leave { .. }
+            | Commands::List
+            | Commands::Login { .. }
     )
 }
 

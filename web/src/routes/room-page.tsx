@@ -11,14 +11,13 @@ import { Link, useParams } from "react-router-dom";
 import {
   api,
   getApiBaseUrl,
-  RoomMetadataResponse,
-  RoomSnapshot,
-  StoredHookEvent,
+  type RoomMetadataResponse,
+  type RoomSnapshot,
+  type StoredHookEvent,
 } from "../api";
 
 const FEED_LIMIT = 10;
 const DEFAULT_SERVER_URL = "https://api.supermanager.dev";
-const DEFAULT_APP_URL = "https://supermanager.dev";
 
 type SummaryStatus = "idle" | "ready" | "generating" | "error";
 type ConnectionStatus = "connecting" | "live" | "reconnecting";
@@ -39,7 +38,7 @@ export function RoomPage() {
   const [clock, setClock] = useState(() => Date.now());
 
   const canonicalRoomId = room?.room_id || roomId;
-  const joinCommand = buildJoinCommand(canonicalRoomId);
+  const joinCommand = buildJoinCommand(canonicalRoomId, room?.organization_slug);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -168,8 +167,8 @@ export function RoomPage() {
         <div className="section-label">Room</div>
         <h1>{roomId || "unknown"}</h1>
         <p className="message message--error">{error}</p>
-        <Link className="inline-link" to="/">
-          Back to room creation
+        <Link className="inline-link" to="/app">
+          Back to workspace
         </Link>
       </main>
     );
@@ -183,6 +182,7 @@ export function RoomPage() {
           <h1>{room?.name || roomId}</h1>
           <p className="room-meta">
             <span>{canonicalRoomId}</span>
+            {room?.organization_slug && <span>{room.organization_slug}</span>}
             <span className={`connection-pill connection-pill--${connectionStatus}`}>
               {connectionStatus}
             </span>
@@ -267,7 +267,10 @@ export function RoomPage() {
               disabled={loadingMore}
               onClick={async () => {
                 const oldest = events[events.length - 1];
-                if (!oldest) return;
+                if (!oldest) {
+                  return;
+                }
+
                 setLoadingMore(true);
                 try {
                   const page = await api.getFeed(roomId, {
@@ -281,7 +284,7 @@ export function RoomPage() {
                 }
               }}
             >
-              {loadingMore ? "Loading…" : `Show ${FEED_LIMIT} more`}
+              {loadingMore ? "Loading..." : `Show ${FEED_LIMIT} more`}
             </button>
           )}
         </div>
@@ -455,12 +458,20 @@ function readMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
 }
 
-function buildJoinCommand(roomId: string) {
+function buildJoinCommand(roomId: string, organizationSlug?: string) {
   const apiBaseUrl = getApiBaseUrl();
-  const appUrl = window.location.origin;
-  if (apiBaseUrl === DEFAULT_SERVER_URL && appUrl === DEFAULT_APP_URL) {
-    return `supermanager join ${roomId}`;
+  const parts = ["supermanager", "join", roomId];
+
+  if (organizationSlug) {
+    parts.push("--org", shellQuote(organizationSlug));
+  }
+  if (apiBaseUrl !== DEFAULT_SERVER_URL) {
+    parts.push("--server", shellQuote(apiBaseUrl));
   }
 
-  return `supermanager join ${roomId} --server "${apiBaseUrl}" --app-url "${appUrl}"`;
+  return parts.join(" ");
+}
+
+function shellQuote(value: string) {
+  return `"${value.replaceAll("\"", "\\\"")}"`;
 }

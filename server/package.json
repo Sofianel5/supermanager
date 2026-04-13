@@ -12,11 +12,16 @@
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
+    "@types/pg": "^8.20.0",
     "bun-types": "^1.2.17",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@better-auth/api-key": "1.6.2",
     "@elysiajs/cors": "^1.4.1",
-    "elysia": "^1.4.28"
+    "better-auth": "1.6.2",
+    "elysia": "^1.4.28",
+    "kysely": "^0.28.16",
+    "pg": "^8.20.0"
   }
 }

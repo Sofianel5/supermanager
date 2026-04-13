@@ -1,16 +1,54 @@
 import type {
   FeedResponse,
-  RoomMetadataResponse,
-  RoomSnapshot,
-} from "./generated";
-
-export type {
-  EmployeeSnapshot,
-  FeedResponse,
-  RoomMetadataResponse,
+  RoomMetadataResponse as GeneratedRoomMetadataResponse,
   RoomSnapshot,
   StoredHookEvent,
 } from "./generated";
+
+export type { FeedResponse, RoomSnapshot, StoredHookEvent } from "./generated";
+
+export interface ViewerUser {
+  email: string;
+  id: string;
+  image: string | null;
+  name: string;
+}
+
+export interface ViewerOrganization {
+  organization_id: string;
+  organization_name: string;
+  organization_slug: string;
+  role: string;
+}
+
+export interface ViewerResponse {
+  active_organization_id: string | null;
+  organizations: ViewerOrganization[];
+  user: ViewerUser;
+}
+
+export interface RoomMetadataResponse extends GeneratedRoomMetadataResponse {
+  organization_slug: string;
+}
+
+export interface RoomListEntry {
+  created_at: string;
+  name: string;
+  organization_slug: string;
+  room_id: string;
+}
+
+export interface RoomListResponse {
+  organization_slug: string;
+  rooms: RoomListEntry[];
+}
+
+export interface CreateRoomResponse {
+  dashboard_url: string;
+  join_command: string;
+  organization_slug: string;
+  room_id: string;
+}
 
 const API_BASE_URL = normalizeBaseUrl(
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8787",
@@ -29,8 +67,11 @@ async function readError(response: Response) {
   return body || `Request failed with ${response.status}`;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit) {
-  const response = await fetch(apiUrl(path), init);
+async function requestJson<T>(path: string, init: RequestInit = {}) {
+  const response = await fetch(apiUrl(path), {
+    credentials: "include",
+    ...init,
+  });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -42,8 +83,14 @@ export function getApiBaseUrl() {
 }
 
 export const api = {
-  getRoom(roomId: string) {
-    return requestJson<RoomMetadataResponse>(`/r/${encodeURIComponent(roomId)}`);
+  createRoom(input: { name: string; organization_slug?: string | null }) {
+    return requestJson<CreateRoomResponse>("/v1/rooms", {
+      body: JSON.stringify(input),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
   },
   getFeed(roomId: string, opts: { limit?: number; before?: number } = {}) {
     const params = new URLSearchParams();
@@ -52,13 +99,34 @@ export const api = {
     const qs = params.toString();
     const suffix = qs ? `?${qs}` : "";
     return requestJson<FeedResponse>(
-      `/r/${encodeURIComponent(roomId)}/feed${suffix}`,
+      `/v1/rooms/${encodeURIComponent(roomId)}/feed${suffix}`,
+    );
+  },
+  getMe() {
+    return requestJson<ViewerResponse>("/v1/me");
+  },
+  getRoom(roomId: string) {
+    return requestJson<RoomMetadataResponse>(
+      `/v1/rooms/${encodeURIComponent(roomId)}`,
     );
   },
   getSummary(roomId: string) {
-    return requestJson<RoomSnapshot>(`/r/${encodeURIComponent(roomId)}/summary`);
+    return requestJson<RoomSnapshot>(
+      `/v1/rooms/${encodeURIComponent(roomId)}/summary`,
+    );
+  },
+  listRooms(organizationSlug?: string) {
+    const params = new URLSearchParams();
+    if (organizationSlug) {
+      params.set("organization_slug", organizationSlug);
+    }
+    const qs = params.toString();
+    return requestJson<RoomListResponse>(`/v1/rooms${qs ? `?${qs}` : ""}`);
   },
   openRoomStream(roomId: string) {
-    return new EventSource(apiUrl(`/r/${encodeURIComponent(roomId)}/feed/stream`));
+    return new EventSource(
+      apiUrl(`/v1/rooms/${encodeURIComponent(roomId)}/feed/stream`),
+      { withCredentials: true },
+    );
   },
 };

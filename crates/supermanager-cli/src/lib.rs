@@ -4,8 +4,12 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    thread,
     time::Duration,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use anyhow::{Context, Result, anyhow, bail};
 use reporter_protocol::{
@@ -29,17 +33,20 @@ const CODEX_CONFIG: &str = ".codex/config.toml";
 const CODEX_HOOKS_JSON: &str = ".codex/hooks.json";
 const CODEX_HOOK_COMMAND: &str = "supermanager hook-report --client codex";
 
+const HOME_AUTH_STATE: &str = ".supermanager/auth.json";
 const HOME_REPO_CONFIG: &str = ".supermanager/repos.json";
+const DEVICE_CLIENT_ID: &str = "supermanager-cli";
+const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+const DEVICE_SCOPE: &str = "openid profile email";
 const HOOK_TIMEOUT_SECONDS: u64 = 10;
 const REPORT_TIMEOUT_SECONDS: u64 = 5;
 const API_TIMEOUT_SECONDS: u64 = 10;
 
 pub const DEFAULT_SERVER_URL: &str = "https://api.supermanager.dev";
-pub const DEFAULT_APP_URL: &str = "https://supermanager.dev";
 
 pub struct JoinConfig {
     pub server_url: String,
-    pub app_url: String,
+    pub organization_slug: Option<String>,
     pub room_id: String,
     pub repo_dir: PathBuf,
     pub home_dir: PathBuf,
@@ -53,9 +60,22 @@ pub struct JoinOutcome {
 }
 
 pub struct CreateRoomConfig {
+    pub home_dir: PathBuf,
+    pub organization_slug: Option<String>,
     pub server_url: String,
     pub name: Option<String>,
     pub cwd: PathBuf,
+}
+
+pub struct LoginConfig {
+    pub home_dir: PathBuf,
+    pub organization_slug: Option<String>,
+    pub server_url: String,
+}
+
+pub struct LoginOutcome {
+    pub active_org_slug: Option<String>,
+    pub server_url: String,
 }
 
 pub struct CreateRoomOutcome {
@@ -76,6 +96,7 @@ pub struct ListRoomsOutcome {
 }
 
 pub struct ListRoomEntry {
+    pub organization_slug: String,
     pub room_id: String,
     pub server_url: String,
     pub repo_dirs: Vec<PathBuf>,
@@ -83,8 +104,18 @@ pub struct ListRoomEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct RepoRoomConfig {
+    api_key: String,
+    api_key_id: String,
+    organization_slug: String,
     server_url: String,
     room_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct AuthState {
+    access_token: String,
+    active_org_slug: Option<String>,
+    server_url: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -93,10 +124,101 @@ struct HomeRepoConfig {
     repos: BTreeMap<String, RepoRoomConfig>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ViewerResponse {
+    active_organization_id: Option<String>,
+    organizations: Vec<ViewerOrganization>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ViewerOrganization {
+    organization_id: String,
+    organization_name: String,
+    organization_slug: String,
+    role: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConnectionResponse {
+    api_key: String,
+    api_key_id: String,
+    dashboard_url: String,
+    room_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceCodeResponse {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    verification_uri_complete: Option<String>,
+    interval: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceTokenSuccess {
+    access_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceTokenError {
+    error: String,
+    error_description: Option<String>,
+}
+
 pub fn resolve_home_dir() -> Result<PathBuf> {
     env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| anyhow!("HOME is not set"))
+}
+
+pub fn login(config: LoginConfig) -> Result<LoginOutcome> {
+    let server_url = normalize_url(&config.server_url);
+    let http = build_http_client(API_TIMEOUT_SECONDS)?;
+    let device = request_device_code(&http, &server_url)?;
+    let verification_url = device
+        .verification_uri_complete
+        .clone()
+        .unwrap_or_else(|| device.verification_uri.clone());
+    let polling_interval = device.interval.unwrap_or(5).max(1);
+
+    let _ = open_url(&verification_url);
+    println!();
+    println!("  Open this URL to approve the CLI login:");
+    println!("    {verification_url}");
+    println!("  Code: {}", device.user_code);
+    println!();
+    println!("  Waiting for approval...");
+    println!();
+
+    let access_token =
+        poll_for_access_token(&http, &server_url, &device.device_code, polling_interval)?;
+    let viewer = get_viewer(&http, &server_url, &access_token)?;
+    let active_org_slug = resolve_login_org_slug(&viewer, config.organization_slug.as_deref())?;
+
+    write_auth_state(
+        &auth_state_path(&config.home_dir),
+        &AuthState {
+            access_token,
+            active_org_slug: active_org_slug.clone(),
+            server_url: server_url.clone(),
+        },
+    )?;
+
+    Ok(LoginOutcome {
+        active_org_slug,
+        server_url,
+    })
+}
+
+pub fn logout(home_dir: &Path) -> Result<bool> {
+    let path = auth_state_path(home_dir);
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
+    Ok(true)
 }
 
 pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
@@ -110,15 +232,22 @@ pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| default_room_name(&repo_dir));
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
-
-    let response = http
+    let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
+    let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
+    let active_org = select_active_org(
+        &viewer,
+        &mut auth_state,
+        config.organization_slug.as_deref(),
+    )?;
+    write_auth_state(&auth_state_path(&config.home_dir), &auth_state)?;
+    let response = authed(&http, &auth_state.access_token)
         .post(format!("{server_url}/v1/rooms"))
         .json(&CreateRoomRequest {
             name: room_name.clone(),
+            organization_slug: Some(active_org.organization_slug.clone()),
         })
         .send()
         .context("failed to create room")?;
-
     let response = ensure_success(response, "create room")?;
     let payload: CreateRoomResponse = response
         .json()
@@ -137,56 +266,63 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     let repo_dir = resolve_repo_root(&config.repo_dir)?;
     let employee_name = detect_employee_name(&repo_dir)?;
     let server_url = normalize_url(&config.server_url);
-    let app_url = normalize_url(&config.app_url);
-    let room_id = config.room_id.trim().to_ascii_uppercase();
-    let dashboard_url = format!("{}/r/{}", app_url, room_id);
+    let http = build_http_client(API_TIMEOUT_SECONDS)?;
+    let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
+    let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
+    let active_org = select_active_org(
+        &viewer,
+        &mut auth_state,
+        config.organization_slug.as_deref(),
+    )?;
+    write_auth_state(&auth_state_path(&config.home_dir), &auth_state)?;
+    let room = fetch_room(
+        &http,
+        &server_url,
+        &auth_state.access_token,
+        &config.room_id,
+    )?;
+
+    if room.organization_slug != active_org.organization_slug {
+        bail!(
+            "room {} belongs to organization {}, but the active organization is {}",
+            room.room_id,
+            room.organization_slug,
+            active_org.organization_slug
+        );
+    }
+
+    let connection = authed(&http, &auth_state.access_token)
+        .post(format!(
+            "{server_url}/v1/rooms/{}/connections",
+            room.room_id
+        ))
+        .json(&json!({
+            "repo_root": repo_dir.display().to_string()
+        }))
+        .send()
+        .context("failed to create repo connection")?;
+    let connection = ensure_success(connection, "create repo connection")?;
+    let connection: ConnectionResponse = connection
+        .json()
+        .context("failed to parse repo-connection response JSON")?;
 
     let room_config = RepoRoomConfig {
+        api_key: connection.api_key,
+        api_key_id: connection.api_key_id,
+        organization_slug: room.organization_slug.clone(),
         server_url,
-        room_id: room_id.clone(),
+        room_id: room.room_id.clone(),
     };
 
     upsert_repo_room_config(&config.home_dir, &repo_dir, room_config)?;
-
-    upsert_command_hook(
-        &repo_dir.join(CLAUDE_SETTINGS_LOCAL),
-        "UserPromptSubmit",
-        CLAUDE_HOOK_COMMAND,
-    )?;
-    upsert_command_hook(
-        &repo_dir.join(CLAUDE_SETTINGS_LOCAL),
-        "Stop",
-        CLAUDE_HOOK_COMMAND,
-    )?;
-
-    upsert_codex_config(&repo_dir.join(CODEX_CONFIG))?;
-    upsert_command_hook(
-        &repo_dir.join(CODEX_HOOKS_JSON),
-        "UserPromptSubmit",
-        CODEX_HOOK_COMMAND,
-    )?;
-    upsert_command_hook(&repo_dir.join(CODEX_HOOKS_JSON), "Stop", CODEX_HOOK_COMMAND)?;
+    install_repo_hooks(&repo_dir)?;
 
     Ok(JoinOutcome {
-        room_id,
+        room_id: connection.room_id,
         employee_name,
-        dashboard_url,
+        dashboard_url: connection.dashboard_url,
         repo_dir,
     })
-}
-
-pub fn get_room(server_url: &str, room_id: &str) -> Result<RoomMetadataResponse> {
-    let server_url = normalize_url(server_url);
-    let http = build_http_client(API_TIMEOUT_SECONDS)?;
-    let response = http
-        .get(format!("{server_url}/r/{room_id}"))
-        .send()
-        .with_context(|| format!("failed to fetch room {room_id}"))?;
-
-    let response = ensure_success(response, "get room")?;
-    response
-        .json()
-        .context("failed to parse room response JSON")
 }
 
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
@@ -244,25 +380,32 @@ pub fn leave_repo(repo_dir: &Path, home_dir: &Path) -> Result<LeaveOutcome> {
 pub fn list_rooms(home_dir: &Path) -> Result<ListRoomsOutcome> {
     let path = home_repo_config_path(home_dir);
     let config = read_home_repo_config(&path)?;
-    let mut grouped = BTreeMap::<(String, String), Vec<PathBuf>>::new();
+    let mut grouped = BTreeMap::<(String, String, String), Vec<PathBuf>>::new();
 
     for (repo_dir, room_config) in config.repos {
         grouped
-            .entry((room_config.room_id, room_config.server_url))
+            .entry((
+                room_config.room_id,
+                room_config.server_url,
+                room_config.organization_slug,
+            ))
             .or_default()
             .push(PathBuf::from(repo_dir));
     }
 
     let rooms = grouped
         .into_iter()
-        .map(|((room_id, server_url), mut repo_dirs)| {
-            repo_dirs.sort();
-            ListRoomEntry {
-                room_id,
-                server_url,
-                repo_dirs,
-            }
-        })
+        .map(
+            |((room_id, server_url, organization_slug), mut repo_dirs)| {
+                repo_dirs.sort();
+                ListRoomEntry {
+                    organization_slug,
+                    room_id,
+                    server_url,
+                    repo_dirs,
+                }
+            },
+        )
         .collect();
 
     Ok(ListRoomsOutcome { rooms })
@@ -279,15 +422,15 @@ pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
     };
 
     let url = format!(
-        "{}/r/{}/hooks/turn",
-        room_config.server_url.trim_end_matches('/'),
-        room_config.room_id,
+        "{}/v1/hooks/turn",
+        room_config.server_url.trim_end_matches('/')
     );
 
     let http = build_http_client(REPORT_TIMEOUT_SECONDS)?;
 
     let response = http
         .post(url)
+        .header("x-api-key", &room_config.api_key)
         .json(&report)
         .send()
         .context("failed to post hook turn report")?;
@@ -301,6 +444,348 @@ pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
 
 fn default_room_name(repo_dir: &Path) -> String {
     path_basename(repo_dir).unwrap_or_else(|| "supermanager room".to_owned())
+}
+
+fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
+    upsert_command_hook(
+        &repo_dir.join(CLAUDE_SETTINGS_LOCAL),
+        "UserPromptSubmit",
+        CLAUDE_HOOK_COMMAND,
+    )?;
+    upsert_command_hook(
+        &repo_dir.join(CLAUDE_SETTINGS_LOCAL),
+        "Stop",
+        CLAUDE_HOOK_COMMAND,
+    )?;
+
+    upsert_codex_config(&repo_dir.join(CODEX_CONFIG))?;
+    upsert_command_hook(
+        &repo_dir.join(CODEX_HOOKS_JSON),
+        "UserPromptSubmit",
+        CODEX_HOOK_COMMAND,
+    )?;
+    upsert_command_hook(&repo_dir.join(CODEX_HOOKS_JSON), "Stop", CODEX_HOOK_COMMAND)?;
+
+    Ok(())
+}
+
+struct AuthedClient<'a> {
+    http: &'a Client,
+    token: &'a str,
+}
+
+impl<'a> AuthedClient<'a> {
+    fn get(&self, url: String) -> reqwest::blocking::RequestBuilder {
+        self.http.get(url).bearer_auth(self.token)
+    }
+
+    fn post(&self, url: String) -> reqwest::blocking::RequestBuilder {
+        self.http.post(url).bearer_auth(self.token)
+    }
+}
+
+fn authed<'a>(http: &'a Client, token: &'a str) -> AuthedClient<'a> {
+    AuthedClient { http, token }
+}
+
+fn auth_state_path(home_dir: &Path) -> PathBuf {
+    home_dir.join(HOME_AUTH_STATE)
+}
+
+fn require_auth_state(home_dir: &Path, server_url: &str) -> Result<AuthState> {
+    let normalized_server_url = normalize_url(server_url);
+    let state = read_auth_state(&auth_state_path(home_dir))?.ok_or_else(|| {
+        anyhow!(
+            "not logged in to {normalized_server_url}; run `supermanager login --server {normalized_server_url}` first"
+        )
+    })?;
+
+    if normalize_url(&state.server_url) != normalized_server_url {
+        bail!(
+            "logged in to {}, not {}; run `supermanager login --server {normalized_server_url}` first",
+            state.server_url,
+            normalized_server_url
+        );
+    }
+
+    Ok(state)
+}
+
+fn read_auth_state(path: &Path) -> Result<Option<AuthState>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let text =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let state = serde_json::from_str(&text)
+        .with_context(|| format!("failed to parse JSON in {}", path.display()))?;
+    Ok(Some(state))
+}
+
+fn write_auth_state(path: &Path, state: &AuthState) -> Result<()> {
+    let text = serde_json::to_string_pretty(state)
+        .with_context(|| format!("failed to serialize {}", path.display()))?;
+    write_private_text(path, &(text + "\n"))
+}
+
+fn request_device_code(http: &Client, server_url: &str) -> Result<DeviceCodeResponse> {
+    let response = http
+        .post(format!("{server_url}/api/auth/device/code"))
+        .json(&json!({
+            "client_id": DEVICE_CLIENT_ID,
+            "scope": DEVICE_SCOPE,
+        }))
+        .send()
+        .context("failed to start device login")?;
+    let response = ensure_success(response, "start device login")?;
+
+    response
+        .json()
+        .context("failed to parse device-login response JSON")
+}
+
+fn poll_for_access_token(
+    http: &Client,
+    server_url: &str,
+    device_code: &str,
+    interval_seconds: u64,
+) -> Result<String> {
+    let mut poll_interval = interval_seconds.max(1);
+
+    loop {
+        let response = http
+            .post(format!("{server_url}/api/auth/device/token"))
+            .json(&json!({
+                "grant_type": DEVICE_GRANT_TYPE,
+                "device_code": device_code,
+                "client_id": DEVICE_CLIENT_ID,
+            }))
+            .send()
+            .context("failed to poll device login")?;
+
+        if response.status().is_success() {
+            let payload: DeviceTokenSuccess = response
+                .json()
+                .context("failed to parse device-token response JSON")?;
+            return Ok(payload.access_token);
+        }
+
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        let parsed = serde_json::from_str::<DeviceTokenError>(&body).ok();
+
+        match parsed.as_ref().map(|error| error.error.as_str()) {
+            Some("authorization_pending") => {
+                thread::sleep(Duration::from_secs(poll_interval));
+                continue;
+            }
+            Some("slow_down") => {
+                poll_interval += 5;
+                thread::sleep(Duration::from_secs(poll_interval));
+                continue;
+            }
+            Some("access_denied") => {
+                bail!("device login was denied");
+            }
+            Some("expired_token") => {
+                bail!("device login expired before it was approved");
+            }
+            _ => {
+                if let Some(error) = parsed {
+                    let detail = error
+                        .error_description
+                        .unwrap_or_else(|| "device login failed".to_owned());
+                    bail!("device login returned {status}: {detail}");
+                }
+                bail!("device login returned {status}: {body}");
+            }
+        }
+    }
+}
+
+fn get_viewer(http: &Client, server_url: &str, access_token: &str) -> Result<ViewerResponse> {
+    let response = authed(http, access_token)
+        .get(format!("{server_url}/v1/me"))
+        .send()
+        .context("failed to fetch current account")?;
+    let response = ensure_success(response, "fetch current account")?;
+
+    response
+        .json()
+        .context("failed to parse current-account response JSON")
+}
+
+fn fetch_room(
+    http: &Client,
+    server_url: &str,
+    access_token: &str,
+    room_id: &str,
+) -> Result<RoomMetadataResponse> {
+    let response = authed(http, access_token)
+        .get(format!("{server_url}/v1/rooms/{room_id}"))
+        .send()
+        .with_context(|| format!("failed to fetch room {room_id}"))?;
+    let response = ensure_success(response, "get room")?;
+
+    response
+        .json()
+        .context("failed to parse room response JSON")
+}
+
+fn resolve_login_org_slug(
+    viewer: &ViewerResponse,
+    requested_slug: Option<&str>,
+) -> Result<Option<String>> {
+    if let Some(slug) = requested_slug
+        .map(str::trim)
+        .filter(|slug| !slug.is_empty())
+    {
+        let organization = find_org_by_slug(viewer, slug).ok_or_else(|| {
+            anyhow!(
+                "organization {slug} is not available to this account. Available organizations: {}",
+                format_org_choices(viewer)
+            )
+        })?;
+        return Ok(Some(organization.organization_slug.clone()));
+    }
+
+    if let Some(active) = viewer
+        .active_organization_id
+        .as_deref()
+        .and_then(|organization_id| find_org_by_id(viewer, organization_id))
+    {
+        return Ok(Some(active.organization_slug.clone()));
+    }
+
+    if viewer.organizations.len() == 1 {
+        return Ok(Some(viewer.organizations[0].organization_slug.clone()));
+    }
+
+    Ok(None)
+}
+
+fn select_active_org(
+    viewer: &ViewerResponse,
+    auth_state: &mut AuthState,
+    requested_slug: Option<&str>,
+) -> Result<ViewerOrganization> {
+    let requested = requested_slug
+        .map(str::trim)
+        .filter(|slug| !slug.is_empty());
+
+    if let Some(slug) = requested {
+        let organization = find_org_by_slug(viewer, slug).ok_or_else(|| {
+            anyhow!(
+                "organization {slug} is not available to this account. Available organizations: {}",
+                format_org_choices(viewer)
+            )
+        })?;
+        auth_state.active_org_slug = Some(organization.organization_slug.clone());
+        return Ok(organization.clone());
+    }
+
+    if let Some(slug) = auth_state
+        .active_org_slug
+        .as_deref()
+        .filter(|slug| !slug.trim().is_empty())
+    {
+        if let Some(organization) = find_org_by_slug(viewer, slug) {
+            auth_state.active_org_slug = Some(organization.organization_slug.clone());
+            return Ok(organization.clone());
+        }
+    }
+
+    if viewer.organizations.len() == 1 {
+        let organization = viewer.organizations[0].clone();
+        auth_state.active_org_slug = Some(organization.organization_slug.clone());
+        return Ok(organization);
+    }
+
+    if let Some(active) = viewer
+        .active_organization_id
+        .as_deref()
+        .and_then(|organization_id| find_org_by_id(viewer, organization_id))
+    {
+        auth_state.active_org_slug = Some(active.organization_slug.clone());
+        return Ok(active.clone());
+    }
+
+    bail!(
+        "multiple organizations are available; rerun with `--org <slug>`. Available organizations: {}",
+        format_org_choices(viewer)
+    )
+}
+
+fn find_org_by_id<'a>(
+    viewer: &'a ViewerResponse,
+    organization_id: &str,
+) -> Option<&'a ViewerOrganization> {
+    viewer
+        .organizations
+        .iter()
+        .find(|organization| organization.organization_id == organization_id)
+}
+
+fn find_org_by_slug<'a>(
+    viewer: &'a ViewerResponse,
+    organization_slug: &str,
+) -> Option<&'a ViewerOrganization> {
+    viewer
+        .organizations
+        .iter()
+        .find(|organization| organization.organization_slug == organization_slug)
+}
+
+fn format_org_choices(viewer: &ViewerResponse) -> String {
+    let mut organizations = viewer
+        .organizations
+        .iter()
+        .map(|organization| {
+            format!(
+                "{} ({})",
+                organization.organization_slug, organization.organization_name
+            )
+        })
+        .collect::<Vec<_>>();
+    organizations.sort();
+    organizations.join(", ")
+}
+
+fn open_url(url: &str) -> Result<()> {
+    let commands: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
+        &[("open", &[])]
+    } else if cfg!(target_os = "windows") {
+        &[("cmd", &["/C", "start", ""])]
+    } else {
+        &[("xdg-open", &[])]
+    };
+
+    let mut last_error = None;
+    for (program, args) in commands {
+        let result = Command::new(program)
+            .args(args)
+            .arg(url)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .and_then(|mut child| child.wait());
+        match result {
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => {
+                last_error = Some(anyhow!("{program} exited with {status}"));
+            }
+            Err(error) => {
+                last_error = Some(error.into());
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("no browser opener available")))
 }
 
 fn path_basename(path: &Path) -> Option<String> {
@@ -545,7 +1030,7 @@ fn write_home_repo_config(path: &Path, config: &HomeRepoConfig) -> Result<()> {
 
     let text = serde_json::to_string_pretty(config)
         .with_context(|| format!("failed to serialize {}", path.display()))?;
-    write_text(path, &(text + "\n"))
+    write_private_text(path, &(text + "\n"))
 }
 
 fn upsert_command_hook(path: &Path, event: &str, command: &str) -> Result<()> {
@@ -790,6 +1275,19 @@ fn write_text(path: &Path, text: &str) -> Result<()> {
     fs::write(path, text).with_context(|| format!("failed to write {}", path.display()))
 }
 
+fn write_private_text(path: &Path, text: &str) -> Result<()> {
+    write_text(path, text)?;
+
+    #[cfg(unix)]
+    {
+        let permissions = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(path, permissions)
+            .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -804,9 +1302,7 @@ mod tests {
     fn join_repo_enables_codex_hooks_in_existing_features_section() {
         let root = test_dir("join-repo");
         let repo_dir = root.join("repo");
-        let home_dir = root.join("home");
         fs::create_dir_all(&repo_dir).unwrap();
-        fs::create_dir_all(&home_dir).unwrap();
         init_git_repo(&repo_dir);
 
         write_text(
@@ -815,14 +1311,7 @@ mod tests {
         )
         .unwrap();
 
-        let outcome = join_repo(JoinConfig {
-            server_url: "http://127.0.0.1:8787/".to_owned(),
-            app_url: "https://app.supermanager.test/".to_owned(),
-            room_id: "bright-fox".to_owned(),
-            repo_dir: repo_dir.clone(),
-            home_dir: home_dir.clone(),
-        })
-        .unwrap();
+        install_repo_hooks(&repo_dir).unwrap();
 
         let codex_config = fs::read_to_string(repo_dir.join(CODEX_CONFIG)).unwrap();
         assert!(codex_config.contains("[features]"));
@@ -832,46 +1321,25 @@ mod tests {
 
         let hooks = fs::read_to_string(repo_dir.join(CODEX_HOOKS_JSON)).unwrap();
         assert!(hooks.contains(CODEX_HOOK_COMMAND));
-        assert_eq!(
-            outcome.dashboard_url,
-            "https://app.supermanager.test/r/BRIGHT-FOX"
-        );
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn join_repo_uses_repo_root_for_nested_paths() {
-        let root = test_dir("join-repo-nested");
-        let repo_dir = root.join("repo");
-        let nested_dir = repo_dir.join("nested");
+    fn write_auth_state_round_trips() {
+        let root = test_dir("auth-state");
         let home_dir = root.join("home");
-        fs::create_dir_all(&nested_dir).unwrap();
         fs::create_dir_all(&home_dir).unwrap();
-        init_git_repo(&repo_dir);
+        let path = auth_state_path(&home_dir);
+        let expected = AuthState {
+            access_token: "token-123".to_owned(),
+            active_org_slug: Some("acme".to_owned()),
+            server_url: "https://api.supermanager.dev".to_owned(),
+        };
 
-        let outcome = join_repo(JoinConfig {
-            server_url: "http://127.0.0.1:8787/".to_owned(),
-            app_url: "https://app.supermanager.test/".to_owned(),
-            room_id: "bright-fox".to_owned(),
-            repo_dir: nested_dir.clone(),
-            home_dir: home_dir.clone(),
-        })
-        .unwrap();
+        write_auth_state(&path, &expected).unwrap();
 
-        assert_eq!(outcome.repo_dir, canonicalize_best_effort(&repo_dir));
-        assert!(
-            get_repo_room_config(&home_dir, &nested_dir)
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(
-            get_repo_room_config(&home_dir, &repo_dir)
-                .unwrap()
-                .unwrap()
-                .room_id,
-            "BRIGHT-FOX"
-        );
+        assert_eq!(read_auth_state(&path).unwrap(), Some(expected));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1004,6 +1472,9 @@ mod tests {
         config.repos.insert(
             repo_key(&repo_b),
             RepoRoomConfig {
+                api_key: "key-b".to_owned(),
+                api_key_id: "key-b-id".to_owned(),
+                organization_slug: "acme".to_owned(),
                 server_url: "https://api.supermanager.dev".to_owned(),
                 room_id: "ALPHA1".to_owned(),
             },
@@ -1011,6 +1482,9 @@ mod tests {
         config.repos.insert(
             repo_key(&repo_a),
             RepoRoomConfig {
+                api_key: "key-a".to_owned(),
+                api_key_id: "key-a-id".to_owned(),
+                organization_slug: "acme".to_owned(),
                 server_url: "https://api.supermanager.dev".to_owned(),
                 room_id: "ALPHA1".to_owned(),
             },
@@ -1018,6 +1492,9 @@ mod tests {
         config.repos.insert(
             repo_key(&repo_c),
             RepoRoomConfig {
+                api_key: "key-c".to_owned(),
+                api_key_id: "key-c-id".to_owned(),
+                organization_slug: "beta".to_owned(),
                 server_url: "http://127.0.0.1:8787".to_owned(),
                 room_id: "BETA22".to_owned(),
             },
@@ -1029,6 +1506,7 @@ mod tests {
 
         assert_eq!(outcome.rooms.len(), 2);
         assert_eq!(outcome.rooms[0].room_id, "ALPHA1");
+        assert_eq!(outcome.rooms[0].organization_slug, "acme");
         assert_eq!(outcome.rooms[0].server_url, "https://api.supermanager.dev");
         assert_eq!(
             outcome.rooms[0].repo_dirs,
@@ -1038,6 +1516,7 @@ mod tests {
             ]
         );
         assert_eq!(outcome.rooms[1].room_id, "BETA22");
+        assert_eq!(outcome.rooms[1].organization_slug, "beta");
         assert_eq!(outcome.rooms[1].server_url, "http://127.0.0.1:8787");
         assert_eq!(
             outcome.rooms[1].repo_dirs,
