@@ -1,41 +1,38 @@
-import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { Pool } from "pg";
+interface MigrationRow {
+  filename: string;
+}
 
-export async function runMigrations(pool: Pool, migrationsDir: string): Promise<void> {
-  await pool.query(`
+export async function runMigrations(client: Bun.SQL, migrationsDir: string): Promise<void> {
+  await client`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       filename TEXT PRIMARY KEY,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-  `);
+  `;
 
-  const files = (await readdir(migrationsDir))
-    .filter((entry) => entry.endsWith(".sql"))
-    .sort((left, right) => left.localeCompare(right));
+  const files = Array.from(new Bun.Glob("*.sql").scanSync({ cwd: migrationsDir })).sort(
+    (left, right) => left.localeCompare(right),
+  );
 
   for (const filename of files) {
-    const alreadyApplied = await pool.query<{ filename: string }>(
-      "SELECT filename FROM schema_migrations WHERE filename = $1",
-      [filename],
-    );
-    if (alreadyApplied.rowCount) {
+    const alreadyApplied = await client<MigrationRow[]>`
+      SELECT filename
+      FROM schema_migrations
+      WHERE filename = ${filename}
+    `;
+    if (alreadyApplied.length > 0) {
       continue;
     }
 
-    const sql = await readFile(path.join(migrationsDir, filename), "utf8");
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query(sql);
-      await client.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [filename]);
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+    const migrationSql = await Bun.file(path.join(migrationsDir, filename)).text();
+    await client.begin(async (tx) => {
+      await tx(migrationSql).simple();
+      await tx`
+        INSERT INTO schema_migrations (filename)
+        VALUES (${filename})
+      `;
+    });
   }
 }

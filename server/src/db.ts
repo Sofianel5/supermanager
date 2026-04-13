@@ -1,7 +1,3 @@
-import { randomInt, randomUUID } from "node:crypto";
-
-import { Pool, type QueryResultRow } from "pg";
-
 import {
   type EmployeeSnapshot,
   type HookTurnReport,
@@ -15,35 +11,70 @@ import {
 const ROOM_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const ROOM_CODE_LENGTH = 6;
 
-export class Db {
-  readonly pool: Pool;
+interface CreateRoomRow {
+  created_at: unknown;
+}
 
-  private constructor(pool: Pool) {
-    this.pool = pool;
+interface RoomRow {
+  room_id: unknown;
+  name: unknown;
+  created_at: unknown;
+}
+
+interface InsertHookEventRow {
+  seq: unknown;
+  received_at: unknown;
+}
+
+interface HookEventRow {
+  seq: unknown;
+  event_id: unknown;
+  employee_name: unknown;
+  client: unknown;
+  repo_root: unknown;
+  branch: unknown;
+  payload_json: unknown;
+  received_at: unknown;
+}
+
+interface SummaryRow {
+  content_json?: RoomSnapshot;
+}
+
+interface SummaryStatusRow {
+  status: unknown;
+}
+
+export class Db {
+  readonly client: Bun.SQL;
+
+  private constructor(client: Bun.SQL) {
+    this.client = client;
   }
 
   static async connect(databaseUrl: string): Promise<Db> {
-    const pool = new Pool({
-      connectionString: databaseUrl,
+    const client = new Bun.SQL({
+      url: databaseUrl,
       max: 10,
     });
 
     try {
-      await pool.query("SELECT 1");
+      await client.connect();
+      await client`SELECT 1`;
     } catch (error) {
-      await pool.end().catch(() => undefined);
+      await client.close({ timeout: 0 }).catch(() => undefined);
       throw new Error(`failed to connect to PostgreSQL: ${formatError(error)}`);
     }
 
-    return new Db(pool);
+    return new Db(client);
   }
 
   async close(): Promise<void> {
-    await this.pool.end();
+    await this.client.close();
   }
 
   async ping(): Promise<void> {
-    await this.pool.query("SELECT 1");
+    await this.client`SELECT 1`;
   }
 
   async createRoom(name: string): Promise<Room> {
@@ -51,19 +82,16 @@ export class Db {
       const roomId = generateRoomCode();
 
       try {
-        const result = await this.pool.query(
-          `
-            INSERT INTO rooms (room_id, name)
-            VALUES ($1, $2)
-            RETURNING created_at
-          `,
-          [roomId, name],
-        );
+        const [row] = await this.client<CreateRoomRow[]>`
+          INSERT INTO rooms (room_id, name)
+          VALUES (${roomId}, ${name})
+          RETURNING created_at
+        `;
 
         return {
           room_id: roomId,
           name,
-          created_at: toRfc3339(result.rows[0]?.created_at),
+          created_at: toRfc3339(row?.created_at),
         };
       } catch (error) {
         if (isUniqueViolation(error)) {
@@ -77,54 +105,43 @@ export class Db {
   }
 
   async getRoom(roomId: string): Promise<Room | null> {
-    const result = await this.pool.query(
-      `
-        SELECT room_id, name, created_at
-        FROM rooms
-        WHERE room_id = $1
-      `,
-      [normalizeRoomId(roomId)],
-    );
-
-    if (!result.rowCount) {
-      return null;
-    }
-
-    return mapRoom(result.rows[0]);
+    const [row] = await this.client<RoomRow[]>`
+      SELECT room_id, name, created_at
+      FROM rooms
+      WHERE room_id = ${normalizeRoomId(roomId)}
+    `;
+    return row ? mapRoom(row) : null;
   }
 
   async insertHookEvent(roomId: string, report: HookTurnReport): Promise<StoredHookEvent> {
     const normalizedRoomId = normalizeRoomId(roomId);
-    const eventId = randomUUID();
-    const result = await this.pool.query(
-      `
-        INSERT INTO hook_events (
-          event_id,
-          room_id,
-          employee_name,
-          client,
-          repo_root,
-          branch,
-          payload_json
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING seq, received_at
-      `,
-      [
-        eventId,
-        normalizedRoomId,
-        report.employee_name,
-        report.client,
-        report.repo_root,
-        report.branch,
-        report.payload,
-      ],
-    );
+    const eventId = crypto.randomUUID();
+    const [row] = await this.client<InsertHookEventRow[]>`
+      INSERT INTO hook_events (
+        event_id,
+        room_id,
+        employee_name,
+        client,
+        repo_root,
+        branch,
+        payload_json
+      )
+      VALUES (
+        ${eventId},
+        ${normalizedRoomId},
+        ${report.employee_name},
+        ${report.client},
+        ${report.repo_root},
+        ${report.branch},
+        ${report.payload}
+      )
+      RETURNING seq, received_at
+    `;
 
     return {
-      seq: toNumber(result.rows[0]?.seq),
+      seq: toNumber(row?.seq),
       event_id: eventId,
-      received_at: toRfc3339(result.rows[0]?.received_at),
+      received_at: toRfc3339(row?.received_at),
       employee_name: report.employee_name,
       client: report.client,
       repo_root: report.repo_root,
@@ -140,81 +157,64 @@ export class Db {
     limit: number | undefined,
   ): Promise<StoredHookEvent[]> {
     const effectiveLimit = limit ?? Number.MAX_SAFE_INTEGER;
-    const result = await this.pool.query(
-      `
-        SELECT
-          seq,
-          event_id,
-          employee_name,
-          client,
-          repo_root,
-          branch,
-          payload_json,
-          received_at
-        FROM hook_events
-        WHERE room_id = $1
-          AND ($2::bigint IS NULL OR seq < $2)
-          AND ($3::bigint IS NULL OR seq > $3)
-        ORDER BY seq DESC
-        LIMIT $4
-      `,
-      [normalizeRoomId(roomId), before ?? null, after ?? null, effectiveLimit],
-    );
+    const rows = await this.client<HookEventRow[]>`
+      SELECT
+        seq,
+        event_id,
+        employee_name,
+        client,
+        repo_root,
+        branch,
+        payload_json,
+        received_at
+      FROM hook_events
+      WHERE room_id = ${normalizeRoomId(roomId)}
+        AND (${before ?? null}::bigint IS NULL OR seq < ${before ?? null})
+        AND (${after ?? null}::bigint IS NULL OR seq > ${after ?? null})
+      ORDER BY seq DESC
+      LIMIT ${effectiveLimit}
+    `;
 
-    return result.rows.map(mapStoredHookEvent);
+    return rows.map(mapStoredHookEvent);
   }
 
   async getSummary(roomId: string): Promise<RoomSnapshot> {
-    const result = await this.pool.query<{ content_json: RoomSnapshot }>(
-      `
-        SELECT content_json
-        FROM summaries
-        WHERE room_id = $1
-      `,
-      [normalizeRoomId(roomId)],
-    );
-
-    return result.rowCount ? normalizeSnapshot(result.rows[0]?.content_json) : emptyRoomSnapshot();
+    const [row] = await this.client<SummaryRow[]>`
+      SELECT content_json
+      FROM summaries
+      WHERE room_id = ${normalizeRoomId(roomId)}
+    `;
+    return row ? normalizeSnapshot(row.content_json) : emptyRoomSnapshot();
   }
 
   async getSummaryStatus(roomId: string): Promise<SummaryStatus> {
-    const result = await this.pool.query<{ status: SummaryStatus }>(
-      `
-        SELECT status
-        FROM summaries
-        WHERE room_id = $1
-      `,
-      [normalizeRoomId(roomId)],
-    );
-
-    return result.rowCount ? parseSummaryStatus(result.rows[0]?.status) : "ready";
+    const [row] = await this.client<SummaryStatusRow[]>`
+      SELECT status
+      FROM summaries
+      WHERE room_id = ${normalizeRoomId(roomId)}
+    `;
+    return row ? parseSummaryStatus(row.status) : "ready";
   }
 
   async setSummaryStatus(roomId: string, status: SummaryStatus): Promise<void> {
-    await this.pool.query(
-      `
-        INSERT INTO summaries (room_id, content_json, status, updated_at)
-        VALUES ($1, $2, $3, NOW())
-        ON CONFLICT(room_id) DO UPDATE SET
-          status = EXCLUDED.status,
-          updated_at = EXCLUDED.updated_at
-      `,
-      [normalizeRoomId(roomId), emptyRoomSnapshot(), status],
-    );
+    await this.client`
+      INSERT INTO summaries (room_id, content_json, status, updated_at)
+      VALUES (${normalizeRoomId(roomId)}, ${emptyRoomSnapshot()}, ${status}, NOW())
+      ON CONFLICT(room_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        updated_at = EXCLUDED.updated_at
+    `;
   }
 
   async setSummary(roomId: string, content: RoomSnapshot): Promise<void> {
-    await this.pool.query(
-      `
-        INSERT INTO summaries (room_id, content_json, status, updated_at)
-        VALUES ($1, $2, 'ready', NOW())
-        ON CONFLICT(room_id) DO UPDATE SET
-          content_json = EXCLUDED.content_json,
-          status = 'ready',
-          updated_at = EXCLUDED.updated_at
-      `,
-      [normalizeRoomId(roomId), normalizeSnapshot(content)],
-    );
+    await this.client`
+      INSERT INTO summaries (room_id, content_json, status, updated_at)
+      VALUES (${normalizeRoomId(roomId)}, ${normalizeSnapshot(content)}, 'ready', NOW())
+      ON CONFLICT(room_id) DO UPDATE SET
+        content_json = EXCLUDED.content_json,
+        status = 'ready',
+        updated_at = EXCLUDED.updated_at
+    `;
   }
 }
 
@@ -229,22 +229,22 @@ function parseSummaryStatus(value: unknown): SummaryStatus {
   throw new Error(`unknown summary status: ${String(value)}`);
 }
 
-function mapRoom(row: QueryResultRow): Room {
+function mapRoom(row: RoomRow): Room {
   return {
-    room_id: readString(row, "room_id"),
-    name: readString(row, "name"),
+    room_id: readString(row.room_id, "room_id"),
+    name: readString(row.name, "name"),
     created_at: toRfc3339(row.created_at),
   };
 }
 
-function mapStoredHookEvent(row: QueryResultRow): StoredHookEvent {
+function mapStoredHookEvent(row: HookEventRow): StoredHookEvent {
   return {
     seq: toNumber(row.seq),
-    event_id: readString(row, "event_id"),
+    event_id: readString(row.event_id, "event_id"),
     received_at: toRfc3339(row.received_at),
-    employee_name: readString(row, "employee_name"),
-    client: readString(row, "client"),
-    repo_root: readString(row, "repo_root"),
+    employee_name: readString(row.employee_name, "employee_name"),
+    client: readString(row.client, "client"),
+    repo_root: readString(row.repo_root, "repo_root"),
     branch: row.branch == null ? null : String(row.branch),
     payload: row.payload_json,
   };
@@ -272,14 +272,22 @@ function normalizeEmployeeSnapshot(snapshot: EmployeeSnapshot): EmployeeSnapshot
 
 function generateRoomCode(): string {
   let roomCode = "";
-  for (let index = 0; index < ROOM_CODE_LENGTH; index += 1) {
-    roomCode += ROOM_CODE_ALPHABET[randomInt(ROOM_CODE_ALPHABET.length)];
+  while (roomCode.length < ROOM_CODE_LENGTH) {
+    const bytes = crypto.getRandomValues(new Uint8Array(ROOM_CODE_LENGTH - roomCode.length));
+    for (const byte of bytes) {
+      if (byte >= 252) {
+        continue;
+      }
+      roomCode += ROOM_CODE_ALPHABET[byte % ROOM_CODE_ALPHABET.length];
+      if (roomCode.length === ROOM_CODE_LENGTH) {
+        break;
+      }
+    }
   }
   return roomCode;
 }
 
-function readString(row: QueryResultRow, key: string): string {
-  const value = row[key];
+function readString(value: unknown, key: string): string {
   if (typeof value !== "string") {
     throw new Error(`failed to decode ${key}`);
   }
@@ -292,6 +300,9 @@ function toNumber(value: unknown): number {
   }
   if (typeof value === "string") {
     return Number.parseInt(value, 10);
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
   }
   throw new Error(`failed to decode numeric value: ${String(value)}`);
 }
@@ -307,12 +318,10 @@ function toRfc3339(value: unknown): string {
 }
 
 function isUniqueViolation(error: unknown): boolean {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: string }).code === "23505",
-  );
+  if (error instanceof Bun.SQL.PostgresError) {
+    return error.code === "23505";
+  }
+  return false;
 }
 
 function formatError(error: unknown): string {
