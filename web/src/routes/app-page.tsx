@@ -26,15 +26,7 @@ export function AppPage() {
   );
 
   useEffect(() => {
-    let cancelled = false;
-
-    void loadWorkspace().then(() => {
-      if (cancelled) return;
-    });
-
-    return () => {
-      cancelled = true;
-    };
+    void loadWorkspace();
   }, []);
 
   async function loadWorkspace(preferredOrganizationSlug?: string) {
@@ -368,15 +360,17 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+const dateFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
 function formatDate(value: string) {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) {
     return value;
   }
 
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(timestamp);
+  return dateFormatter.format(timestamp);
 }
 

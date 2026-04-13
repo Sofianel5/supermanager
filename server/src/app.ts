@@ -196,6 +196,11 @@ export function createApp(context: AppContext) {
           name: room.name,
           created_at: room.created_at,
           organization_slug: room.organization_slug,
+          join_command: cliJoinCommand(
+            context.config.publicApiUrl,
+            room.room_id,
+            room.organization_slug,
+          ),
         };
       },
       {
@@ -426,8 +431,7 @@ function buildConnectionName(name: string | null | undefined, repoRoot: string) 
 }
 
 function normalizeDisplayName(name: string | null | undefined, email: string) {
-  const trimmed = name?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : email;
+  return name?.trim() || email;
 }
 
 function shellQuote(value: string): string {

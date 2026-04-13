@@ -23,7 +23,7 @@ export interface AuthServices {
 export function createAuthServices(config: ServerConfig): AuthServices {
   const db = new Kysely<Record<string, never>>({
     dialect: new PostgresDialect({
-      pool: new Pool({ connectionString: config.databaseUrl, max: 10 }),
+      pool: new Pool({ connectionString: config.databaseUrl, max: 5 }),
     }),
   });
 

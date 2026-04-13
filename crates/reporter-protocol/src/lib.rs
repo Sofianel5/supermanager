@@ -46,6 +46,7 @@ pub struct RoomMetadataResponse {
     pub name: String,
     pub created_at: String,
     pub organization_slug: String,
+    pub join_command: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]

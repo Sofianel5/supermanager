@@ -447,24 +447,16 @@ fn default_room_name(repo_dir: &Path) -> String {
 }
 
 fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
-    upsert_command_hook(
+    upsert_command_hooks(
         &repo_dir.join(CLAUDE_SETTINGS_LOCAL),
-        "UserPromptSubmit",
-        CLAUDE_HOOK_COMMAND,
-    )?;
-    upsert_command_hook(
-        &repo_dir.join(CLAUDE_SETTINGS_LOCAL),
-        "Stop",
-        CLAUDE_HOOK_COMMAND,
+        &[("UserPromptSubmit", CLAUDE_HOOK_COMMAND), ("Stop", CLAUDE_HOOK_COMMAND)],
     )?;
 
     upsert_codex_config(&repo_dir.join(CODEX_CONFIG))?;
-    upsert_command_hook(
+    upsert_command_hooks(
         &repo_dir.join(CODEX_HOOKS_JSON),
-        "UserPromptSubmit",
-        CODEX_HOOK_COMMAND,
+        &[("UserPromptSubmit", CODEX_HOOK_COMMAND), ("Stop", CODEX_HOOK_COMMAND)],
     )?;
-    upsert_command_hook(&repo_dir.join(CODEX_HOOKS_JSON), "Stop", CODEX_HOOK_COMMAND)?;
 
     Ok(())
 }
@@ -1019,27 +1011,30 @@ fn write_home_repo_config(path: &Path, config: &HomeRepoConfig) -> Result<()> {
     write_private_text(path, &(text + "\n"))
 }
 
-fn upsert_command_hook(path: &Path, event: &str, command: &str) -> Result<()> {
+fn upsert_command_hooks(path: &Path, hooks_to_add: &[(&str, &str)]) -> Result<()> {
     let mut root = read_json_object(path)?;
     let hooks = ensure_object_field(&mut root, "hooks")?;
-    let entries = hooks
-        .entry(event.to_owned())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    let entries = entries
-        .as_array_mut()
-        .ok_or_else(|| anyhow!("{} has a non-array hooks.{event} field", path.display()))?;
 
-    if !entries
-        .iter()
-        .any(|entry| entry_contains_command(entry, command))
-    {
-        entries.push(json!({
-            "hooks": [{
-                "type": "command",
-                "command": command,
-                "timeout": HOOK_TIMEOUT_SECONDS
-            }]
-        }));
+    for &(event, command) in hooks_to_add {
+        let entries = hooks
+            .entry(event.to_owned())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        let entries = entries
+            .as_array_mut()
+            .ok_or_else(|| anyhow!("{} has a non-array hooks.{event} field", path.display()))?;
+
+        if !entries
+            .iter()
+            .any(|entry| entry_contains_command(entry, command))
+        {
+            entries.push(json!({
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                    "timeout": HOOK_TIMEOUT_SECONDS
+                }]
+            }));
+        }
     }
 
     write_json_object(path, &root)
