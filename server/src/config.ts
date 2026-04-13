@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
@@ -22,7 +21,7 @@ export interface ServerConfig {
   summaryAgent: SummaryAgentCommand;
 }
 
-export function loadConfig(argv: string[], cwd: string): ServerConfig {
+export async function loadConfig(argv: string[], cwd: string): Promise<ServerConfig> {
   const parsed = parseArgs({
     args: argv,
     options: {
@@ -36,8 +35,8 @@ export function loadConfig(argv: string[], cwd: string): ServerConfig {
     allowPositionals: false,
   });
 
-  const databaseUrl = parsed.values["database-url"] ?? process.env.DATABASE_URL;
-  const dataDir = parsed.values["data-dir"] ?? process.env.SUPERMANAGER_DATA_DIR;
+  const databaseUrl = parsed.values["database-url"] ?? Bun.env.DATABASE_URL;
+  const dataDir = parsed.values["data-dir"] ?? Bun.env.SUPERMANAGER_DATA_DIR;
 
   if (!databaseUrl) {
     throw new Error("missing required DATABASE_URL / --database-url");
@@ -51,11 +50,11 @@ export function loadConfig(argv: string[], cwd: string): ServerConfig {
     databaseUrl,
     dataDir,
     publicApiUrl:
-      parsed.values["public-api-url"] ?? process.env.SUPERMANAGER_PUBLIC_API_URL ?? "http://127.0.0.1:8787",
+      parsed.values["public-api-url"] ?? Bun.env.SUPERMANAGER_PUBLIC_API_URL ?? "http://127.0.0.1:8787",
     publicAppUrl:
-      parsed.values["public-app-url"] ?? process.env.SUPERMANAGER_PUBLIC_APP_URL ?? "http://127.0.0.1:5173",
-    summaryAgent: resolveSummaryAgentCommand(
-      parsed.values["summary-agent-bin"] ?? process.env.SUPERMANAGER_SUMMARY_AGENT_BIN ?? null,
+      parsed.values["public-app-url"] ?? Bun.env.SUPERMANAGER_PUBLIC_APP_URL ?? "http://127.0.0.1:5173",
+    summaryAgent: await resolveSummaryAgentCommand(
+      parsed.values["summary-agent-bin"] ?? Bun.env.SUPERMANAGER_SUMMARY_AGENT_BIN ?? null,
       cwd,
     ),
   };
@@ -76,10 +75,10 @@ function parseBindAddress(raw: string): BindAddress {
   return { host, port };
 }
 
-function resolveSummaryAgentCommand(
+async function resolveSummaryAgentCommand(
   explicitBinary: string | null,
   cwd: string,
-): SummaryAgentCommand {
+): Promise<SummaryAgentCommand> {
   if (explicitBinary) {
     return {
       command: explicitBinary,
@@ -88,7 +87,7 @@ function resolveSummaryAgentCommand(
     };
   }
 
-  const cargoWorkspace = findCargoWorkspace(cwd);
+  const cargoWorkspace = await findCargoWorkspace(cwd);
   if (cargoWorkspace) {
     return {
       command: "cargo",
@@ -104,10 +103,10 @@ function resolveSummaryAgentCommand(
   };
 }
 
-function findCargoWorkspace(cwd: string): string | null {
+async function findCargoWorkspace(cwd: string): Promise<string | null> {
   const candidates = [cwd, path.resolve(cwd, "..")];
   for (const candidate of candidates) {
-    if (existsSync(path.join(candidate, "Cargo.toml"))) {
+    if (await Bun.file(path.join(candidate, "Cargo.toml")).exists()) {
       return candidate;
     }
   }

@@ -10,9 +10,9 @@ import { SummaryAgentHost } from "./summary/agent-host.js";
 
 async function main(): Promise<void> {
   const cwd = process.cwd();
-  const config = loadConfig(process.argv.slice(2), cwd);
+  const config = await loadConfig(process.argv.slice(2), cwd);
   const db = await Db.connect(config.databaseUrl);
-  await runMigrations(db.pool, path.join(cwd, "migrations"));
+  await runMigrations(db.client, path.join(cwd, "migrations"));
 
   const storage = new StoragePaths(config.dataDir);
   await storage.initialize();
