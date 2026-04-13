@@ -6,13 +6,17 @@
   "packageManager": "bun@1.2.17",
   "scripts": {
     "dev": "bun --watch src/main.ts",
-    "build": "bun build ./src/main.ts --outdir .build --target bun",
-    "start": "bun run .build/main.js",
+    "build": "bun build --compile --bytecode --outfile .build/supermanager-server ./src/main.ts",
+    "start": "./.build/supermanager-server",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
     "bun-types": "^1.2.17",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "^1.4.1",
+    "elysia": "^1.4.28"
   }
 }

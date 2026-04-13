@@ -6,7 +6,8 @@ RUN bun install --frozen-lockfile
 
 FROM server-deps AS server-build
 COPY server/ ./
-RUN bun run typecheck
+RUN bun run typecheck \
+ && bun run build
 
 FROM rust:1.93-slim-bookworm AS rust-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -37,11 +38,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && cp target/release/summary-agent /summary-agent
 
 FROM oven/bun:1.2.17-slim
-WORKDIR /app
+WORKDIR /app/server
 ENV SUPERMANAGER_SUMMARY_AGENT_BIN=/usr/local/bin/summary-agent
-COPY --from=server-deps /app/server/node_modules ./server/node_modules
-COPY --from=server-build /app/server ./server
+COPY --from=server-build /app/server/.build/supermanager-server /usr/local/bin/supermanager-server
+COPY --from=server-build /app/server/migrations ./migrations
 COPY --from=rust-builder /summary-agent /usr/local/bin/summary-agent
 EXPOSE 8787
-WORKDIR /app/server
-CMD ["bun", "run", "src/main.ts", "--bind", "0.0.0.0:8787"]
+CMD ["/usr/local/bin/supermanager-server", "--bind", "0.0.0.0:8787"]
