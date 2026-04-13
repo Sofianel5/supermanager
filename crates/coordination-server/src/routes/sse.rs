@@ -10,8 +10,12 @@ use reporter_protocol::StoredHookEvent;
 use serde_json::json;
 use tokio::sync::broadcast;
 
-use super::summarize::SummaryStatus;
-use super::{AppState, auth, resolve_room};
+use crate::agent::summarize::SummaryStatus;
+use crate::auth;
+use crate::state::AppState;
+use crate::util::internal_error;
+
+use super::rooms::resolve_room;
 
 pub async fn stream_feed(
     State(state): State<AppState>,
@@ -32,12 +36,12 @@ pub async fn stream_feed(
             .db
             .get_hook_events(&room_id, None, Some(seq), None)
             .await
-            .map_err(super::internal_error)?
+            .map_err(internal_error)?
     } else {
         Vec::new()
     };
     // `get_hook_events` returns newest-first; reverse so replay fires in
-    // chronological (oldest → newest) order, matching insertion order.
+    // chronological (oldest -> newest) order, matching insertion order.
     replay.reverse();
 
     let mut hook_rx = state.hook_events.subscribe();

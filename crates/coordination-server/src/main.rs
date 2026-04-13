@@ -1,5 +1,9 @@
-mod api;
+mod agent;
+mod auth;
+mod routes;
+mod state;
 mod store;
+mod util;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
@@ -13,7 +17,9 @@ use clap::Parser;
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
-use api::{AppState, RoomSummaryAgent, StoragePaths};
+use agent::RoomSummaryAgent;
+use auth::AuthConfig;
+use state::{AppState, StoragePaths};
 use store::Db;
 
 #[derive(Parser, Debug)]
@@ -59,28 +65,28 @@ async fn main() -> Result<()> {
         storage,
         public_api_url: cli.public_api_url,
         public_app_url: cli.public_app_url,
-        auth: api::AuthConfig::from_env()?,
+        auth: AuthConfig::from_env()?,
     };
 
     let app_origin = HeaderValue::from_str(state.public_app_url.trim_end_matches('/'))?;
 
     let app = Router::new()
-        .route("/v1/auth/config", get(api::auth_config))
-        .route("/v1/me", get(api::current_user))
-        .route("/v1/auth/cli/refresh", post(api::refresh_cli_token))
-        .route("/v1/invites/accept", post(api::accept_invite))
+        .route("/v1/auth/config", get(routes::auth_config))
+        .route("/v1/me", get(routes::current_user))
+        .route("/v1/auth/cli/refresh", post(routes::refresh_cli_token))
+        .route("/v1/invites/accept", post(routes::accept_invite))
         // ── Room management ──────────────────────────────
-        .route("/v1/rooms", post(api::create_room))
+        .route("/v1/rooms", post(routes::create_room))
         // ── Room-scoped routes ───────────────────────────
-        .route("/r/{room_id}", get(api::get_room))
-        .route("/r/{room_id}/feed", get(api::get_feed))
-        .route("/r/{room_id}/feed/stream", get(api::stream_feed))
-        .route("/r/{room_id}/hooks/turn", post(api::ingest_hook_turn))
-        .route("/r/{room_id}/summary", get(api::get_manager_summary))
-        .route("/r/{room_id}/invites/link", post(api::create_link_invite))
-        .route("/r/{room_id}/invites/email", post(api::create_email_invite))
+        .route("/r/{room_id}", get(routes::get_room))
+        .route("/r/{room_id}/feed", get(routes::get_feed))
+        .route("/r/{room_id}/feed/stream", get(routes::stream_feed))
+        .route("/r/{room_id}/hooks/turn", post(routes::ingest_hook_turn))
+        .route("/r/{room_id}/summary", get(routes::get_manager_summary))
+        .route("/r/{room_id}/invites/link", post(routes::create_link_invite))
+        .route("/r/{room_id}/invites/email", post(routes::create_email_invite))
         // ── Health ───────────────────────────────────────
-        .route("/health", get(api::health))
+        .route("/health", get(routes::health))
         .layer(
             CorsLayer::new()
                 .allow_origin(app_origin)

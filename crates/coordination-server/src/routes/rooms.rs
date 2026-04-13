@@ -1,11 +1,3 @@
-mod agent;
-mod auth;
-mod sse;
-pub mod summarize;
-
-use std::{fs, path::PathBuf, sync::Arc};
-
-use anyhow::Context;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -13,21 +5,15 @@ use axum::{
     response::IntoResponse,
 };
 use reporter_protocol::{
-    CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse, Room,
-    RoomMetadataResponse, RoomSnapshot, StoredHookEvent,
+    CreateRoomRequest, CreateRoomResponse, FeedResponse, HookTurnReport, IngestResponse,
+    RoomMetadataResponse, RoomSnapshot,
 };
 use serde::Deserialize;
-use tokio::sync::broadcast;
 
-use crate::store::Db;
-use summarize::SummaryStatusEvent;
-
-pub use agent::RoomSummaryAgent;
-pub use auth::{
-    AuthConfig, accept_invite, auth_config, create_email_invite, create_link_invite, current_user,
-    refresh_cli_token,
-};
-pub use sse::stream_feed;
+use crate::auth;
+use crate::state::{AppState, HookFeedEvent};
+use crate::store::RoomRecord;
+use crate::util::{internal_error, service_unavailable_error, trim_url};
 
 const DEFAULT_PUBLIC_API_URL: &str = "https://api.supermanager.dev";
 const DEFAULT_PUBLIC_APP_URL: &str = "https://supermanager.dev";
@@ -40,60 +26,6 @@ pub struct FeedQuery {
     pub limit: Option<i64>,
     #[serde(default)]
     pub before: Option<i64>,
-}
-
-#[derive(Clone)]
-pub struct HookFeedEvent {
-    pub room_id: String,
-    pub event: StoredHookEvent,
-}
-
-#[derive(Clone, Debug)]
-pub struct StoragePaths {
-    pub data_dir: PathBuf,
-    pub codex_home: PathBuf,
-    pub rooms_dir: PathBuf,
-}
-
-impl StoragePaths {
-    pub fn new(data_dir: PathBuf) -> Self {
-        let codex_home = data_dir.join("codex");
-        let rooms_dir = data_dir.join("rooms");
-        Self {
-            data_dir,
-            codex_home,
-            rooms_dir,
-        }
-    }
-
-    pub fn initialize(&self) -> anyhow::Result<()> {
-        for path in [&self.data_dir, &self.codex_home, &self.rooms_dir] {
-            fs::create_dir_all(path)
-                .with_context(|| format!("failed to create storage dir {}", path.display()))?;
-        }
-        Ok(())
-    }
-
-    pub fn check_ready(&self) -> anyhow::Result<()> {
-        for path in [&self.data_dir, &self.codex_home, &self.rooms_dir] {
-            if !path.is_dir() {
-                anyhow::bail!("storage dir missing or not a directory: {}", path.display());
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
-pub struct AppState {
-    pub db: Arc<Db>,
-    pub agent: RoomSummaryAgent,
-    pub hook_events: broadcast::Sender<HookFeedEvent>,
-    pub summary_events: broadcast::Sender<SummaryStatusEvent>,
-    pub storage: StoragePaths,
-    pub public_api_url: String,
-    pub public_app_url: String,
-    pub auth: AuthConfig,
 }
 
 pub async fn health(State(state): State<AppState>) -> Result<&'static str, (StatusCode, String)> {
@@ -134,7 +66,7 @@ pub async fn ingest_hook_turn(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let (_, membership) = auth::ensure_room_member(&state, &headers, &room_id).await?;
     let room = resolve_room(&state, &membership.room_id).await?;
-    let room_id = room.room_id;
+    let room_id = room.room_id.clone();
 
     let stored = state
         .db
@@ -211,7 +143,10 @@ pub async fn get_manager_summary(
     Ok(Json(summary))
 }
 
-async fn resolve_room(state: &AppState, room_id: &str) -> Result<Room, (StatusCode, String)> {
+pub(crate) async fn resolve_room(
+    state: &AppState,
+    room_id: &str,
+) -> Result<RoomRecord, (StatusCode, String)> {
     state
         .db
         .get_room(room_id)
@@ -232,16 +167,4 @@ fn cli_join_command(api_url: &str, app_url: &str, room_id: &str) -> String {
 
 fn dashboard_url(app_url: &str, room_id: &str) -> String {
     format!("{}/r/{room_id}", trim_url(app_url))
-}
-
-fn trim_url(url: &str) -> &str {
-    url.trim_end_matches('/')
-}
-
-fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
-}
-
-fn service_unavailable_error(error: anyhow::Error) -> (StatusCode, String) {
-    (StatusCode::SERVICE_UNAVAILABLE, error.to_string())
 }
