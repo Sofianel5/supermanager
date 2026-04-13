@@ -1,15 +1,17 @@
 # Supermanager
 
-Supermanager is a room-based coordination system for coding agents. The Rust server owns room creation, hook ingest, PostgreSQL storage, SSE, and summary generation. A separate React frontend owns the landing page and live room dashboard.
+Supermanager is a room-based coordination system for coding agents. The coordination server is a Bun/TypeScript service that owns room creation, hook ingest, PostgreSQL storage, SSE, and agent orchestration. A separate Rust `summary-agent` process owns the in-process Codex runtime. A React frontend owns the landing page and live room dashboard.
 
 ## Setup
 
-### 1. Start the server API
+### 1. Start the coordination server
 
 ```sh
+cd server
+bun install
 export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
-export SUPERMANAGER_DATA_DIR='./.supermanager-data'
-cargo run -p coordination-server
+export SUPERMANAGER_DATA_DIR='../.supermanager-data'
+bun run src/main.ts
 ```
 
 By default it listens on `http://127.0.0.1:8787` and expects the frontend on `http://127.0.0.1:5173`.
@@ -17,9 +19,9 @@ By default it listens on `http://127.0.0.1:8787` and expects the frontend on `ht
 To customize the public URLs explicitly:
 
 ```sh
-cargo run -p coordination-server -- \
+bun run src/main.ts \
   --database-url 'postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable' \
-  --data-dir './.supermanager-data' \
+  --data-dir '../.supermanager-data' \
   --public-api-url 'http://127.0.0.1:8787' \
   --public-app-url 'http://127.0.0.1:5173'
 ```
@@ -30,7 +32,10 @@ You can also configure these through environment variables:
 - `SUPERMANAGER_DATA_DIR`
 - `SUPERMANAGER_PUBLIC_API_URL`
 - `SUPERMANAGER_PUBLIC_APP_URL`
+- `SUPERMANAGER_SUMMARY_AGENT_BIN`
 - `OPENAI_API_KEY`
+
+In local development the Bun server automatically starts the Rust summary agent through `cargo run -p summary-agent`. For packaged environments, point `SUPERMANAGER_SUMMARY_AGENT_BIN` at a compiled `summary-agent` binary.
 
 ### 2. Start the frontend
 
@@ -153,9 +158,10 @@ The frontend reads room metadata, feed, and a structured room summary from the A
 
 ```text
 crates/
-  coordination-server/    # HTTP server, APIs, summaries, SSE
   reporter-protocol/      # Shared room and hook-event types
+  summary-agent/          # Rust Codex room summarizer
   supermanager-cli/       # Global CLI for joining/leaving repos
+server/                   # Bun + TypeScript coordination server
 web/                      # React + Vite frontend
 Dockerfile                # Production image
 infra/aws/                # Terraform for the AWS backend
@@ -164,7 +170,7 @@ infra/aws/                # Terraform for the AWS backend
 ## Notes
 
 - Summary generation runs on the server after new hook turns arrive.
-- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The server keeps a shared Codex home at `<data-dir>/codex` and per-room working directories at `<data-dir>/rooms/<ROOM_ID>/cwd`.
+- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps per-room working directories and thread state under `<data-dir>/rooms/<ROOM_ID>/`.
 - The stored room summary is structured JSON. The model receives the current summary plus fresh updates and can return partial section updates instead of rewriting the whole room summary each time.
 
 ## Licensing
@@ -222,6 +228,7 @@ The ECS task definition should be managed in Terraform and point at the ECR repo
 - `SUPERMANAGER_DATA_DIR=/srv/supermanager`
 - `SUPERMANAGER_PUBLIC_API_URL=https://api.supermanager.dev`
 - `SUPERMANAGER_PUBLIC_APP_URL=https://supermanager.dev`
+- `SUPERMANAGER_SUMMARY_AGENT_BIN=/usr/local/bin/summary-agent`
 
 The ECS service is intentionally single-writer during deploys: `desired_count = 1`, `deployment_minimum_healthy_percent = 0`, and `deployment_maximum_percent = 100`. That allows the durable Codex state on EFS to survive task replacement cleanly.
 

@@ -10,6 +10,7 @@ on:
       - Cargo.lock
       - Dockerfile
       - .dockerignore
+      - server/**
       - crates/**
       - vendor/**
       - .gitmodules
