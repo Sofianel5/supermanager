@@ -1,4 +1,4 @@
-import type { StoredHookEvent, SummaryStatus } from "../types.js";
+import type { StoredHookEvent, SummaryStatus } from "../types";
 
 export type SummaryToolName =
   | "get_snapshot"

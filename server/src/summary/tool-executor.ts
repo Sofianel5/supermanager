@@ -1,6 +1,6 @@
-import type { Db } from "../db.js";
-import type { SummaryToolName } from "./protocol.js";
-import type { RoomSnapshot } from "../types.js";
+import type { Db } from "../db";
+import type { SummaryToolName } from "./protocol";
+import type { RoomSnapshot } from "../types";
 
 export interface ToolExecutionResult {
   success: boolean;

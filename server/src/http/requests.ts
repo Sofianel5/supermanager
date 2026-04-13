@@ -1,5 +1,5 @@
-import type { CreateRoomRequest, HookTurnReport } from "../types.js";
-import { BadRequestError } from "./errors.js";
+import type { CreateRoomRequest, HookTurnReport } from "../types";
+import { BadRequestError } from "./errors";
 
 export interface RoomPathMatch {
   roomId: string;

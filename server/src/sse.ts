@@ -1,4 +1,4 @@
-import type { StoredHookEvent, SummaryStatus } from "./types.js";
+import type { StoredHookEvent, SummaryStatus } from "./types";
 
 type EventName = "hook_event" | "summary_status";
 
