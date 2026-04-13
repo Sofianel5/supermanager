@@ -212,12 +212,13 @@ pub fn login(config: LoginConfig) -> Result<LoginOutcome> {
 
 pub fn logout(home_dir: &Path) -> Result<bool> {
     let path = auth_state_path(home_dir);
-    if !path.exists() {
-        return Ok(false);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(
+            anyhow::Error::new(error).context(format!("failed to remove {}", path.display()))
+        ),
     }
-
-    fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
-    Ok(true)
 }
 
 pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
@@ -511,12 +512,15 @@ fn require_auth_state(home_dir: &Path, server_url: &str) -> Result<AuthState> {
 }
 
 fn read_auth_state(path: &Path) -> Result<Option<AuthState>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let text =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(
+                anyhow::Error::new(error).context(format!("failed to read {}", path.display()))
+            )
+        }
+    };
     if text.trim().is_empty() {
         return Ok(None);
     }
@@ -636,21 +640,26 @@ fn fetch_room(
         .context("failed to parse room response JSON")
 }
 
-fn resolve_login_org_slug(
-    viewer: &ViewerResponse,
+/// Try to find a single preferred org from the viewer's memberships.
+/// Resolution order: explicit slug > active org id > single-org auto-select.
+fn find_preferred_org<'a>(
+    viewer: &'a ViewerResponse,
     requested_slug: Option<&str>,
-) -> Result<Option<String>> {
-    if let Some(slug) = requested_slug
+    fallback_slug: Option<&str>,
+) -> Result<Option<&'a ViewerOrganization>> {
+    let slug = requested_slug
+        .or(fallback_slug)
         .map(str::trim)
-        .filter(|slug| !slug.is_empty())
-    {
+        .filter(|slug| !slug.is_empty());
+
+    if let Some(slug) = slug {
         let organization = find_org_by_slug(viewer, slug).ok_or_else(|| {
             anyhow!(
                 "organization {slug} is not available to this account. Available organizations: {}",
                 format_org_choices(viewer)
             )
         })?;
-        return Ok(Some(organization.organization_slug.clone()));
+        return Ok(Some(organization));
     }
 
     if let Some(active) = viewer
@@ -658,14 +667,22 @@ fn resolve_login_org_slug(
         .as_deref()
         .and_then(|organization_id| find_org_by_id(viewer, organization_id))
     {
-        return Ok(Some(active.organization_slug.clone()));
+        return Ok(Some(active));
     }
 
     if viewer.organizations.len() == 1 {
-        return Ok(Some(viewer.organizations[0].organization_slug.clone()));
+        return Ok(Some(&viewer.organizations[0]));
     }
 
     Ok(None)
+}
+
+fn resolve_login_org_slug(
+    viewer: &ViewerResponse,
+    requested_slug: Option<&str>,
+) -> Result<Option<String>> {
+    Ok(find_preferred_org(viewer, requested_slug, None)?
+        .map(|organization| organization.organization_slug.clone()))
 }
 
 fn select_active_org(
@@ -673,51 +690,21 @@ fn select_active_org(
     auth_state: &mut AuthState,
     requested_slug: Option<&str>,
 ) -> Result<ViewerOrganization> {
-    let requested = requested_slug
-        .map(str::trim)
-        .filter(|slug| !slug.is_empty());
+    let organization = find_preferred_org(
+        viewer,
+        requested_slug,
+        auth_state.active_org_slug.as_deref(),
+    )?
+    .ok_or_else(|| {
+        anyhow!(
+            "multiple organizations are available; rerun with `--org <slug>`. Available organizations: {}",
+            format_org_choices(viewer)
+        )
+    })?
+    .clone();
 
-    if let Some(slug) = requested {
-        let organization = find_org_by_slug(viewer, slug).ok_or_else(|| {
-            anyhow!(
-                "organization {slug} is not available to this account. Available organizations: {}",
-                format_org_choices(viewer)
-            )
-        })?;
-        auth_state.active_org_slug = Some(organization.organization_slug.clone());
-        return Ok(organization.clone());
-    }
-
-    if let Some(slug) = auth_state
-        .active_org_slug
-        .as_deref()
-        .filter(|slug| !slug.trim().is_empty())
-    {
-        if let Some(organization) = find_org_by_slug(viewer, slug) {
-            auth_state.active_org_slug = Some(organization.organization_slug.clone());
-            return Ok(organization.clone());
-        }
-    }
-
-    if viewer.organizations.len() == 1 {
-        let organization = viewer.organizations[0].clone();
-        auth_state.active_org_slug = Some(organization.organization_slug.clone());
-        return Ok(organization);
-    }
-
-    if let Some(active) = viewer
-        .active_organization_id
-        .as_deref()
-        .and_then(|organization_id| find_org_by_id(viewer, organization_id))
-    {
-        auth_state.active_org_slug = Some(active.organization_slug.clone());
-        return Ok(active.clone());
-    }
-
-    bail!(
-        "multiple organizations are available; rerun with `--org <slug>`. Available organizations: {}",
-        format_org_choices(viewer)
-    )
+    auth_state.active_org_slug = Some(organization.organization_slug.clone());
+    Ok(organization)
 }
 
 fn find_org_by_id<'a>(
@@ -1275,13 +1262,28 @@ fn write_text(path: &Path, text: &str) -> Result<()> {
 }
 
 fn write_private_text(path: &Path, text: &str) -> Result<()> {
-    write_text(path, text)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    }
 
     #[cfg(unix)]
     {
-        let permissions = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(path, permissions)
-            .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+        file.write_all(text.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        write_text(path, text)?;
     }
 
     Ok(())

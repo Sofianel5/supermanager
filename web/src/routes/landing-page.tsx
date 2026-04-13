@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { authClient, sanitizeReturnTo, toAbsoluteCallbackUrl } from "../auth-client";
-import { readAuthError } from "../utils";
+import { readAuthError, useCopyHandler } from "../utils";
 
 type SocialProvider = "github" | "google";
 
 export function LandingPage() {
   const location = useLocation();
   const session = authClient.useSession();
-  const [copiedValue, setCopiedValue] = useState<string | null>(null);
+  const { copiedValue, copy } = useCopyHandler();
   const [pendingProvider, setPendingProvider] = useState<SocialProvider | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -17,14 +17,6 @@ export function LandingPage() {
       sanitizeReturnTo(new URLSearchParams(location.search).get("returnTo")),
     [location.search],
   );
-
-  async function copy(label: string, value: string) {
-    await navigator.clipboard.writeText(value);
-    setCopiedValue(label);
-    window.setTimeout(() => {
-      setCopiedValue((current) => (current === label ? null : current));
-    }, 1800);
-  }
 
   async function signIn(provider: SocialProvider) {
     setPendingProvider(provider);

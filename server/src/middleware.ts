@@ -34,14 +34,9 @@ export async function resolveOrganizationMembership(
 }
 
 export async function requireRoomAccess(db: Db, userId: string, roomId: string) {
-  const room = await db.getRoom(roomId);
+  const room = await db.getRoomWithAccessCheck(roomId, userId);
   if (!room) {
     throw httpError(404, `room not found: ${roomId}`);
-  }
-
-  const membership = await db.getOrganizationMembershipById(userId, room.organization_id);
-  if (!membership) {
-    throw httpError(403, "forbidden");
   }
 
   return room;
