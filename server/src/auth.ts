@@ -4,7 +4,7 @@ import { apiKey } from "@better-auth/api-key";
 import { Kysely, PostgresDialect } from "kysely";
 import { Pool } from "pg";
 
-import type { ServerConfig } from "./config";
+import { trimUrl, type ServerConfig } from "./config";
 
 export const AUTH_BASE_PATH = "/api/auth";
 export const CLI_DEVICE_CLIENT_ID = "supermanager-cli";
@@ -13,42 +13,39 @@ export const HOOK_WRITE_PERMISSIONS: Record<string, string[]> = {
   hook: ["write"],
 };
 
+export type SupermanagerAuth = ReturnType<typeof createAuth>;
+
 export interface AuthServices {
   auth: SupermanagerAuth;
   close(): Promise<void>;
 }
 
-export type SupermanagerAuth = ReturnType<typeof createAuthInstance>;
-
 export function createAuthServices(config: ServerConfig): AuthServices {
-  const pool = new Pool({
-    connectionString: config.databaseUrl,
-    max: 10,
-  });
   const db = new Kysely<Record<string, never>>({
-    dialect: new PostgresDialect({ pool }),
+    dialect: new PostgresDialect({
+      pool: new Pool({ connectionString: config.databaseUrl, max: 10 }),
+    }),
   });
-  const auth = createAuthInstance(config, db);
 
   return {
-    auth,
+    auth: createAuth(config, db),
     async close() {
       await db.destroy();
     },
   };
 }
 
-function createAuthInstance(
-  config: ServerConfig,
-  db: Kysely<Record<string, never>>,
-) {
+function createAuth(config: ServerConfig, db: Kysely<Record<string, never>>) {
+  const baseUrl = trimUrl(config.publicApiUrl);
+  const appUrl = trimUrl(config.publicAppUrl);
+
   return betterAuth({
-    baseURL: trimUrl(config.publicApiUrl),
+    baseURL: baseUrl,
     basePath: AUTH_BASE_PATH,
     secret: config.auth.secret,
-    trustedOrigins: [trimUrl(config.publicApiUrl), trimUrl(config.publicAppUrl)],
+    trustedOrigins: [baseUrl, appUrl],
     advanced: {
-      useSecureCookies: trimUrl(config.publicApiUrl).startsWith("https://"),
+      useSecureCookies: baseUrl.startsWith("https://"),
     },
     database: {
       db,
@@ -72,7 +69,7 @@ function createAuthInstance(
       bearer(),
       deviceAuthorization({
         validateClient: async (clientId) => clientId === CLI_DEVICE_CLIENT_ID,
-        verificationUri: `${trimUrl(config.publicAppUrl)}/device`,
+        verificationUri: `${appUrl}/device`,
       }),
       apiKey([
         {
@@ -95,8 +92,4 @@ function createAuthInstance(
       ]),
     ],
   });
-}
-
-function trimUrl(url: string): string {
-  return url.replace(/\/+$/, "");
 }

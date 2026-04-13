@@ -15,6 +15,8 @@ import {
   type RoomSnapshot,
   type StoredHookEvent,
 } from "../api";
+import { CopyPanel } from "../components/copy-panel";
+import { readMessage } from "../utils";
 
 const FEED_LIMIT = 10;
 const DEFAULT_SERVER_URL = "https://api.supermanager.dev";
@@ -293,27 +295,6 @@ export function RoomPage() {
   );
 }
 
-function CopyPanel({
-  copiedValue,
-  label,
-  onCopy,
-  value,
-}: {
-  copiedValue: string | null;
-  label: string;
-  onCopy: (label: string, value: string) => Promise<void>;
-  value: string;
-}) {
-  return (
-    <button className="copy-sheet" type="button" onClick={() => onCopy(label, value)}>
-      <span className="copy-label">
-        {label} {copiedValue === label ? "copied" : "click to copy"}
-      </span>
-      <code>{value}</code>
-    </button>
-  );
-}
-
 function SummaryContent({
   clock,
   snapshot,
@@ -452,10 +433,6 @@ function formatRelativeTime(isoTimestamp: string, now: number) {
     return `${Math.floor(seconds / 3600)}h ago`;
   }
   return `${Math.floor(seconds / 86400)}d ago`;
-}
-
-function readMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Request failed.";
 }
 
 function buildJoinCommand(roomId: string, organizationSlug?: string) {

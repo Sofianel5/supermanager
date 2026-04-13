@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { authClient, sanitizeReturnTo, toAbsoluteCallbackUrl } from "../auth-client";
+import { readAuthError } from "../utils";
 
 type SocialProvider = "github" | "google";
 
@@ -142,6 +143,3 @@ export function LandingPage() {
   );
 }
 
-function readAuthError(error: { message?: string; status: number; statusText: string }) {
-  return error.message || error.statusText || `Request failed with ${error.status}`;
-}

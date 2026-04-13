@@ -1,11 +1,11 @@
 import type {
   FeedResponse,
-  RoomMetadataResponse as GeneratedRoomMetadataResponse,
+  RoomMetadataResponse,
   RoomSnapshot,
   StoredHookEvent,
 } from "./generated";
 
-export type { FeedResponse, RoomSnapshot, StoredHookEvent } from "./generated";
+export type { FeedResponse, RoomMetadataResponse, RoomSnapshot, StoredHookEvent } from "./generated";
 
 export interface ViewerUser {
   email: string;
@@ -25,10 +25,6 @@ export interface ViewerResponse {
   active_organization_id: string | null;
   organizations: ViewerOrganization[];
   user: ViewerUser;
-}
-
-export interface RoomMetadataResponse extends GeneratedRoomMetadataResponse {
-  organization_slug: string;
 }
 
 export interface RoomListEntry {

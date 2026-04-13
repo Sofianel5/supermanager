@@ -6,8 +6,15 @@ import {
   ROOM_CONNECTION_KEY_CONFIG,
   type SupermanagerAuth,
 } from "./auth";
-import type { ServerConfig } from "./config";
+import { trimUrl, type ServerConfig } from "./config";
 import { Db } from "./db";
+import {
+  httpError,
+  readRequiredHeader,
+  requireRoomAccess,
+  requireViewer,
+  resolveOrganizationMembership,
+} from "./middleware";
 import type { FeedStreamHub } from "./sse";
 import type { StoragePaths } from "./storage";
 import type { SummaryAgentHost } from "./summary/agent-host";
@@ -382,52 +389,6 @@ function cliJoinCommand(
   return parts.join(" ");
 }
 
-async function requireViewer(auth: SupermanagerAuth, headers: Headers) {
-  const session = await auth.api.getSession({ headers });
-  if (!session) {
-    throw httpError(401, "authentication required");
-  }
-  return session;
-}
-
-async function resolveOrganizationMembership(
-  db: Db,
-  userId: string,
-  organizationSlug: string | undefined,
-  activeOrganizationId: string | null,
-) {
-  if (organizationSlug) {
-    const membership = await db.getOrganizationMembershipBySlug(userId, organizationSlug);
-    if (!membership) {
-      throw httpError(403, `organization not available: ${organizationSlug}`);
-    }
-    return membership;
-  }
-
-  if (activeOrganizationId) {
-    const membership = await db.getOrganizationMembershipById(userId, activeOrganizationId);
-    if (membership) {
-      return membership;
-    }
-  }
-
-  throw httpError(400, "select an organization first");
-}
-
-async function requireRoomAccess(db: Db, userId: string, roomId: string) {
-  const room = await db.getRoom(roomId);
-  if (!room) {
-    throw httpError(404, `room not found: ${roomId}`);
-  }
-
-  const membership = await db.getOrganizationMembershipById(userId, room.organization_id);
-  if (!membership) {
-    throw httpError(403, "forbidden");
-  }
-
-  return room;
-}
-
 function parseConnectionMetadata(metadata: unknown): { roomId: string } {
   if (metadata && typeof metadata === "object" && "roomId" in metadata) {
     const roomId = (metadata as { roomId?: unknown }).roomId;
@@ -451,22 +412,6 @@ function buildConnectionName(name: string | null | undefined, repoRoot: string) 
 function normalizeDisplayName(name: string | null | undefined, email: string) {
   const trimmed = name?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : email;
-}
-
-function readRequiredHeader(headers: Headers, name: string) {
-  const value = headers.get(name)?.trim();
-  if (!value) {
-    throw httpError(401, `missing ${name}`);
-  }
-  return value;
-}
-
-function httpError(statusCode: number, message: string) {
-  return Object.assign(new Error(message), { status: statusCode });
-}
-
-function trimUrl(url: string): string {
-  return url.replace(/\/+$/, "");
 }
 
 function shellQuote(value: string): string {

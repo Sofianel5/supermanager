@@ -87,8 +87,14 @@ export class FeedStreamClient {
 
 export class FeedStreamHub {
   private readonly rooms = new Map<string, Set<FeedStreamClient>>();
+  private readonly allowedOrigins: Set<string>;
+
+  constructor(allowedOrigins: string[] = []) {
+    this.allowedOrigins = new Set(allowedOrigins);
+  }
 
   register(roomId: string, origin: string | null): FeedStreamClient {
+    const validatedOrigin = origin && this.allowedOrigins.has(origin) ? origin : null;
     let client: FeedStreamClient;
     const listeners = this.rooms.get(roomId) ?? new Set<FeedStreamClient>();
 
@@ -99,7 +105,7 @@ export class FeedStreamHub {
       }
     };
 
-    client = new FeedStreamClient(cleanup, origin);
+    client = new FeedStreamClient(cleanup, validatedOrigin);
     listeners.add(client);
     this.rooms.set(roomId, listeners);
 
