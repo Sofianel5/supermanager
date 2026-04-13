@@ -266,6 +266,7 @@ export function createApp(context: AppContext) {
         }
 
         const created = await context.auth.api.createApiKey({
+          headers: request.headers,
           body: {
             configId: ROOM_CONNECTION_KEY_CONFIG,
             metadata: {
@@ -330,6 +331,9 @@ export function createApp(context: AppContext) {
         if (!repoRoot) {
           return status(400, "repo_root must be a non-empty string");
         }
+        if (repoRoot !== metadata.repoRoot) {
+          throw httpError(403, "api key repo mismatch");
+        }
 
         const stored = await context.db.insertHookEvent(room.room_id, {
           employee_name: employeeName,
@@ -389,11 +393,24 @@ function cliJoinCommand(
   return parts.join(" ");
 }
 
-function parseConnectionMetadata(metadata: unknown): { roomId: string } {
-  if (metadata && typeof metadata === "object" && "roomId" in metadata) {
+function parseConnectionMetadata(
+  metadata: unknown,
+): { repoRoot: string; roomId: string } {
+  if (
+    metadata &&
+    typeof metadata === "object" &&
+    "repoRoot" in metadata &&
+    "roomId" in metadata
+  ) {
     const roomId = (metadata as { roomId?: unknown }).roomId;
-    if (typeof roomId === "string" && roomId.trim()) {
-      return { roomId };
+    const repoRoot = (metadata as { repoRoot?: unknown }).repoRoot;
+    if (
+      typeof roomId === "string" &&
+      roomId.trim() &&
+      typeof repoRoot === "string" &&
+      repoRoot.trim()
+    ) {
+      return { repoRoot, roomId };
     }
   }
 
