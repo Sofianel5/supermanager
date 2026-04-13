@@ -28,7 +28,7 @@ export async function runMigrations(client: Bun.SQL, migrationsDir: string): Pro
 
     const migrationSql = await Bun.file(path.join(migrationsDir, filename)).text();
     await client.begin(async (tx) => {
-      await tx(migrationSql).simple();
+      await tx.unsafe(migrationSql).simple();
       await tx`
         INSERT INTO schema_migrations (filename)
         VALUES (${filename})
