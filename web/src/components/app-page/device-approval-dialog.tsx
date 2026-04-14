@@ -19,6 +19,8 @@ export function DeviceApprovalDialog({
   onClose,
   onDeny,
 }: DeviceApprovalDialogProps) {
+  const isTransientState = status !== "pending" && status !== "approved" && status !== "denied";
+
   return (
     <div className="dialog-backdrop">
       <div className="dialog-card">
@@ -40,6 +42,14 @@ export function DeviceApprovalDialog({
 
         {error && <p className="message message--error">{error}</p>}
         {!error && !status && <p className="message">Checking device code...</p>}
+
+        {isTransientState && (
+          <div className="dialog-actions dialog-actions--single">
+            <button className="secondary-button" type="button" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        )}
 
         {status === "pending" && (
           <div className="dialog-actions">

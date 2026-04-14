@@ -7,7 +7,11 @@ import { CliPanel } from "../components/app-page/cli-panel";
 import { DeviceApprovalDialog } from "../components/app-page/device-approval-dialog";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
-import { deviceStatusQueryKey, useDeviceStatus } from "../queries/device-status";
+import {
+  deviceStatusQueryKey,
+  normalizeUserCode,
+  useDeviceStatus,
+} from "../queries/device-status";
 import {
   roomListQueryRootKey,
   useWorkspaceData,
@@ -36,7 +40,9 @@ export function AppPage() {
   const deviceStatusQuery = useDeviceStatus(userCode);
 
   const viewer = viewerQuery.data ?? null;
-  const isLoading = viewerQuery.isPending || roomsQuery.isPending;
+  const isLoading =
+    viewerQuery.isLoading ||
+    (Boolean(activeOrganization) && roomsQuery.isLoading);
   const workspaceError =
     workspaceActionError ||
     readQueryError(viewerQuery.error) ||
@@ -62,7 +68,6 @@ export function AppPage() {
   async function handleOrganizationSwitch(organization: ViewerOrganization) {
     setPendingAction(`switch:${organization.organization_id}`);
     setWorkspaceActionError(null);
-    setPreferredOrganizationSlug(organization.organization_slug);
 
     const result = await authClient.organization.setActive({
       organizationId: organization.organization_id,
@@ -74,6 +79,7 @@ export function AppPage() {
       return;
     }
 
+    setPreferredOrganizationSlug(organization.organization_slug);
     await refreshWorkspace();
   }
 
@@ -89,7 +95,6 @@ export function AppPage() {
 
     setPendingAction("create-organization");
     setWorkspaceActionError(null);
-    setPreferredOrganizationSlug(slug);
 
     const result = await authClient.organization.create({
       name,
@@ -102,6 +107,7 @@ export function AppPage() {
       return;
     }
 
+    setPreferredOrganizationSlug(slug);
     setOrganizationName("");
     await refreshWorkspace();
   }
@@ -221,11 +227,6 @@ export function AppPage() {
       )}
     </>
   );
-}
-
-function normalizeUserCode(value: string | null | undefined) {
-  const cleaned = value?.trim().toUpperCase().replace(/[^A-Z0-9-]/g, "") ?? "";
-  return cleaned || "";
 }
 
 function readQueryError(error: unknown) {

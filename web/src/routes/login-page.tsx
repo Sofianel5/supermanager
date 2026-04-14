@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { authClient, sanitizeReturnTo, toAbsoluteCallbackUrl } from "../auth-client";
+import { normalizeUserCode } from "../queries/device-status";
 import { readAuthError } from "../utils";
 
 type SocialProvider = "github" | "google";
@@ -82,11 +83,6 @@ export function LoginPage() {
       </section>
     </main>
   );
-}
-
-function normalizeUserCode(value: string | null | undefined) {
-  const cleaned = value?.trim().toUpperCase().replace(/[^A-Z0-9-]/g, "") ?? "";
-  return cleaned || "";
 }
 
 function buildLoginPath(returnTo: string, userCode: string) {
