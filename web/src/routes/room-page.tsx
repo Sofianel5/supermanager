@@ -1,41 +1,59 @@
-import {
-  startTransition,
-  useEffect,
-  useEffectEvent,
-  useRef,
-  useState,
-} from "react";
+import { type InfiniteData, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link, useParams } from "react-router-dom";
 import {
   api,
-  type RoomMetadataResponse,
+  type FeedResponse,
   type RoomSnapshot,
   type StoredHookEvent,
 } from "../api";
 import { CopyPanel } from "../components/copy-panel";
+import {
+  FEED_LIMIT,
+  roomFeedQueryKey,
+  roomSummaryQueryOptions,
+  useRoomData,
+} from "../queries/room";
 import { readMessage, useCopyHandler } from "../utils";
-
-const FEED_LIMIT = 10;
 
 type SummaryStatus = "idle" | "ready" | "generating" | "error";
 type ConnectionStatus = "connecting" | "live" | "reconnecting";
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
+  const queryClient = useQueryClient();
   const roomInfoDropdownRef = useRef<HTMLDetailsElement | null>(null);
-  const [room, setRoom] = useState<RoomMetadataResponse | null>(null);
-  const [events, setEvents] = useState<StoredHookEvent[]>([]);
-  const [snapshot, setSnapshot] = useState<RoomSnapshot>(() => emptyRoomSnapshot());
-  const [summaryStatus, setSummaryStatus] = useState<SummaryStatus>("idle");
+  const [streamedSummaryStatus, setStreamedSummaryStatus] =
+    useState<SummaryStatus>("idle");
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("connecting");
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const { copiedValue, copy } = useCopyHandler();
   const [clock, setClock] = useState(() => Date.now());
+  const { feedQuery, roomQuery, summaryQuery } = useRoomData(roomId);
+
+  const room = roomQuery.data ?? null;
+  const events = flattenFeedEvents(feedQuery.data?.pages);
+  const snapshot = summaryQuery.data ?? emptyRoomSnapshot();
+  const summaryStatus =
+    streamedSummaryStatus === "idle" && summaryQuery.data
+      ? "ready"
+      : streamedSummaryStatus;
+  const feedError =
+    feedQuery.isFetchNextPageError && feedQuery.error
+      ? readMessage(feedQuery.error)
+      : null;
+  const error =
+    !roomId
+      ? "Room not found."
+      : roomQuery.isError && !room
+        ? readMessage(roomQuery.error)
+        : feedQuery.isError && events.length === 0
+          ? readMessage(feedQuery.error)
+          : summaryQuery.isError && !summaryQuery.data
+            ? readMessage(summaryQuery.error)
+            : null;
 
   const canonicalRoomId = room?.room_id || roomId;
 
@@ -49,75 +67,30 @@ export function RoomPage() {
     };
   }, []);
 
-  const refreshSummary = useEffectEvent(async () => {
-    const nextSnapshot = await api.getSummary(roomId);
-    setSnapshot(nextSnapshot);
-    setSummaryStatus("ready");
-  });
-
-  const appendEvent = useEffectEvent((event: StoredHookEvent) => {
-    startTransition(() => {
-      setEvents((current) => [event, ...current]);
-    });
-  });
-
-  const handleSummaryStatus = useEffectEvent(async (status: string) => {
-    if (status === "generating") {
-      setSummaryStatus("generating");
-      return;
-    }
-    if (status === "error") {
-      setSummaryStatus("error");
-      return;
-    }
-    await refreshSummary();
-  });
-
   useEffect(() => {
     if (!roomId) {
-      setError("Room not found.");
       return;
     }
 
-    let cancelled = false;
+    let disposed = false;
     setConnectionStatus("connecting");
-    setError(null);
-
-    Promise.all([
-      api.getRoom(roomId),
-      api.getFeed(roomId, { limit: FEED_LIMIT }),
-      api.getSummary(roomId),
-    ])
-      .then(([nextRoom, feed, nextSnapshot]) => {
-        if (cancelled) {
-          return;
-        }
-
-        startTransition(() => {
-          setRoom(nextRoom);
-          setEvents(feed.events);
-          setHasMore(feed.events.length === FEED_LIMIT);
-          setSnapshot(nextSnapshot);
-          setSummaryStatus("ready");
-        });
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) {
-          setError(readMessage(loadError));
-        }
-      });
+    setStreamedSummaryStatus("idle");
 
     const stream = api.openRoomStream(roomId);
 
     stream.onopen = () => {
-      if (!cancelled) {
+      if (!disposed) {
         setConnectionStatus("live");
       }
     };
 
     stream.addEventListener("hook_event", (event) => {
       try {
-        appendEvent(JSON.parse(event.data) as StoredHookEvent);
+        const nextEvent = JSON.parse(event.data) as StoredHookEvent;
+        queryClient.setQueryData<InfiniteData<FeedResponse, number | undefined>>(
+          roomFeedQueryKey(roomId),
+          (current) => prependFeedEvent(current, nextEvent),
+        );
       } catch {
         // Ignore malformed events from the stream.
       }
@@ -126,23 +99,49 @@ export function RoomPage() {
     stream.addEventListener("summary_status", (event) => {
       try {
         const payload = JSON.parse(event.data) as { status?: string };
-        void handleSummaryStatus(payload.status || "ready");
+        const nextStatus = payload.status || "ready";
+
+        if (nextStatus === "generating") {
+          setStreamedSummaryStatus("generating");
+          return;
+        }
+
+        if (nextStatus === "error") {
+          setStreamedSummaryStatus("error");
+          return;
+        }
+
+        void queryClient
+          .fetchQuery({
+            ...roomSummaryQueryOptions(roomId),
+            staleTime: 0,
+          })
+          .then(() => {
+            if (!disposed) {
+              setStreamedSummaryStatus("ready");
+            }
+          })
+          .catch(() => {
+            if (!disposed) {
+              setStreamedSummaryStatus("error");
+            }
+          });
       } catch {
         // Ignore malformed summary status events.
       }
     });
 
     stream.onerror = () => {
-      if (!cancelled) {
+      if (!disposed) {
         setConnectionStatus("reconnecting");
       }
     };
 
     return () => {
-      cancelled = true;
+      disposed = true;
       stream.close();
     };
-  }, [roomId]);
+  }, [queryClient, roomId]);
 
   function closeRoomInfo() {
     const dropdown = roomInfoDropdownRef.current;
@@ -251,31 +250,16 @@ export function RoomPage() {
             )}
           </div>
 
-          {hasMore && (
+          {feedError && <p className="message message--error">{feedError}</p>}
+
+          {feedQuery.hasNextPage && (
             <button
               className="secondary-button"
               type="button"
-              disabled={loadingMore}
-              onClick={async () => {
-                const oldest = events[events.length - 1];
-                if (!oldest) {
-                  return;
-                }
-
-                setLoadingMore(true);
-                try {
-                  const page = await api.getFeed(roomId, {
-                    limit: FEED_LIMIT,
-                    before: oldest.seq,
-                  });
-                  setEvents((current) => [...current, ...page.events]);
-                  setHasMore(page.events.length === FEED_LIMIT);
-                } finally {
-                  setLoadingMore(false);
-                }
-              }}
+              disabled={feedQuery.isFetchingNextPage}
+              onClick={() => void feedQuery.fetchNextPage()}
             >
-              {loadingMore ? "Loading..." : `Show ${FEED_LIMIT} more`}
+              {feedQuery.isFetchingNextPage ? "Loading..." : `Show ${FEED_LIMIT} more`}
             </button>
           )}
         </div>
@@ -422,4 +406,50 @@ function formatRelativeTime(isoTimestamp: string, now: number) {
     return `${Math.floor(seconds / 3600)}h ago`;
   }
   return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function flattenFeedEvents(
+  pages: FeedResponse[] | undefined,
+): StoredHookEvent[] {
+  return pages?.flatMap((page) => page.events) ?? [];
+}
+
+function prependFeedEvent(
+  current: InfiniteData<FeedResponse, number | undefined> | undefined,
+  nextEvent: StoredHookEvent,
+) {
+  if (!current) {
+    return {
+      pageParams: [undefined],
+      pages: [{ events: [nextEvent] }],
+    };
+  }
+
+  if (
+    current.pages.some((page) =>
+      page.events.some((event) => event.event_id === nextEvent.event_id),
+    )
+  ) {
+    return current;
+  }
+
+  const [firstPage, ...restPages] = current.pages;
+
+  if (!firstPage) {
+    return {
+      ...current,
+      pages: [{ events: [nextEvent] }],
+    };
+  }
+
+  return {
+    ...current,
+    pages: [
+      {
+        ...firstPage,
+        events: [nextEvent, ...firstPage.events],
+      },
+      ...restPages,
+    ],
+  };
 }
