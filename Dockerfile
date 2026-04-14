@@ -42,6 +42,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM oven/bun:1.2.17-slim
 WORKDIR /app/server
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/*
 ENV SUPERMANAGER_SUMMARY_AGENT_BIN=/usr/local/bin/summary-agent
 COPY --from=server-build /app/server/.build/supermanager-server /usr/local/bin/supermanager-server
 COPY --from=server-build /app/server/migrations ./migrations
