@@ -101,9 +101,9 @@ export class Db {
         organization.slug AS organization_slug,
         member.role AS role
       FROM member
-      INNER JOIN organization ON organization.id = member.organization_id
-      WHERE member.user_id = ${userId}
-      ORDER BY organization.name ASC, organization.created_at ASC
+      INNER JOIN organization ON organization.id = member."organizationId"
+      WHERE member."userId" = ${userId}
+      ORDER BY organization.name ASC, organization."createdAt" ASC
     `;
 
     return rows.map(mapOrganizationMembership);
@@ -135,9 +135,9 @@ export class Db {
         organization.slug AS organization_slug,
         member.role AS role
       FROM member
-      INNER JOIN organization ON organization.id = member.organization_id
-      WHERE member.user_id = ${userId}
-        AND ${filterColumn === "slug" ? this.client`organization.slug = ${filterValue}` : this.client`member.organization_id = ${filterValue}`}
+      INNER JOIN organization ON organization.id = member."organizationId"
+      WHERE member."userId" = ${userId}
+        AND ${filterColumn === "slug" ? this.client`organization.slug = ${filterValue}` : this.client`member."organizationId" = ${filterValue}`}
     `;
 
     return row ? mapOrganizationMembership(row) : null;
@@ -203,7 +203,7 @@ export class Db {
         rooms.created_by_user_id
       FROM rooms
       INNER JOIN organization ON organization.id = rooms.organization_id
-      INNER JOIN member ON member.organization_id = rooms.organization_id AND member.user_id = ${userId}
+      INNER JOIN member ON member."organizationId" = rooms.organization_id AND member."userId" = ${userId}
       WHERE rooms.room_id = ${normalizeRoomId(roomId)}
     `;
 

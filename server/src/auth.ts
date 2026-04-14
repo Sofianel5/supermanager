@@ -78,7 +78,6 @@ function createAuth(config: ServerConfig, db: Kysely<Record<string, never>>) {
     database: {
       db,
       type: "postgres",
-      casing: "snake",
     },
     socialProviders: {
       google: {
