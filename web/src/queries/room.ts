@@ -1,5 +1,5 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { api } from "../api";
+import { type InfiniteData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { api, type FeedResponse } from "../api";
 
 export const FEED_LIMIT = 10;
 
@@ -18,9 +18,15 @@ export function useRoomData(roomId: string) {
     staleTime: ROOM_STALE_TIME_MS,
   });
 
-  const feedQuery = useInfiniteQuery({
+  const feedQuery = useInfiniteQuery<
+    FeedResponse,
+    Error,
+    InfiniteData<FeedResponse, number | undefined>,
+    ReturnType<typeof roomFeedQueryKey>,
+    number | undefined
+  >({
     enabled: Boolean(roomId),
-    getNextPageParam(lastPage) {
+    getNextPageParam(lastPage: FeedResponse) {
       if (lastPage.events.length < FEED_LIMIT) {
         return undefined;
       }
