@@ -1,14 +1,17 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api, type RoomListEntry, type ViewerOrganization, type ViewerResponse } from "../api";
 import { authClient } from "../auth-client";
-import { CopyPanel } from "../components/copy-panel";
+import { CliPanel } from "../components/app-page/cli-panel";
+import { DeviceApprovalDialog } from "../components/app-page/device-approval-dialog";
+import { WorkspaceHeader } from "../components/app-page/workspace-header";
+import { WorkspacePanel } from "../components/app-page/workspace-panel";
 import { readAuthError, readMessage, useCopyHandler } from "../utils";
 
-const INSTALL_COMMAND = "curl -fsSL https://supermanager.dev/install.sh | sh";
-const LOGIN_COMMAND = "supermanager login";
+type DeviceStatus = "approved" | "denied" | "pending" | null;
 
 export function AppPage() {
+  const location = useLocation();
   const navigate = useNavigate();
   const [viewer, setViewer] = useState<ViewerResponse | null>(null);
   const [rooms, setRooms] = useState<RoomListEntry[]>([]);
@@ -19,15 +22,58 @@ export function AppPage() {
   const [organizationSlug, setOrganizationSlug] = useState("");
   const [roomName, setRoomName] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [deviceStatus, setDeviceStatus] = useState<DeviceStatus>(null);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [pendingDeviceAction, setPendingDeviceAction] = useState<"approve" | "deny" | null>(null);
 
   const activeOrganization = useMemo(
     () => pickActiveOrganization(viewer),
     [viewer],
   );
+  const userCode = useMemo(() => {
+    const value = new URLSearchParams(location.search).get("user_code");
+    return normalizeUserCode(value);
+  }, [location.search]);
 
   useEffect(() => {
     void loadWorkspace();
   }, []);
+
+  useEffect(() => {
+    if (!userCode) {
+      setDeviceStatus(null);
+      setDeviceError(null);
+      setPendingDeviceAction(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadDeviceStatus() {
+      const result = await authClient.device({
+        query: { user_code: userCode },
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (result.error) {
+        setDeviceStatus(null);
+        setDeviceError(readAuthError(result.error));
+        return;
+      }
+
+      setDeviceError(null);
+      setDeviceStatus(parseDeviceStatus(result.data.status));
+    }
+
+    void loadDeviceStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userCode]);
 
   async function loadWorkspace(preferredOrganizationSlug?: string) {
     setIsLoading(true);
@@ -142,200 +188,85 @@ export function AppPage() {
     }
   }
 
+  async function handleDeviceAction(action: "approve" | "deny") {
+    if (!userCode) {
+      return;
+    }
+
+    setPendingDeviceAction(action);
+    setDeviceError(null);
+
+    const result =
+      action === "approve"
+        ? await authClient.device.approve({ userCode })
+        : await authClient.device.deny({ userCode });
+
+    setPendingDeviceAction(null);
+
+    if (result.error) {
+      setDeviceError(readAuthError(result.error));
+      return;
+    }
+
+    setDeviceStatus(action === "approve" ? "approved" : "denied");
+  }
+
+  function closeDeviceDialog() {
+    const params = new URLSearchParams(location.search);
+    params.delete("user_code");
+    const query = params.toString();
+    navigate(query ? `/app?${query}` : "/app", { replace: true });
+  }
+
   return (
-    <main className="landing-page">
-      <section className="room-header">
-        <div>
-          <div className="section-label">Workspace</div>
-          <h1>
-            {activeOrganization?.organization_name || "Set up your organization"}
-          </h1>
-          <p className="hero-text">
-            Authenticate once, pick the active organization, and keep room creation
-            and repo joins in the CLI.
-          </p>
-          {viewer && (
-            <p className="room-meta">
-              <span>{viewer.user.email}</span>
-              {activeOrganization && <span>{activeOrganization.organization_slug}</span>}
-            </p>
-          )}
-        </div>
+    <>
+      <main className="landing-page">
+        <WorkspaceHeader
+          activeOrganizationName={activeOrganization?.organization_name ?? null}
+          activeOrganizationSlug={activeOrganization?.organization_slug ?? null}
+          isSigningOut={pendingAction === "sign-out"}
+          userEmail={viewer?.user.email ?? null}
+          onSignOut={() => void handleSignOut()}
+        />
 
-        <div className="room-header__actions app-toolbar">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={pendingAction === "sign-out"}
-            onClick={() => void handleSignOut()}
-          >
-            {pendingAction === "sign-out" ? "Signing out..." : "Sign out"}
-          </button>
-        </div>
-      </section>
-
-      <section className="landing-body">
-        <div className="landing-column">
-          <div className="section-label">
-            {activeOrganization ? "Organization" : "Onboarding"}
-          </div>
-
-          {error && <p className="message message--error">{error}</p>}
-
-          {isLoading ? (
-            <p className="message">Loading workspace...</p>
-          ) : !viewer ? (
-            <p className="message message--error">Failed to load your workspace.</p>
-          ) : !activeOrganization ? (
-            <form className="room-form room-form--gate" onSubmit={handleCreateOrganization}>
-              <label htmlFor="organization-name">Organization name</label>
-              <input
-                id="organization-name"
-                value={organizationName}
-                onChange={(event) => setOrganizationName(event.target.value)}
-                placeholder="Acme"
-                autoComplete="organization"
-              />
-
-              <label htmlFor="organization-slug">Organization slug</label>
-              <input
-                id="organization-slug"
-                value={organizationSlug}
-                onChange={(event) => setOrganizationSlug(event.target.value)}
-                placeholder={slugify(organizationName) || "acme"}
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-              />
-
-              <button
-                type="submit"
-                disabled={pendingAction === "create-organization"}
-              >
-                {pendingAction === "create-organization"
-                  ? "Creating..."
-                  : "Create organization"}
-              </button>
-            </form>
-          ) : (
-            <div className="app-stack">
-              {viewer.organizations.length > 1 && (
-                <label className="app-select" htmlFor="active-organization">
-                  <span className="copy-label">Active organization</span>
-                  <select
-                    id="active-organization"
-                    value={activeOrganization.organization_id}
-                    disabled={pendingAction?.startsWith("switch:")}
-                    onChange={(event) => {
-                      const nextOrganization = viewer.organizations.find(
-                        (organization) =>
-                          organization.organization_id === event.target.value,
-                      );
-                      if (nextOrganization) {
-                        void handleOrganizationSwitch(nextOrganization);
-                      }
-                    }}
-                  >
-                    {viewer.organizations.map((organization) => (
-                      <option
-                        key={organization.organization_id}
-                        value={organization.organization_id}
-                      >
-                        {organization.organization_name} ({organization.organization_slug})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              <form className="room-form room-form--gate" onSubmit={handleCreateRoom}>
-                <label htmlFor="room-name">Room name</label>
-                <input
-                  id="room-name"
-                  value={roomName}
-                  onChange={(event) => setRoomName(event.target.value)}
-                  placeholder="Frontend"
-                />
-
-                <button type="submit" disabled={pendingAction === "create-room"}>
-                  {pendingAction === "create-room" ? "Creating..." : "Create room"}
-                </button>
-              </form>
-
-              <div className="room-section__head room-section__head--compact">
-                <span className="section-label">Rooms</span>
-                <span className="section-count">
-                  {rooms.length} room{rooms.length === 1 ? "" : "s"}
-                </span>
-              </div>
-
-              {rooms.length > 0 ? (
-                <div className="app-room-list">
-                  {rooms.map((room) => (
-                    <Link
-                      className="app-room-card"
-                      key={room.room_id}
-                      to={`/r/${room.room_id}`}
-                    >
-                      <div className="app-room-card__head">
-                        <strong>{room.name}</strong>
-                        <span>{room.room_id}</span>
-                      </div>
-                      <p className="app-room-card__meta">
-                        <span>{room.organization_slug}</span>
-                        <span>{formatDate(room.created_at)}</span>
-                      </p>
-                    </Link>
-                  ))}
-                </div>
-              ) : (
-                <p className="message">
-                  No rooms yet. Create the first room here, then join repos from the CLI.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="landing-column landing-column--form">
-          <div className="section-label">CLI</div>
-          <p className="message">
-            Keep setup human-first in the browser, then do the repo work from the
-            terminal.
-          </p>
-
-          <CopyPanel
-            copiedValue={copiedValue}
-            label="Install CLI"
-            onCopy={copy}
-            value={INSTALL_COMMAND}
+        <section className="landing-body">
+          <WorkspacePanel
+            activeOrganization={activeOrganization}
+            error={error}
+            isLoading={isLoading}
+            organizationName={organizationName}
+            organizationSlug={organizationSlug}
+            pendingAction={pendingAction}
+            roomName={roomName}
+            rooms={rooms}
+            viewer={viewer}
+            onCreateOrganization={(event) => void handleCreateOrganization(event)}
+            onCreateRoom={(event) => void handleCreateRoom(event)}
+            onOrganizationNameChange={setOrganizationName}
+            onOrganizationSlugChange={setOrganizationSlug}
+            onOrganizationSwitch={(organization) => void handleOrganizationSwitch(organization)}
+            onRoomNameChange={setRoomName}
           />
-          <CopyPanel
+          <CliPanel
+            activeOrganization={activeOrganization}
             copiedValue={copiedValue}
-            label="Login"
             onCopy={copy}
-            value={LOGIN_COMMAND}
           />
+        </section>
+      </main>
 
-          {activeOrganization && (
-            <>
-              <CopyPanel
-                copiedValue={copiedValue}
-                label="Create room"
-                onCopy={copy}
-                value={`supermanager create room --org "${activeOrganization.organization_slug}"`}
-              />
-              <CopyPanel
-                copiedValue={copiedValue}
-                label="Join repo"
-                onCopy={copy}
-                value={`supermanager join ROOM_ID --org "${activeOrganization.organization_slug}"`}
-              />
-            </>
-          )}
-        </div>
-      </section>
-    </main>
+      {userCode && (
+        <DeviceApprovalDialog
+          error={deviceError}
+          pendingAction={pendingDeviceAction}
+          status={deviceStatus}
+          userCode={userCode}
+          onApprove={() => void handleDeviceAction("approve")}
+          onClose={closeDeviceDialog}
+          onDeny={() => void handleDeviceAction("deny")}
+        />
+      )}
+    </>
   );
 }
 
@@ -352,25 +283,14 @@ function pickActiveOrganization(viewer: ViewerResponse | null) {
   );
 }
 
-function slugify(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+function normalizeUserCode(value: string | null | undefined) {
+  const cleaned = value?.trim().toUpperCase().replace(/[^A-Z0-9-]/g, "") ?? "";
+  return cleaned || "";
 }
 
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-function formatDate(value: string) {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
+function parseDeviceStatus(value: string): DeviceStatus {
+  if (value === "approved" || value === "denied" || value === "pending") {
     return value;
   }
-
-  return dateFormatter.format(timestamp);
+  return null;
 }
-

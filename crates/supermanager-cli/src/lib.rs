@@ -146,8 +146,7 @@ struct ConnectionResponse {
 struct DeviceCodeResponse {
     device_code: String,
     user_code: String,
-    verification_uri: String,
-    verification_uri_complete: Option<String>,
+    verification_uri_complete: String,
     interval: Option<u64>,
 }
 
@@ -172,10 +171,7 @@ pub fn login(config: LoginConfig) -> Result<LoginOutcome> {
     let server_url = normalize_url(&config.server_url);
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let device = request_device_code(&http, &server_url)?;
-    let verification_url = device
-        .verification_uri_complete
-        .clone()
-        .unwrap_or_else(|| device.verification_uri.clone());
+    let verification_url = device.verification_uri_complete.clone();
     let polling_interval = device.interval.unwrap_or(5).max(1);
 
     let _ = open_url(&verification_url);
