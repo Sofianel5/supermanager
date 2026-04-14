@@ -7,7 +7,6 @@ interface WorkspacePanelProps {
   error: string | null;
   isLoading: boolean;
   organizationName: string;
-  organizationSlug: string;
   pendingAction: string | null;
   roomName: string;
   rooms: RoomListEntry[];
@@ -15,7 +14,6 @@ interface WorkspacePanelProps {
   onCreateOrganization(event: FormEvent<HTMLFormElement>): void;
   onCreateRoom(event: FormEvent<HTMLFormElement>): void;
   onOrganizationNameChange(value: string): void;
-  onOrganizationSlugChange(value: string): void;
   onOrganizationSwitch(organization: ViewerOrganization): void;
   onRoomNameChange(value: string): void;
 }
@@ -25,7 +23,6 @@ export function WorkspacePanel({
   error,
   isLoading,
   organizationName,
-  organizationSlug,
   pendingAction,
   roomName,
   rooms,
@@ -33,7 +30,6 @@ export function WorkspacePanel({
   onCreateOrganization,
   onCreateRoom,
   onOrganizationNameChange,
-  onOrganizationSlugChange,
   onOrganizationSwitch,
   onRoomNameChange,
 }: WorkspacePanelProps) {
@@ -58,17 +54,6 @@ export function WorkspacePanel({
             onChange={(event) => onOrganizationNameChange(event.target.value)}
             placeholder="Acme"
             autoComplete="organization"
-          />
-
-          <label htmlFor="organization-slug">Organization slug</label>
-          <input
-            id="organization-slug"
-            value={organizationSlug}
-            onChange={(event) => onOrganizationSlugChange(event.target.value)}
-            placeholder={slugify(organizationName) || "acme"}
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
           />
 
           <button
@@ -160,14 +145,6 @@ export function WorkspacePanel({
       )}
     </div>
   );
-}
-
-function slugify(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {

@@ -1,115 +1,58 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { api, type RoomListEntry, type ViewerOrganization, type ViewerResponse } from "../api";
+import { api, type ViewerOrganization } from "../api";
 import { authClient } from "../auth-client";
 import { CliPanel } from "../components/app-page/cli-panel";
 import { DeviceApprovalDialog } from "../components/app-page/device-approval-dialog";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
+import { deviceStatusQueryKey, useDeviceStatus } from "../queries/device-status";
+import {
+  roomListQueryRootKey,
+  useWorkspaceData,
+  workspaceQueryKey,
+} from "../queries/workspace";
 import { readAuthError, readMessage, useCopyHandler } from "../utils";
-
-type DeviceStatus = "approved" | "denied" | "pending" | null;
 
 export function AppPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [viewer, setViewer] = useState<ViewerResponse | null>(null);
-  const [rooms, setRooms] = useState<RoomListEntry[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
   const { copiedValue, copy } = useCopyHandler();
+  const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
+  const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
   const [organizationName, setOrganizationName] = useState("");
-  const [organizationSlug, setOrganizationSlug] = useState("");
   const [roomName, setRoomName] = useState("");
+  const [preferredOrganizationSlug, setPreferredOrganizationSlug] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [deviceStatus, setDeviceStatus] = useState<DeviceStatus>(null);
-  const [deviceError, setDeviceError] = useState<string | null>(null);
   const [pendingDeviceAction, setPendingDeviceAction] = useState<"approve" | "deny" | null>(null);
 
-  const activeOrganization = useMemo(
-    () => pickActiveOrganization(viewer),
-    [viewer],
+  const userCode = normalizeUserCode(
+    new URLSearchParams(location.search).get("user_code"),
   );
-  const userCode = useMemo(() => {
-    const value = new URLSearchParams(location.search).get("user_code");
-    return normalizeUserCode(value);
-  }, [location.search]);
+  const { activeOrganization, rooms, roomsQuery, viewerQuery } =
+    useWorkspaceData(preferredOrganizationSlug);
+  const deviceStatusQuery = useDeviceStatus(userCode);
 
-  useEffect(() => {
-    void loadWorkspace();
-  }, []);
-
-  useEffect(() => {
-    if (!userCode) {
-      setDeviceStatus(null);
-      setDeviceError(null);
-      setPendingDeviceAction(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadDeviceStatus() {
-      const result = await authClient.device({
-        query: { user_code: userCode },
-      });
-
-      if (cancelled) {
-        return;
-      }
-
-      if (result.error) {
-        setDeviceStatus(null);
-        setDeviceError(readAuthError(result.error));
-        return;
-      }
-
-      setDeviceError(null);
-      setDeviceStatus(parseDeviceStatus(result.data.status));
-    }
-
-    void loadDeviceStatus();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [userCode]);
-
-  async function loadWorkspace(preferredOrganizationSlug?: string) {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const nextViewer = await api.getMe();
-      setViewer(nextViewer);
-      const nextActiveOrganization = preferredOrganizationSlug
-        ? nextViewer.organizations.find(
-            (organization) =>
-              organization.organization_slug === preferredOrganizationSlug,
-          ) ?? pickActiveOrganization(nextViewer)
-        : pickActiveOrganization(nextViewer);
-
-      if (!nextActiveOrganization) {
-        setRooms([]);
-        return;
-      }
-
-      const nextRooms = await api.listRooms(nextActiveOrganization.organization_slug);
-      setRooms(nextRooms.rooms);
-    } catch (loadError: unknown) {
-      setError(readMessage(loadError));
-    } finally {
-      setIsLoading(false);
-      setPendingAction(null);
-    }
-  }
+  const viewer = viewerQuery.data ?? null;
+  const isLoading = viewerQuery.isPending || roomsQuery.isPending;
+  const workspaceError =
+    workspaceActionError ||
+    readQueryError(viewerQuery.error) ||
+    readQueryError(roomsQuery.error);
+  const deviceError =
+    deviceActionError || readQueryError(deviceStatusQuery.error);
 
   async function handleSignOut() {
     setPendingAction("sign-out");
+    setWorkspaceActionError(null);
+
     const result = await authClient.signOut();
+
     setPendingAction(null);
     if (result.error) {
-      setError(readAuthError(result.error));
+      setWorkspaceActionError(readAuthError(result.error));
       return;
     }
 
@@ -118,31 +61,35 @@ export function AppPage() {
 
   async function handleOrganizationSwitch(organization: ViewerOrganization) {
     setPendingAction(`switch:${organization.organization_id}`);
+    setWorkspaceActionError(null);
+    setPreferredOrganizationSlug(organization.organization_slug);
+
     const result = await authClient.organization.setActive({
       organizationId: organization.organization_id,
     });
 
     if (result.error) {
       setPendingAction(null);
-      setError(readAuthError(result.error));
+      setWorkspaceActionError(readAuthError(result.error));
       return;
     }
 
-    await loadWorkspace(organization.organization_slug);
+    await refreshWorkspace();
   }
 
   async function handleCreateOrganization(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const name = organizationName.trim();
-    const slug = slugify(organizationSlug || organizationName);
-    if (!name || !slug) {
-      setError("Organization name and slug are required.");
+    if (!name) {
+      setWorkspaceActionError("Organization name is required.");
       return;
     }
+    const slug = generateOrganizationSlug(name);
 
     setPendingAction("create-organization");
-    setError(null);
+    setWorkspaceActionError(null);
+    setPreferredOrganizationSlug(slug);
 
     const result = await authClient.organization.create({
       name,
@@ -151,13 +98,12 @@ export function AppPage() {
 
     if (result.error) {
       setPendingAction(null);
-      setError(readAuthError(result.error));
+      setWorkspaceActionError(readAuthError(result.error));
       return;
     }
 
     setOrganizationName("");
-    setOrganizationSlug("");
-    await loadWorkspace(slug);
+    await refreshWorkspace();
   }
 
   async function handleCreateRoom(event: FormEvent<HTMLFormElement>) {
@@ -165,16 +111,16 @@ export function AppPage() {
 
     const name = roomName.trim();
     if (!name) {
-      setError("Room name is required.");
+      setWorkspaceActionError("Room name is required.");
       return;
     }
     if (!activeOrganization) {
-      setError("Create or select an organization first.");
+      setWorkspaceActionError("Create or select an organization first.");
       return;
     }
 
     setPendingAction("create-room");
-    setError(null);
+    setWorkspaceActionError(null);
 
     try {
       const created = await api.createRoom({
@@ -184,7 +130,7 @@ export function AppPage() {
       navigate(`/r/${created.room_id}`);
     } catch (createError: unknown) {
       setPendingAction(null);
-      setError(readMessage(createError));
+      setWorkspaceActionError(readMessage(createError));
     }
   }
 
@@ -194,7 +140,7 @@ export function AppPage() {
     }
 
     setPendingDeviceAction(action);
-    setDeviceError(null);
+    setDeviceActionError(null);
 
     const result =
       action === "approve"
@@ -204,11 +150,14 @@ export function AppPage() {
     setPendingDeviceAction(null);
 
     if (result.error) {
-      setDeviceError(readAuthError(result.error));
+      setDeviceActionError(readAuthError(result.error));
       return;
     }
 
-    setDeviceStatus(action === "approve" ? "approved" : "denied");
+    queryClient.setQueryData(
+      deviceStatusQueryKey(userCode),
+      action === "approve" ? "approved" : "denied",
+    );
   }
 
   function closeDeviceDialog() {
@@ -216,6 +165,12 @@ export function AppPage() {
     params.delete("user_code");
     const query = params.toString();
     navigate(query ? `/app?${query}` : "/app", { replace: true });
+  }
+
+  async function refreshWorkspace() {
+    await queryClient.invalidateQueries({ queryKey: workspaceQueryKey() });
+    await queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() });
+    setPendingAction(null);
   }
 
   return (
@@ -232,10 +187,9 @@ export function AppPage() {
         <section className="landing-body">
           <WorkspacePanel
             activeOrganization={activeOrganization}
-            error={error}
+            error={workspaceError}
             isLoading={isLoading}
             organizationName={organizationName}
-            organizationSlug={organizationSlug}
             pendingAction={pendingAction}
             roomName={roomName}
             rooms={rooms}
@@ -243,7 +197,6 @@ export function AppPage() {
             onCreateOrganization={(event) => void handleCreateOrganization(event)}
             onCreateRoom={(event) => void handleCreateRoom(event)}
             onOrganizationNameChange={setOrganizationName}
-            onOrganizationSlugChange={setOrganizationSlug}
             onOrganizationSwitch={(organization) => void handleOrganizationSwitch(organization)}
             onRoomNameChange={setRoomName}
           />
@@ -259,7 +212,7 @@ export function AppPage() {
         <DeviceApprovalDialog
           error={deviceError}
           pendingAction={pendingDeviceAction}
-          status={deviceStatus}
+          status={deviceStatusQuery.data ?? null}
           userCode={userCode}
           onApprove={() => void handleDeviceAction("approve")}
           onClose={closeDeviceDialog}
@@ -270,27 +223,25 @@ export function AppPage() {
   );
 }
 
-function pickActiveOrganization(viewer: ViewerResponse | null) {
-  if (!viewer) {
-    return null;
-  }
-
-  return (
-    viewer.organizations.find(
-      (organization) =>
-        organization.organization_id === viewer.active_organization_id,
-    ) ?? viewer.organizations[0] ?? null
-  );
-}
-
 function normalizeUserCode(value: string | null | undefined) {
   const cleaned = value?.trim().toUpperCase().replace(/[^A-Z0-9-]/g, "") ?? "";
   return cleaned || "";
 }
 
-function parseDeviceStatus(value: string): DeviceStatus {
-  if (value === "approved" || value === "denied" || value === "pending") {
-    return value;
-  }
-  return null;
+function readQueryError(error: unknown) {
+  return error instanceof Error ? error.message : null;
+}
+
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function generateOrganizationSlug(name: string) {
+  const base = slugify(name) || "team";
+  const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+  return `${base}-${suffix}`;
 }
