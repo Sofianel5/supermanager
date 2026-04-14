@@ -4,9 +4,9 @@ interface MigrationRow {
   filename: string;
 }
 
-export async function runMigrations(client: Bun.SQL, migrationsDir: string): Promise<void> {
+export async function runAppMigrations(client: Bun.SQL, migrationsDir: string): Promise<void> {
   await client`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
+    CREATE TABLE IF NOT EXISTS app_migrations (
       filename TEXT PRIMARY KEY,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -19,7 +19,7 @@ export async function runMigrations(client: Bun.SQL, migrationsDir: string): Pro
   for (const filename of files) {
     const alreadyApplied = await client<MigrationRow[]>`
       SELECT filename
-      FROM schema_migrations
+      FROM app_migrations
       WHERE filename = ${filename}
     `;
     if (alreadyApplied.length > 0) {
@@ -30,7 +30,7 @@ export async function runMigrations(client: Bun.SQL, migrationsDir: string): Pro
     await client.begin(async (tx) => {
       await tx.unsafe(migrationSql).simple();
       await tx`
-        INSERT INTO schema_migrations (filename)
+        INSERT INTO app_migrations (filename)
         VALUES (${filename})
       `;
     });

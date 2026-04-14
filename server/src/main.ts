@@ -4,7 +4,7 @@ import { createApp } from "./app";
 import { createAuthServices } from "./auth";
 import { loadConfig, trimUrl } from "./config";
 import { Db } from "./db";
-import { runMigrations } from "./migrations";
+import { runAppMigrations } from "./migrations";
 import { FeedStreamHub } from "./sse";
 import { StoragePaths } from "./storage";
 import { SummaryAgentHost } from "./summary/agent-host";
@@ -14,7 +14,8 @@ async function main(): Promise<void> {
   const config = await loadConfig(Bun.argv.slice(2), cwd);
   const db = await Db.connect(config.databaseUrl);
   const auth = createAuthServices(config);
-  await runMigrations(db.client, path.join(cwd, "migrations"));
+  await auth.runMigrations();
+  await runAppMigrations(db.client, path.join(cwd, "migrations"));
 
   const storage = new StoragePaths(config.dataDir);
   await storage.initialize();

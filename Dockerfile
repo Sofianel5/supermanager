@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       pkg-config libssl-dev libcap-dev curl ca-certificates python3 build-essential \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+RUN curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o /rds-global-bundle.pem
 
 COPY Cargo.toml Cargo.lock ./
 COPY vendor/codex/codex-rs ./vendor/codex/codex-rs
@@ -48,6 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV SUPERMANAGER_SUMMARY_AGENT_BIN=/usr/local/bin/summary-agent
 COPY --from=server-build /app/server/.build/supermanager-server /usr/local/bin/supermanager-server
 COPY --from=server-build /app/server/migrations ./migrations
+COPY --from=rust-builder /rds-global-bundle.pem /etc/ssl/certs/rds-global-bundle.pem
 COPY --from=rust-builder /summary-agent /usr/local/bin/summary-agent
 EXPOSE 8787
 CMD ["/usr/local/bin/supermanager-server", "--bind", "0.0.0.0:8787"]

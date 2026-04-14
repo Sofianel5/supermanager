@@ -1,17 +1,19 @@
-CREATE TABLE IF NOT EXISTS rooms (
+CREATE TABLE rooms (
     room_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
+    organization_id TEXT NOT NULL REFERENCES organization(id),
+    created_by_user_id TEXT NOT NULL REFERENCES "user"(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS summaries (
+CREATE TABLE summaries (
     room_id TEXT PRIMARY KEY REFERENCES rooms(room_id) ON DELETE CASCADE,
     content_json JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready', 'generating', 'error')),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS hook_events (
+CREATE TABLE hook_events (
     seq BIGSERIAL PRIMARY KEY,
     event_id UUID NOT NULL UNIQUE,
     room_id TEXT NOT NULL REFERENCES rooms(room_id) ON DELETE CASCADE,
@@ -23,5 +25,8 @@ CREATE TABLE IF NOT EXISTS hook_events (
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_hook_events_room_seq
+CREATE INDEX idx_rooms_organization_id
+    ON rooms (organization_id);
+
+CREATE INDEX idx_hook_events_room_seq
     ON hook_events (room_id, seq DESC);
