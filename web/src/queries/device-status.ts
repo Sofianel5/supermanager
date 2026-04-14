@@ -27,6 +27,11 @@ export function deviceStatusQueryKey(userCode: string) {
   return ["device-status", userCode] as const;
 }
 
+export function normalizeUserCode(value: string | null | undefined) {
+  const cleaned = value?.trim().toUpperCase().replace(/[^A-Z0-9-]/g, "") ?? "";
+  return cleaned || "";
+}
+
 function parseDeviceStatus(value: string): DeviceStatus {
   if (value === "approved" || value === "denied" || value === "pending") {
     return value;
