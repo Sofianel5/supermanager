@@ -96,7 +96,7 @@ function createAuth(config: ServerConfig, db: Kysely<Record<string, never>>) {
       bearer(),
       deviceAuthorization({
         validateClient: async (clientId) => clientId === CLI_DEVICE_CLIENT_ID,
-        verificationUri: `${appUrl}/device`,
+        verificationUri: `${appUrl}/login`,
       }),
       apiKey([
         {
