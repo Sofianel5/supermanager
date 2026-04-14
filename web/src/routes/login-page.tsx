@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { authClient, sanitizeReturnTo, toAbsoluteCallbackUrl } from "../auth-client";
 import { readAuthError } from "../utils";
@@ -10,36 +10,14 @@ export function LoginPage() {
   const session = authClient.useSession();
   const [error, setError] = useState<string | null>(null);
 
-  const searchParams = useMemo(
-    () => new URLSearchParams(location.search),
-    [location.search],
-  );
-  const userCode = useMemo(
-    () => normalizeUserCode(searchParams.get("user_code")),
-    [searchParams],
-  );
-  const returnTo = useMemo(() => {
-    const value = sanitizeReturnTo(searchParams.get("returnTo"));
-    return value === "/login" ? "/app" : value;
-  }, [searchParams]);
-  const loginPath = useMemo(() => {
-    const params = new URLSearchParams();
-    if (userCode) {
-      params.set("user_code", userCode);
-    }
-    if (returnTo !== "/app") {
-      params.set("returnTo", returnTo);
-    }
-    const query = params.toString();
-    return query ? `/login?${query}` : "/login";
-  }, [returnTo, userCode]);
-  const callbackPath = useMemo(() => {
-    if (!userCode) {
-      return returnTo;
-    }
-    const params = new URLSearchParams({ user_code: userCode });
-    return `/app?${params.toString()}`;
-  }, [returnTo, userCode]);
+  const searchParams = new URLSearchParams(location.search);
+  const userCode = normalizeUserCode(searchParams.get("user_code"));
+  const sanitizedReturnTo = sanitizeReturnTo(searchParams.get("returnTo"));
+  const returnTo = sanitizedReturnTo === "/login" ? "/app" : sanitizedReturnTo;
+  const loginPath = buildLoginPath(returnTo, userCode);
+  const callbackPath = userCode
+    ? `/app?${new URLSearchParams({ user_code: userCode }).toString()}`
+    : returnTo;
 
   async function signIn(provider: SocialProvider) {
     setError(null);
@@ -109,4 +87,16 @@ export function LoginPage() {
 function normalizeUserCode(value: string | null | undefined) {
   const cleaned = value?.trim().toUpperCase().replace(/[^A-Z0-9-]/g, "") ?? "";
   return cleaned || "";
+}
+
+function buildLoginPath(returnTo: string, userCode: string) {
+  const params = new URLSearchParams();
+  if (userCode) {
+    params.set("user_code", userCode);
+  }
+  if (returnTo !== "/app") {
+    params.set("returnTo", returnTo);
+  }
+  const query = params.toString();
+  return query ? `/login?${query}` : "/login";
 }
