@@ -9,7 +9,6 @@ export function LandingPage() {
   const location = useLocation();
   const session = authClient.useSession();
   const { copiedValue, copy } = useCopyHandler();
-  const [pendingProvider, setPendingProvider] = useState<SocialProvider | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const returnTo = useMemo(
@@ -19,7 +18,6 @@ export function LandingPage() {
   );
 
   async function signIn(provider: SocialProvider) {
-    setPendingProvider(provider);
     setAuthError(null);
 
     const result = await authClient.signIn.social({
@@ -31,7 +29,6 @@ export function LandingPage() {
     });
 
     if (result.error) {
-      setPendingProvider(null);
       setAuthError(readAuthError(result.error));
     }
   }
@@ -96,22 +93,16 @@ export function LandingPage() {
                 <button
                   className="secondary-button auth-button"
                   type="button"
-                  disabled={pendingProvider !== null}
                   onClick={() => void signIn("google")}
                 >
-                  {pendingProvider === "google"
-                    ? "Redirecting..."
-                    : "Continue with Google"}
+                  Continue with Google
                 </button>
                 <button
                   className="secondary-button auth-button"
                   type="button"
-                  disabled={pendingProvider !== null}
                   onClick={() => void signIn("github")}
                 >
-                  {pendingProvider === "github"
-                    ? "Redirecting..."
-                    : "Continue with GitHub"}
+                  Continue with GitHub
                 </button>
               </div>
               {authError && <p className="message message--error">{authError}</p>}
@@ -134,4 +125,3 @@ export function LandingPage() {
     </main>
   );
 }
-
