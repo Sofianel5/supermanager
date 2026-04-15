@@ -1,4 +1,7 @@
-use std::io::{self, IsTerminal, Write};
+use std::{
+    io::{self, IsTerminal, Write},
+    path::Path,
+};
 
 use anyhow::{Context, Result, anyhow, bail};
 use crossterm::{
@@ -7,17 +10,18 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use reqwest::blocking::Client;
 
 use crate::{
     auth::{
         auth_state_path, create_organization, get_viewer, require_auth_state,
-        set_active_organization, write_auth_state,
+        set_active_organization, viewer_active_org_slug, write_auth_state,
     },
     support::{API_TIMEOUT_SECONDS, build_http_client, normalize_url},
     types::{
-        ConfigureOrganizationsConfig, ConfigureOrganizationsOutcome, CreateOrganizationConfig,
-        CreateOrganizationOutcome, ListOrganizationEntry, ListOrganizationsConfig,
-        ListOrganizationsOutcome, ViewerOrganization,
+        AuthState, ConfigureOrganizationsConfig, ConfigureOrganizationsOutcome,
+        CreateOrganizationConfig, CreateOrganizationOutcome, ListOrganizationEntry,
+        ListOrganizationsConfig, ListOrganizationsOutcome, ViewerOrganization,
     },
 };
 
@@ -68,7 +72,7 @@ pub fn list_organizations(config: ListOrganizationsConfig) -> Result<ListOrganiz
     let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
 
     Ok(ListOrganizationsOutcome {
-        active_org_slug: auth_state.active_org_slug,
+        active_org_slug: viewer_active_org_slug(&viewer).map(ToOwned::to_owned),
         organizations: viewer
             .organizations
             .into_iter()
@@ -106,11 +110,9 @@ pub fn configure_organizations_interactive(
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
     let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
+    let active_org_slug = viewer_active_org_slug(&viewer);
 
-    match prompt_for_organization_choice(
-        &viewer.organizations,
-        auth_state.active_org_slug.as_deref(),
-    )? {
+    match prompt_for_organization_choice(&viewer.organizations, active_org_slug)? {
         OrganizationMenuChoice::Existing(index) => {
             let organization = viewer
                 .organizations
@@ -150,13 +152,12 @@ pub fn configure_organizations_interactive(
 }
 
 fn create_and_activate_organization(
-    http: &reqwest::blocking::Client,
+    http: &Client,
     server_url: &str,
-    auth_state: &mut crate::types::AuthState,
-    home_dir: &std::path::Path,
+    auth_state: &mut AuthState,
+    home_dir: &Path,
 ) -> Result<(String, String)> {
-    let name = prompt_for_organization_name()?;
-    let slug = slugify_organization_name(&name);
+    let (name, slug) = prompt_for_organization_name()?;
 
     create_organization(http, server_url, &auth_state.access_token, &name, &slug)?;
     set_active_organization(http, server_url, &auth_state.access_token, &slug)?;
@@ -174,7 +175,7 @@ fn ensure_interactive_terminal(command: &str) -> Result<()> {
     bail!("{command} requires an interactive terminal");
 }
 
-fn prompt_for_organization_name() -> Result<String> {
+fn prompt_for_organization_name() -> Result<(String, String)> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
@@ -210,7 +211,7 @@ fn prompt_for_organization_name() -> Result<String> {
 
         println!("    Slug       {slug}");
         println!();
-        return Ok(name.to_owned());
+        return Ok((name.to_owned(), slug));
     }
 }
 
