@@ -309,13 +309,10 @@ export function createApp(context: AppContext) {
           body: {
             configId: ROOM_CONNECTION_KEY_CONFIG,
             metadata: {
-              createdByUserId: viewer.user.id,
-              organizationSlug: room.organization_slug,
               repoRoot,
               roomId: room.room_id,
             },
             name: buildConnectionName(body.name, repoRoot),
-            organizationId: room.organization_id,
           },
         });
 
@@ -353,9 +350,6 @@ export function createApp(context: AppContext) {
         const room = await context.db.getRoom(metadata.roomId);
         if (!room) {
           throw httpError(404, `room not found: ${metadata.roomId}`);
-        }
-        if (room.organization_id !== verification.key.referenceId) {
-          throw httpError(403, "api key organization mismatch");
         }
 
         const employeeName = body.employee_name.trim();

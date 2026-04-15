@@ -113,7 +113,7 @@ function createAuth(config: ServerConfig, db: Kysely<Record<string, never>>) {
             maxRequests: 100_000,
             timeWindow: 86_400_000,
           },
-          references: "organization",
+          references: "user",
           requireName: true,
         },
       ]),
