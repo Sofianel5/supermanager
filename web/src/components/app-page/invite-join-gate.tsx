@@ -104,7 +104,7 @@ export function InviteJoinGate({ onRefreshWorkspace }: InviteJoinGateProps) {
         <div
           aria-live="polite"
           className={cx(
-            "fixed right-6 top-6 z-50 w-full max-w-[360px] rounded-lg border bg-panel-strong px-4 py-3 shadow-float",
+            "fixed right-6 top-6 z-50 w-full max-w-[360px] border bg-panel-strong px-4 py-3 shadow-float",
             toast.kind === "error" ? "border-red-400/40" : "border-emerald-400/40",
           )}
           role={toast.kind === "error" ? "alert" : "status"}

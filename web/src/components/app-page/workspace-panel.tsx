@@ -54,7 +54,7 @@ export function WorkspacePanel({
             <div className="grid gap-3.5">
               {rooms.map((room) => (
                 <Link
-                  className="block rounded-lg border border-border bg-[rgba(6,9,15,0.74)] p-[18px] no-underline transition duration-150 hover:-translate-y-px hover:border-border-strong"
+                  className="block border border-border bg-[rgba(6,9,15,0.74)] p-[18px] no-underline transition duration-150 hover:-translate-y-px hover:border-border-strong"
                   key={room.room_id}
                   to={`/r/${room.room_id}`}
                 >

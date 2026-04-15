@@ -120,7 +120,7 @@ export function DocsPage() {
           </p>
           <div className="mt-[18px]">
             <div className={copyLabelClass}>Example use cases</div>
-            <ul className="mt-2.5 grid gap-4 pl-5 text-ink-dim leading-7">
+            <ul className="mt-2.5 grid list-disc gap-4 pl-6 text-ink-dim leading-7 marker:text-ink-dim">
               <li>Which rooms are most active this week?</li>
               <li>How is Ava using AI across rooms?</li>
               <li>
