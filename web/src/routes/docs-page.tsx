@@ -20,7 +20,7 @@ export function DocsPage() {
     <main className={cx(pageShellClass, "pt-14")}>
       <header className="grid gap-5 border-b border-border pb-7">
         <div className={sectionLabelClass}>Docs</div>
-        <h1 className="m-0 max-w-[11ch] text-5xl font-semibold leading-none text-ink sm:text-6xl lg:text-[84px]">
+        <h1 className="m-0 max-w-[11ch] text-[clamp(3.4rem,9vw,6rem)] font-bold leading-[0.95] tracking-[-0.06em] text-ink">
           Setup Supermanager Locally
         </h1>
         <p className="max-w-[48rem] text-[1.08rem] leading-8 text-ink-dim">
