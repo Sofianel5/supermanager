@@ -304,10 +304,8 @@ pub(crate) fn set_active_organization(
 fn find_preferred_org<'a>(
     viewer: &'a ViewerResponse,
     requested_slug: Option<&str>,
-    fallback_slug: Option<&str>,
 ) -> Result<Option<&'a ViewerOrganization>> {
     let slug = requested_slug
-        .or(fallback_slug)
         .map(str::trim)
         .filter(|slug| !slug.is_empty());
 
@@ -341,21 +339,23 @@ pub(crate) fn select_active_org(
     auth_state: &mut AuthState,
     requested_slug: Option<&str>,
 ) -> Result<ViewerOrganization> {
-    let organization = find_preferred_org(
-        viewer,
-        requested_slug,
-        auth_state.active_org_slug.as_deref(),
-    )?
-    .ok_or_else(|| {
+    let organization = find_preferred_org(viewer, requested_slug)?.ok_or_else(|| {
         anyhow!(
             "multiple organizations are available; rerun with `--org <slug>`. Available organizations: {}",
             format_org_choices(viewer)
         )
-    })?
-    .clone();
+    })?.clone();
 
     auth_state.active_org_slug = Some(organization.organization_slug.clone());
     Ok(organization)
+}
+
+pub(crate) fn viewer_active_org_slug(viewer: &ViewerResponse) -> Option<&str> {
+    viewer
+        .active_organization_id
+        .as_deref()
+        .and_then(|organization_id| find_org_by_id(viewer, organization_id))
+        .map(|organization| organization.organization_slug.as_str())
 }
 
 fn find_org_by_id<'a>(
@@ -422,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn select_active_org_prefers_stored_slug_over_session_active_org() {
+    fn select_active_org_prefers_session_active_org_over_stored_slug() {
         let viewer = test_viewer(
             Some("org-beta"),
             vec![
@@ -438,8 +438,8 @@ mod tests {
 
         let outcome = select_active_org(&viewer, &mut auth_state, None).unwrap();
 
-        assert_eq!(outcome.organization_slug, "acme");
-        assert_eq!(auth_state.active_org_slug.as_deref(), Some("acme"));
+        assert_eq!(outcome.organization_slug, "beta");
+        assert_eq!(auth_state.active_org_slug.as_deref(), Some("beta"));
     }
 
     #[test]
