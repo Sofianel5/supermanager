@@ -8,6 +8,7 @@ import { CreateRoomDialog } from "../components/app-page/create-room-dialog";
 import { DeviceApprovalDialog } from "../components/app-page/device-approval-dialog";
 import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
 import { InviteJoinGate } from "../components/app-page/invite-join-gate";
+import { OrganizationOnboarding } from "../components/app-page/organization-onboarding";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
 import {
@@ -40,6 +41,7 @@ export function AppPage() {
   const deviceStatusQuery = useDeviceStatus(userCode);
 
   const viewer = viewerQuery.data ?? null;
+  const isFirstRun = viewer !== null && viewer.organizations.length === 0;
   const isLoading =
     viewerQuery.isLoading ||
     (Boolean(activeOrganization) && roomsQuery.isLoading);
@@ -162,31 +164,39 @@ export function AppPage() {
     <>
       <InviteJoinGate onRefreshWorkspace={refreshWorkspace} />
 
-      <main className="landing-page">
-        <WorkspaceHeader
-          activeOrganizationName={activeOrganization?.organization_name ?? null}
-          activeOrganizationSlug={activeOrganization?.organization_slug ?? null}
-          isSigningOut={pendingAction === "sign-out"}
-          userEmail={viewer?.user.email ?? null}
-          onInviteTeammate={() => setIsInviteDialogOpen(true)}
-          onOpenDocs={openDocs}
-          onSignOut={() => void handleSignOut()}
-        />
-
-        {activeOrganization && viewer && !viewer.has_cli_auth && (
-          <CliSetupBanner />
-        )}
-
-        <WorkspacePanel
-          activeOrganization={activeOrganization}
+      {isFirstRun ? (
+        <OrganizationOnboarding
           error={workspaceError}
-          isCreatingRoom={isCreatingRoom}
-          isLoading={isLoading}
-          rooms={rooms}
-          viewer={viewer}
-          onCreateRoom={openCreateRoomDialog}
+          onRefreshWorkspace={refreshWorkspace}
+          onSignOut={() => void handleSignOut()}
+          userEmail={viewer?.user.email ?? null}
         />
-      </main>
+      ) : (
+        <main className="landing-page">
+          <WorkspaceHeader
+            activeOrganizationName={activeOrganization?.organization_name ?? null}
+            activeOrganizationSlug={activeOrganization?.organization_slug ?? null}
+            isSigningOut={pendingAction === "sign-out"}
+            userEmail={viewer?.user.email ?? null}
+            onInviteTeammate={() => setIsInviteDialogOpen(true)}
+            onOpenDocs={openDocs}
+            onSignOut={() => void handleSignOut()}
+          />
+
+          {activeOrganization && viewer && !viewer.has_cli_auth && (
+            <CliSetupBanner />
+          )}
+
+          <WorkspacePanel
+            activeOrganization={activeOrganization}
+            error={workspaceError}
+            isCreatingRoom={isCreatingRoom}
+            isLoading={isLoading}
+            rooms={rooms}
+            onCreateRoom={openCreateRoomDialog}
+          />
+        </main>
+      )}
 
       {isCreateRoomDialogOpen && (
         <CreateRoomDialog

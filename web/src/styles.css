@@ -849,6 +849,103 @@ pre {
   margin-top: 28px;
 }
 
+.first-run-page {
+  padding-top: 56px;
+}
+
+.first-run-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 28px;
+  align-items: flex-start;
+}
+
+.first-run-header__copy {
+  max-width: 44rem;
+}
+
+.first-run-header__copy h1 {
+  margin: 0;
+  max-width: 14ch;
+  font-size: clamp(3rem, 7vw, 4.6rem);
+  line-height: 0.96;
+  letter-spacing: -0.05em;
+}
+
+.first-run-header__text {
+  margin-top: 16px;
+  max-width: 30rem;
+}
+
+.first-run-header__actions {
+  display: grid;
+  justify-items: end;
+  gap: 12px;
+}
+
+.first-run-header__email {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.first-run-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 28px;
+  margin-top: 56px;
+  align-items: start;
+}
+
+.first-run-column {
+  display: grid;
+  gap: 18px;
+}
+
+.first-run-column--primary {
+  max-width: 760px;
+}
+
+.first-run-column input {
+  width: 100%;
+  min-height: 72px;
+  padding: 0 22px;
+  border: 1px solid var(--border);
+  background: rgba(6, 9, 15, 0.84);
+  color: var(--text);
+  font-size: clamp(1.5rem, 3vw, 1.75rem);
+  outline: none;
+}
+
+.first-run-column input:focus {
+  border-color: var(--accent);
+}
+
+.first-run-column h2 {
+  margin: 0;
+  max-width: 12ch;
+  font-size: clamp(2.2rem, 4vw, 3.2rem);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+}
+
+.first-run-copy {
+  max-width: 32rem;
+  font-size: 1.05rem;
+}
+
+.first-run-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.first-run-hint {
+  max-width: 24rem;
+}
+
 .docs-page {
   padding-top: 56px;
 }
@@ -1105,7 +1202,8 @@ pre {
 @media (max-width: 900px) {
   .landing-body,
   .landing-hero,
-  .room-header {
+  .room-header,
+  .first-run-header {
     grid-template-columns: 1fr;
     flex-direction: column;
   }
@@ -1133,6 +1231,15 @@ pre {
   .workspace-banner {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .first-run-layout {
+    grid-template-columns: 1fr;
+    margin-top: 40px;
+  }
+
+  .first-run-header__actions {
+    justify-items: start;
   }
 }
 
@@ -1167,5 +1274,10 @@ pre {
 
   .dialog-actions {
     grid-template-columns: 1fr;
+  }
+
+  .first-run-column input {
+    min-height: 64px;
+    font-size: 1.35rem;
   }
 }

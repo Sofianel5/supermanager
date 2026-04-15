@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import type { RoomListEntry, ViewerOrganization, ViewerResponse } from "../../api";
+import type { RoomListEntry, ViewerOrganization } from "../../api";
 
 interface WorkspacePanelProps {
   activeOrganization: ViewerOrganization | null;
@@ -7,7 +7,6 @@ interface WorkspacePanelProps {
   isLoading: boolean;
   isCreatingRoom: boolean;
   rooms: RoomListEntry[];
-  viewer: ViewerResponse | null;
   onCreateRoom(): void;
 }
 
@@ -17,7 +16,6 @@ export function WorkspacePanel({
   isCreatingRoom,
   isLoading,
   rooms,
-  viewer,
   onCreateRoom,
 }: WorkspacePanelProps) {
   return (
@@ -26,10 +24,8 @@ export function WorkspacePanel({
 
       {isLoading ? (
         <p className="message">Loading workspace...</p>
-      ) : !viewer ? (
-        <p className="message message--error">Failed to load your workspace.</p>
       ) : !activeOrganization ? (
-        <p className="message">No active organization is available for this account.</p>
+        <p className="message message--error">Failed to load your workspace.</p>
       ) : (
         <div className="app-stack">
           <div className="room-section__head room-section__head--compact">

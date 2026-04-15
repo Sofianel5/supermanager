@@ -9,6 +9,8 @@
 .mcp.json
 .codex-mcp.json
 .env
+.playwright-cli/
+output/
 AGENTS.md
 CLAUDE.md
 web/dist/
