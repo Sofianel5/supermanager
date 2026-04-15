@@ -38,7 +38,7 @@ export function DropdownButton({
       <summary
         className={cx(
           secondaryButtonClass,
-          "relative z-30 cursor-pointer list-none justify-center pr-12 text-center text-base font-medium [&::-webkit-details-marker]:hidden [&::marker]:content-[''] after:absolute after:right-[18px] after:top-1/2 after:-translate-y-1/2 after:text-base after:leading-none after:content-['+'] after:transition-transform group-open:after:rotate-45",
+          "relative z-30 w-full cursor-pointer list-none justify-center pr-12 text-center text-base font-medium [&::-webkit-details-marker]:hidden [&::marker]:content-[''] after:absolute after:right-[18px] after:top-1/2 after:-translate-y-1/2 after:text-base after:leading-none after:content-['+'] after:transition-transform group-open:after:rotate-45",
         )}
       >
         {label}
