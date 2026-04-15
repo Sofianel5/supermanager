@@ -414,6 +414,7 @@ resource "aws_lb_target_group" "server" {
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = aws_vpc.this.id
+  deregistration_delay = 0
 
   health_check {
     enabled             = true
@@ -538,7 +539,7 @@ resource "aws_ecs_task_definition" "server" {
           valueFrom = var.github_client_secret_arn
         },
         {
-          name      = "OPENAI_API_KEY"
+          name      = "CODEX_API_KEY"
           valueFrom = var.openai_api_key_secret_arn
         }
       ]

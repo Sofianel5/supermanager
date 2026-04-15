@@ -7,7 +7,7 @@ This Terraform stack provisions the AWS-native backend for Supermanager:
 - ALB with TLS termination and `/health` checks
 - PostgreSQL on RDS
 - EFS for durable Codex and per-room working state
-- Secrets Manager wiring for `DATABASE_URL`, Better Auth secrets, and `OPENAI_API_KEY`
+- Secrets Manager wiring for `DATABASE_URL`, Better Auth secrets, and `CODEX_API_KEY`
 - CloudWatch log group and basic alarms
 - Optional GitHub Actions OIDC deploy role
 

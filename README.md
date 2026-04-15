@@ -33,7 +33,7 @@ The server reads runtime config from environment variables:
 - `SUPERMANAGER_PUBLIC_API_URL`
 - `SUPERMANAGER_PUBLIC_APP_URL`
 - `SUPERMANAGER_SUMMARY_AGENT_BIN`
-- `OPENAI_API_KEY`
+- `CODEX_API_KEY`
 
 In local development the Bun server automatically starts the Rust summary agent through `cargo run -p summary-agent`. For packaged environments, point `SUPERMANAGER_SUMMARY_AGENT_BIN` at a compiled `summary-agent` binary.
 
@@ -196,7 +196,7 @@ This repo now deploys the backend as:
 - ALB on `https://api.supermanager.dev`
 - RDS PostgreSQL
 - EFS mounted at `/srv/supermanager` for durable room-agent state
-- Secrets Manager for `DATABASE_URL`, auth secrets, and `OPENAI_API_KEY`
+- Secrets Manager for `DATABASE_URL`, auth secrets, and `CODEX_API_KEY`
 
 Files involved:
 
@@ -238,7 +238,7 @@ The ECS task definition should be managed in Terraform and point at the ECR repo
 - `GOOGLE_CLIENT_SECRET`
 - `GITHUB_CLIENT_ID`
 - `GITHUB_CLIENT_SECRET`
-- `OPENAI_API_KEY`
+- `CODEX_API_KEY`
 - `SUPERMANAGER_DATA_DIR=/srv/supermanager`
 - `SUPERMANAGER_PUBLIC_API_URL=https://api.supermanager.dev`
 - `SUPERMANAGER_PUBLIC_APP_URL=https://supermanager.dev`

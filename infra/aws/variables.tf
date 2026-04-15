@@ -64,7 +64,7 @@ variable "acm_certificate_arn" {
 }
 
 variable "openai_api_key_secret_arn" {
-  description = "Secrets Manager ARN containing OPENAI_API_KEY."
+  description = "Secrets Manager ARN containing the API key value injected as CODEX_API_KEY."
   type        = string
 }
 
