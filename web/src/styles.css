@@ -782,6 +782,32 @@ pre {
   gap: 12px;
 }
 
+.workspace-banner {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 24px;
+  padding: 22px;
+  border: 1px solid var(--border-strong);
+  background:
+    linear-gradient(180deg, rgba(245, 158, 11, 0.12), rgba(8, 12, 19, 0.9)),
+    rgba(9, 14, 23, 0.9);
+}
+
+.workspace-banner__body {
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-banner h2 {
+  margin: 0;
+  max-width: 24ch;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
 .landing-actions {
   margin-top: 20px;
 }
@@ -909,6 +935,10 @@ pre {
   width: min(100%, 460px);
 }
 
+.invite-dialog {
+  width: min(100%, 560px);
+}
+
 .create-room-dialog__copy {
   margin-top: 12px;
 }
@@ -916,6 +946,20 @@ pre {
 .create-room-dialog__form {
   display: grid;
   gap: 14px;
+}
+
+.invite-dialog__result,
+.invite-panel__meta {
+  display: grid;
+  gap: 14px;
+}
+
+.invite-panel {
+  width: min(100%, 560px);
+}
+
+.invite-panel strong {
+  color: var(--text);
 }
 
 .create-room-dialog__label {
@@ -1007,6 +1051,11 @@ pre {
 
   .room-header__actions {
     width: 100%;
+  }
+
+  .workspace-banner {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

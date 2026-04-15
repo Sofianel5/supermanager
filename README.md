@@ -140,7 +140,7 @@ Open the workspace in the browser:
 open "http://127.0.0.1:5173/app"
 ```
 
-From there you can switch organizations, generate invite links, approve CLI device logins, and open room dashboards at `/r/<room-id>`. Signed-out users are redirected back to login; wrong-org room access returns `403`.
+From there you can create room-scoped workspaces, generate organization invite links, approve CLI device logins, and open room dashboards at `/r/<room-id>`. Signed-out users are redirected back to login; wrong-org room access returns `403`.
 
 ## API
 

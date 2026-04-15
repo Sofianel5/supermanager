@@ -23,6 +23,7 @@ export interface ViewerOrganization {
 
 export interface ViewerResponse {
   active_organization_id: string | null;
+  has_cli_auth: boolean;
   organizations: ViewerOrganization[];
   user: ViewerUser;
 }
@@ -46,6 +47,30 @@ export interface CreateRoomResponse {
   join_command: string;
   organization_slug: string;
   room_id: string;
+}
+
+export interface OrganizationInvitation {
+  email: string;
+  expires_at: string;
+  invitation_id: string;
+  inviter_email: string;
+  organization_name: string;
+  organization_slug: string;
+  status: string;
+}
+
+export interface CreateInvitationResponse {
+  email: string;
+  expires_at: string;
+  invitation_id: string;
+  invite_url: string;
+  organization_slug: string;
+}
+
+export interface AcceptInvitationResponse {
+  invitation_id: string;
+  organization_name: string;
+  organization_slug: string;
 }
 
 const API_BASE_URL = normalizeBaseUrl(
@@ -81,6 +106,26 @@ export function getApiBaseUrl() {
 }
 
 export const api = {
+  acceptInvitation(invitationId: string) {
+    return requestJson<AcceptInvitationResponse>(
+      `/v1/invitations/${encodeURIComponent(invitationId)}/accept`,
+      {
+        method: "POST",
+      },
+    );
+  },
+  createInvitation(input: { email: string; organizationSlug?: string | null }) {
+    return requestJson<CreateInvitationResponse>("/v1/invitations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email: input.email,
+        organization_slug: input.organizationSlug ?? undefined,
+      }),
+    });
+  },
   createRoom(input: { name: string; organizationSlug?: string | null }) {
     return requestJson<CreateRoomResponse>("/v1/rooms", {
       method: "POST",
@@ -105,6 +150,11 @@ export const api = {
   },
   getMe() {
     return requestJson<ViewerResponse>("/v1/me");
+  },
+  getInvitation(invitationId: string) {
+    return requestJson<OrganizationInvitation>(
+      `/v1/invitations/${encodeURIComponent(invitationId)}`,
+    );
   },
   getRoom(roomId: string) {
     return requestJson<RoomMetadataResponse>(
