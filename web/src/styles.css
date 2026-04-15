@@ -808,6 +808,26 @@ pre {
   letter-spacing: -0.04em;
 }
 
+.app-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 20;
+  width: min(360px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  background: rgba(9, 14, 23, 0.96);
+  box-shadow: 0 20px 48px rgba(2, 6, 23, 0.45);
+}
+
+.app-toast--success {
+  border-color: rgba(52, 211, 153, 0.42);
+}
+
+.app-toast--error {
+  border-color: rgba(248, 113, 113, 0.42);
+}
+
 .landing-actions {
   margin-top: 20px;
 }
