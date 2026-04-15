@@ -78,10 +78,10 @@ export function LoginPage() {
 
   return (
     <main className={centeredShellClass}>
-      <section className={`${statusBlockClass} grid w-full max-w-[460px] gap-[18px]`}>
+      <section className={`${statusBlockClass} grid w-full max-w-[420px] gap-[18px]`}>
         <div>
           <div className={sectionLabelClass}>supermanager</div>
-          <h1 className="mt-4 text-5xl font-semibold leading-none text-ink sm:text-6xl">
+          <h1 className="mt-4 text-[clamp(2.8rem,8vw,4.6rem)] font-bold leading-none tracking-[-0.04em] text-ink">
             Sign in
           </h1>
           <p className={`${messageClass} mt-4`}>
