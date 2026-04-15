@@ -51,7 +51,7 @@ export function InviteTeammateDialog({
           <h2 id="invite-teammate-dialog-title">Add someone to {organizationName}</h2>
           <p className="message create-room-dialog__copy">
             Create an email-bound invite link. The recipient needs to sign in with
-            that email before joining the organization.
+            that email, then the link takes them straight into the organization.
           </p>
         </div>
 
@@ -129,7 +129,7 @@ function buildMailtoLink(organizationName: string, email: string, inviteUrl: str
   const body = [
     `You have been invited to join ${organizationName} in supermanager.`,
     "",
-    "Open this link, sign in with this email address, and accept the invitation:",
+    "Open this link and sign in with this email address to join the organization:",
     inviteUrl,
     "",
     `Invited email: ${email}`,

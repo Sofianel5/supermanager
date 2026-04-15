@@ -3,7 +3,6 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 import { authClient, sanitizeReturnTo } from "./auth-client";
 import { AppPage } from "./routes/app-page";
 import { InstallPage } from "./routes/install-page";
-import { InvitePage } from "./routes/invite-page";
 import { LandingPage } from "./routes/landing-page";
 import { LoginPage } from "./routes/login-page";
 import { RoomPage } from "./routes/room-page";
@@ -14,7 +13,6 @@ export function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/install" element={<InstallPage />} />
-        <Route path="/invite/:invitationId" element={<InvitePage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route
           path="/app"

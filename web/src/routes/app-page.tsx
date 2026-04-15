@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { authClient } from "../auth-client";
@@ -9,6 +9,7 @@ import {
   InviteTeammateDialog,
   type InviteTeammateLink,
 } from "../components/app-page/invite-teammate-dialog";
+import { InviteJoinGate } from "../components/app-page/invite-join-gate";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
 import {
@@ -41,9 +42,7 @@ export function AppPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [createdInvitation, setCreatedInvitation] = useState<InviteTeammateLink | null>(null);
 
-  const userCode = normalizeUserCode(
-    new URLSearchParams(location.search).get("user_code"),
-  );
+  const userCode = normalizeUserCode(new URLSearchParams(location.search).get("user_code"));
   const { activeOrganization, rooms, roomsQuery, viewerQuery } = useWorkspaceData(null);
   const deviceStatusQuery = useDeviceStatus(userCode);
 
@@ -215,14 +214,18 @@ export function AppPage() {
     navigate(query ? `/app?${query}` : "/app", { replace: true });
   }
 
-  async function refreshWorkspace() {
-    await queryClient.invalidateQueries({ queryKey: workspaceQueryKey() });
-    await queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() });
+  const refreshWorkspace = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: workspaceQueryKey() }),
+      queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() }),
+    ]);
     setPendingAction(null);
-  }
+  }, [queryClient]);
 
   return (
     <>
+      <InviteJoinGate onRefreshWorkspace={refreshWorkspace} />
+
       <main className="landing-page">
         <WorkspaceHeader
           activeOrganizationName={activeOrganization?.organization_name ?? null}
@@ -315,5 +318,8 @@ function readQueryError(error: unknown) {
 }
 
 function buildInvitationUrl(invitationId: string) {
-  return new URL(`/invite/${encodeURIComponent(invitationId)}`, window.location.origin).toString();
+  const params = new URLSearchParams({
+    invite: invitationId,
+  });
+  return new URL(`/app?${params.toString()}`, window.location.origin).toString();
 }
