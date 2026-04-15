@@ -52,6 +52,7 @@ export interface OrganizationMembership {
 
 export interface ViewerResponse {
   active_organization_id: string | null;
+  has_cli_auth: boolean;
   organizations: OrganizationMembership[];
   user: {
     email: string;

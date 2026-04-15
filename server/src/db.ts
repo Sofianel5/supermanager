@@ -8,6 +8,7 @@ import {
   type SummaryStatus,
   emptyRoomSnapshot,
 } from "./types";
+import { CLI_DEVICE_CLIENT_ID } from "./auth";
 
 const ROOM_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const ROOM_CODE_LENGTH = 6;
@@ -32,6 +33,10 @@ interface OrganizationMembershipRow {
   organization_name: unknown;
   organization_slug: unknown;
   role: unknown;
+}
+
+interface CliAuthRow {
+  has_cli_auth: unknown;
 }
 
 interface InsertHookEventRow {
@@ -109,6 +114,34 @@ export class Db {
     `;
 
     return rows.map(mapOrganizationMembership);
+  }
+
+  async hasCliAuth(userId: string): Promise<boolean> {
+    // Better Auth removes approved device codes after the CLI exchanges them,
+    // so we treat either an approved device code or the resulting headerless
+    // session row as evidence that the CLI has been configured recently.
+    const [row] = await this.client<CliAuthRow[]>`
+      SELECT (
+        EXISTS(
+          SELECT 1
+          FROM "deviceCode"
+          WHERE "userId" = ${userId}
+            AND "clientId" = ${CLI_DEVICE_CLIENT_ID}
+            AND status = 'approved'
+            AND "expiresAt" > NOW()
+        )
+        OR EXISTS(
+          SELECT 1
+          FROM "session"
+          WHERE "userId" = ${userId}
+            AND "expiresAt" > NOW()
+            AND COALESCE("ipAddress", '') = ''
+            AND COALESCE("userAgent", '') = ''
+        )
+      ) AS has_cli_auth
+    `;
+
+    return readBoolean(row?.has_cli_auth, "has_cli_auth");
   }
 
   async getOrganizationMembershipById(
@@ -425,6 +458,21 @@ function readString(value: unknown, key: string): string {
     throw new Error(`failed to decode ${key}`);
   }
   return value;
+}
+
+function readBoolean(value: unknown, key: string): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    if (value === "true" || value === "t") {
+      return true;
+    }
+    if (value === "false" || value === "f") {
+      return false;
+    }
+  }
+  throw new Error(`failed to decode ${key}`);
 }
 
 function toNumber(value: unknown): number {

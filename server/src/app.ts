@@ -32,9 +32,18 @@ const createRoomBody = t.Object({
   organization_slug: t.Optional(t.Nullable(t.String())),
 });
 
+const createInvitationBody = t.Object({
+  email: t.String(),
+  organization_slug: t.Optional(t.Nullable(t.String())),
+});
+
 const createConnectionBody = t.Object({
   name: t.Optional(t.Nullable(t.String())),
   repo_root: t.String(),
+});
+
+const invitationParams = t.Object({
+  invitationId: t.String(),
 });
 
 const listRoomsQuery = t.Object({
@@ -116,10 +125,14 @@ export function createApp(context: AppContext) {
     })
     .get("/v1/me", async ({ request }) => {
       const viewer = await requireViewer(context.auth, request.headers);
-      const organizations = await context.db.listOrganizationsForUser(viewer.user.id);
+      const [organizations, hasCliAuth] = await Promise.all([
+        context.db.listOrganizationsForUser(viewer.user.id),
+        context.db.hasCliAuth(viewer.user.id),
+      ]);
 
       return {
         active_organization_id: viewer.session.activeOrganizationId ?? null,
+        has_cli_auth: hasCliAuth,
         organizations,
         user: {
           email: viewer.user.email,
@@ -147,6 +160,103 @@ export function createApp(context: AppContext) {
       },
       {
         query: listRoomsQuery,
+      },
+    )
+    .post(
+      "/v1/invitations",
+      async ({ body, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const email = body.email.trim().toLowerCase();
+        if (!email) {
+          return status(400, "email must be a non-empty string");
+        }
+
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          body.organization_slug ?? undefined,
+          viewer.session.activeOrganizationId ?? null,
+        );
+        const invitation = await context.auth.api.createInvitation({
+          body: {
+            email,
+            organizationId: membership.organization_id,
+            role: "member",
+          },
+          headers: request.headers,
+        });
+
+        return status(201, {
+          email: invitation.email,
+          expires_at: invitation.expiresAt,
+          invitation_id: invitation.id,
+          invite_url: invitationUrl(context.config.publicAppUrl, invitation.id),
+          organization_slug: membership.organization_slug,
+        });
+      },
+      {
+        body: createInvitationBody,
+      },
+    )
+    .get(
+      "/v1/invitations/:invitationId",
+      async ({ params, request }) => {
+        await requireViewer(context.auth, request.headers);
+        const invitation = await context.auth.api.getInvitation({
+          headers: request.headers,
+          query: {
+            id: params.invitationId,
+          },
+        });
+
+        if (!invitation) {
+          throw httpError(404, `invitation not found: ${params.invitationId}`);
+        }
+
+        return {
+          email: invitation.email,
+          expires_at: invitation.expiresAt,
+          invitation_id: invitation.id,
+          inviter_email: invitation.inviterEmail,
+          organization_name: invitation.organizationName,
+          organization_slug: invitation.organizationSlug,
+          status: invitation.status,
+        };
+      },
+      {
+        params: invitationParams,
+      },
+    )
+    .post(
+      "/v1/invitations/:invitationId/accept",
+      async ({ params, request }) => {
+        await requireViewer(context.auth, request.headers);
+        const invitation = await context.auth.api.getInvitation({
+          headers: request.headers,
+          query: {
+            id: params.invitationId,
+          },
+        });
+
+        if (!invitation) {
+          throw httpError(404, `invitation not found: ${params.invitationId}`);
+        }
+
+        await context.auth.api.acceptInvitation({
+          body: {
+            invitationId: params.invitationId,
+          },
+          headers: request.headers,
+        });
+
+        return {
+          invitation_id: invitation.id,
+          organization_name: invitation.organizationName,
+          organization_slug: invitation.organizationSlug,
+        };
+      },
+      {
+        params: invitationParams,
       },
     )
     .post(
@@ -380,6 +490,10 @@ function clampLimit(value: number | undefined): number {
 
 function dashboardUrl(appUrl: string, roomId: string): string {
   return `${trimUrl(appUrl)}/r/${roomId}`;
+}
+
+function invitationUrl(appUrl: string, invitationId: string): string {
+  return `${trimUrl(appUrl)}/invite/${encodeURIComponent(invitationId)}`;
 }
 
 function cliJoinCommand(

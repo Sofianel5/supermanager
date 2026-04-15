@@ -5,6 +5,7 @@ interface WorkspaceHeaderProps {
   activeOrganizationSlug: string | null;
   isSigningOut: boolean;
   userEmail: string | null;
+  onInviteTeammate(): void;
   onOpenInstallInstructions(): void;
   onSignOut(): void;
 }
@@ -14,6 +15,7 @@ export function WorkspaceHeader({
   activeOrganizationSlug,
   isSigningOut,
   userEmail,
+  onInviteTeammate,
   onOpenInstallInstructions,
   onSignOut,
 }: WorkspaceHeaderProps) {
@@ -34,6 +36,16 @@ export function WorkspaceHeader({
         <DropdownButton label="Menu" panelClassName="room-section account-menu__panel">
           {({ closeDropdown }) => (
             <>
+              <button
+                className="account-menu__item"
+                type="button"
+                onClick={() => {
+                  closeDropdown();
+                  onInviteTeammate();
+                }}
+              >
+                Invite teammate
+              </button>
               <button
                 className="account-menu__item"
                 type="button"
