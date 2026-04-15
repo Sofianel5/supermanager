@@ -36,7 +36,7 @@ interface OrganizationMembershipRow {
 }
 
 interface CliAuthRow {
-  has_cli_auth: unknown;
+  has_cli_auth: boolean;
 }
 
 interface InsertHookEventRow {
@@ -141,7 +141,7 @@ export class Db {
       ) AS has_cli_auth
     `;
 
-    return readBoolean(row?.has_cli_auth, "has_cli_auth");
+    return row?.has_cli_auth ?? false;
   }
 
   async getOrganizationMembershipById(
@@ -458,21 +458,6 @@ function readString(value: unknown, key: string): string {
     throw new Error(`failed to decode ${key}`);
   }
   return value;
-}
-
-function readBoolean(value: unknown, key: string): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "string") {
-    if (value === "true" || value === "t") {
-      return true;
-    }
-    if (value === "false" || value === "f") {
-      return false;
-    }
-  }
-  throw new Error(`failed to decode ${key}`);
 }
 
 function toNumber(value: unknown): number {
