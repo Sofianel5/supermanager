@@ -76,7 +76,12 @@ export function createApp(context: AppContext) {
   return new Elysia()
     .use(
       cors({
-        allowedHeaders: ["Authorization", "Content-Type", "Last-Event-ID", "X-API-Key"],
+        allowedHeaders: [
+          "Authorization",
+          "Content-Type",
+          "Last-Event-ID",
+          "X-API-Key",
+        ],
         credentials: true,
         exposeHeaders: ["set-auth-token"],
         methods: ["GET", "POST", "OPTIONS"],
@@ -146,7 +151,9 @@ export function createApp(context: AppContext) {
 
         return {
           organization_slug: membership.organization_slug,
-          rooms: await context.db.listRoomsForOrganization(membership.organization_id),
+          rooms: await context.db.listRoomsForOrganization(
+            membership.organization_id,
+          ),
         };
       },
       {
@@ -177,7 +184,10 @@ export function createApp(context: AppContext) {
         return status(201, {
           room_id: room.room_id,
           organization_slug: membership.organization_slug,
-          dashboard_url: dashboardUrl(context.config.publicAppUrl, room.room_id),
+          dashboard_url: dashboardUrl(
+            context.config.publicAppUrl,
+            room.room_id,
+          ),
           join_command: cliJoinCommand(
             context.config.publicApiUrl,
             room.room_id,
@@ -193,7 +203,11 @@ export function createApp(context: AppContext) {
       "/v1/rooms/:roomId",
       async ({ params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
+        const room = await requireRoomAccess(
+          context.db,
+          viewer.user.id,
+          params.roomId,
+        );
 
         return {
           room_id: room.room_id,
@@ -215,11 +229,20 @@ export function createApp(context: AppContext) {
       "/v1/rooms/:roomId/feed",
       async ({ params, query, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
+        const room = await requireRoomAccess(
+          context.db,
+          viewer.user.id,
+          params.roomId,
+        );
 
         const before = query.before;
         const limit = clampLimit(query.limit);
-        const events = await context.db.getHookEvents(room.room_id, before, undefined, limit);
+        const events = await context.db.getHookEvents(
+          room.room_id,
+          before,
+          undefined,
+          limit,
+        );
         return { events };
       },
       {
@@ -231,7 +254,11 @@ export function createApp(context: AppContext) {
       "/v1/rooms/:roomId/feed/stream",
       async ({ headers, params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
+        const room = await requireRoomAccess(
+          context.db,
+          viewer.user.id,
+          params.roomId,
+        );
 
         const replay =
           headers["last-event-id"] == null
@@ -266,7 +293,11 @@ export function createApp(context: AppContext) {
       "/v1/rooms/:roomId/connections",
       async ({ body, params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
+        const room = await requireRoomAccess(
+          context.db,
+          viewer.user.id,
+          params.roomId,
+        );
 
         const repoRoot = body.repo_root.trim();
         if (!repoRoot) {
@@ -285,14 +316,16 @@ export function createApp(context: AppContext) {
             },
             name: buildConnectionName(body.name, repoRoot),
             organizationId: room.organization_id,
-            permissions: HOOK_WRITE_PERMISSIONS,
           },
         });
 
         return status(201, {
           api_key: created.key,
           api_key_id: created.id,
-          dashboard_url: dashboardUrl(context.config.publicAppUrl, room.room_id),
+          dashboard_url: dashboardUrl(
+            context.config.publicAppUrl,
+            room.room_id,
+          ),
           room_id: room.room_id,
         });
       },
@@ -367,7 +400,11 @@ export function createApp(context: AppContext) {
       "/v1/rooms/:roomId/summary",
       async ({ params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(context.db, viewer.user.id, params.roomId);
+        const room = await requireRoomAccess(
+          context.db,
+          viewer.user.id,
+          params.roomId,
+        );
 
         return context.db.getSummary(room.room_id);
       },
@@ -392,7 +429,13 @@ function cliJoinCommand(
   organizationSlug: string,
 ): string {
   const normalizedApiUrl = trimUrl(apiUrl);
-  const parts = ["supermanager", "join", roomId, "--org", shellQuote(organizationSlug)];
+  const parts = [
+    "supermanager",
+    "join",
+    roomId,
+    "--org",
+    shellQuote(organizationSlug),
+  ];
 
   if (normalizedApiUrl !== DEFAULT_PUBLIC_API_URL) {
     parts.push("--server", shellQuote(normalizedApiUrl));
@@ -401,9 +444,10 @@ function cliJoinCommand(
   return parts.join(" ");
 }
 
-function parseConnectionMetadata(
-  metadata: unknown,
-): { repoRoot: string; roomId: string } {
+function parseConnectionMetadata(metadata: unknown): {
+  repoRoot: string;
+  roomId: string;
+} {
   if (
     metadata &&
     typeof metadata === "object" &&
@@ -425,7 +469,10 @@ function parseConnectionMetadata(
   throw httpError(401, "api key metadata is invalid");
 }
 
-function buildConnectionName(name: string | null | undefined, repoRoot: string) {
+function buildConnectionName(
+  name: string | null | undefined,
+  repoRoot: string,
+) {
   const trimmedName = name?.trim();
   if (trimmedName) {
     return trimmedName;
@@ -439,7 +486,7 @@ function normalizeDisplayName(name: string | null | undefined, email: string) {
 }
 
 function shellQuote(value: string): string {
-  return `"${value.replaceAll("\"", "\\\"")}"`;
+  return `"${value.replaceAll('"', '\\"')}"`;
 }
 
 function formatError(error: unknown): string {
