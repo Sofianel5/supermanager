@@ -27,12 +27,10 @@ pub struct CreateRoomConfig {
 
 pub struct LoginConfig {
     pub home_dir: PathBuf,
-    pub organization_slug: Option<String>,
     pub server_url: String,
 }
 
 pub struct LoginOutcome {
-    pub active_org_slug: Option<String>,
     pub server_url: String,
 }
 

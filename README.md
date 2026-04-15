@@ -90,13 +90,8 @@ Then authenticate the CLI on any machine that will report repo activity:
 supermanager login --server "http://127.0.0.1:8787"
 ```
 
-If your account belongs to multiple organizations, either pass the slug explicitly during login:
-
-```sh
-supermanager login --server "http://127.0.0.1:8787" --org "<org-slug>"
-```
-
-or configure the active organization later from the CLI:
+Login is global. If your account belongs to multiple organizations, configure
+the active organization after logging in:
 
 ```sh
 supermanager orgs configure --server "http://127.0.0.1:8787"
