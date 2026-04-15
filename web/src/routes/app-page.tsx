@@ -51,8 +51,8 @@ export function AppPage() {
     deviceActionError || readQueryError(deviceStatusQuery.error);
   const isCreatingRoom = pendingAction === "create-room";
 
-  function openInstallInstructions() {
-    navigate("/install");
+  function openDocs() {
+    navigate("/docs");
   }
 
   async function handleSignOut() {
@@ -169,7 +169,7 @@ export function AppPage() {
           isSigningOut={pendingAction === "sign-out"}
           userEmail={viewer?.user.email ?? null}
           onInviteTeammate={() => setIsInviteDialogOpen(true)}
-          onOpenInstallInstructions={openInstallInstructions}
+          onOpenDocs={openDocs}
           onSignOut={() => void handleSignOut()}
         />
 

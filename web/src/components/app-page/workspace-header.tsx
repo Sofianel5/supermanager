@@ -6,7 +6,7 @@ interface WorkspaceHeaderProps {
   isSigningOut: boolean;
   userEmail: string | null;
   onInviteTeammate(): void;
-  onOpenInstallInstructions(): void;
+  onOpenDocs(): void;
   onSignOut(): void;
 }
 
@@ -16,7 +16,7 @@ export function WorkspaceHeader({
   isSigningOut,
   userEmail,
   onInviteTeammate,
-  onOpenInstallInstructions,
+  onOpenDocs,
   onSignOut,
 }: WorkspaceHeaderProps) {
   return (
@@ -51,10 +51,10 @@ export function WorkspaceHeader({
                 type="button"
                 onClick={() => {
                   closeDropdown();
-                  onOpenInstallInstructions();
+                  onOpenDocs();
                 }}
               >
-                CLI install instructions
+                Docs
               </button>
               <button
                 className="account-menu__item"
