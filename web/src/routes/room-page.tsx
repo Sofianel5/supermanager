@@ -1,5 +1,5 @@
 import { type InfiniteData, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link, useParams } from "react-router-dom";
@@ -10,6 +10,7 @@ import {
   type StoredHookEvent,
 } from "../api";
 import { CopyPanel } from "../components/copy-panel";
+import { DropdownButton } from "../components/dropdown-button";
 import {
   FEED_LIMIT,
   roomFeedQueryKey,
@@ -24,7 +25,6 @@ type ConnectionStatus = "connecting" | "live" | "reconnecting";
 export function RoomPage() {
   const { roomId = "" } = useParams();
   const queryClient = useQueryClient();
-  const roomInfoDropdownRef = useRef<HTMLDetailsElement | null>(null);
   const [streamedSummaryStatus, setStreamedSummaryStatus] =
     useState<SummaryStatus>("idle");
   const [connectionStatus, setConnectionStatus] =
@@ -143,14 +143,6 @@ export function RoomPage() {
     };
   }, [queryClient, roomId]);
 
-  function closeRoomInfo() {
-    const dropdown = roomInfoDropdownRef.current;
-    if (!dropdown?.open) {
-      return;
-    }
-    dropdown.open = false;
-  }
-
   if (error) {
     return (
       <main className="room-page room-page--error">
@@ -179,14 +171,8 @@ export function RoomPage() {
           </p>
         </div>
         <div className="room-header__actions">
-          <details className="room-info-dropdown" ref={roomInfoDropdownRef}>
-            <summary className="room-info-dropdown__trigger">Room info</summary>
-            <div
-              aria-hidden="true"
-              className="room-info-dropdown__backdrop"
-              onClick={closeRoomInfo}
-            />
-            <div className="room-section room-info-dropdown__panel">
+          <DropdownButton label="Room info" panelClassName="room-section">
+            <>
               <CopyPanel
                 copiedValue={copiedValue}
                 label="Install CLI"
@@ -199,8 +185,8 @@ export function RoomPage() {
                 onCopy={copy}
                 value={room?.join_command ?? `supermanager join ${canonicalRoomId}`}
               />
-            </div>
-          </details>
+            </>
+          </DropdownButton>
         </div>
       </header>
 

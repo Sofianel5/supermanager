@@ -318,30 +318,10 @@ pre {
   width: min(19rem, 100%);
 }
 
-.account-menu {
-  position: relative;
-  width: min(14rem, 100%);
-}
-
-.account-menu__trigger {
-  width: 100%;
-  list-style: none;
-}
-
-.account-menu__trigger::-webkit-details-marker {
-  display: none;
-}
-
 .account-menu__panel {
-  position: absolute;
-  top: calc(100% + 12px);
-  right: 0;
-  z-index: 4;
   display: grid;
-  width: 100%;
-  border: 1px solid var(--border);
-  background: rgba(8, 12, 19, 0.96);
-  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.42);
+  padding: 0;
+  overflow: hidden;
 }
 
 .account-menu__item {
@@ -428,13 +408,6 @@ pre {
 
 .room-section__head .section-label {
   margin-bottom: 0;
-}
-
-.room-section__heading {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
 }
 
 .room-section__head--compact {
@@ -565,7 +538,7 @@ pre {
   transform: translateY(-50%) rotate(45deg);
 }
 
-.room-info-dropdown__backdrop {
+.details-dropdown__backdrop {
   position: fixed;
   inset: 0;
   z-index: 3;

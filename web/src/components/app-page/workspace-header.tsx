@@ -1,3 +1,5 @@
+import { DropdownButton } from "../dropdown-button";
+
 interface WorkspaceHeaderProps {
   activeOrganizationName: string | null;
   activeOrganizationSlug: string | null;
@@ -28,26 +30,35 @@ export function WorkspaceHeader({
         )}
       </div>
 
-      <details className="account-menu">
-        <summary className="secondary-button account-menu__trigger">Menu</summary>
-        <div className="account-menu__panel">
-          <button
-            className="account-menu__item"
-            type="button"
-            onClick={onOpenInstallInstructions}
-          >
-            CLI install instructions
-          </button>
-          <button
-            className="account-menu__item"
-            type="button"
-            disabled={isSigningOut}
-            onClick={onSignOut}
-          >
-            {isSigningOut ? "Signing out..." : "Sign out"}
-          </button>
-        </div>
-      </details>
+      <div className="room-header__actions">
+        <DropdownButton label="Menu" panelClassName="room-section account-menu__panel">
+          {({ closeDropdown }) => (
+            <>
+              <button
+                className="account-menu__item"
+                type="button"
+                onClick={() => {
+                  closeDropdown();
+                  onOpenInstallInstructions();
+                }}
+              >
+                CLI install instructions
+              </button>
+              <button
+                className="account-menu__item"
+                type="button"
+                disabled={isSigningOut}
+                onClick={() => {
+                  closeDropdown();
+                  onSignOut();
+                }}
+              >
+                {isSigningOut ? "Signing out..." : "Sign out"}
+              </button>
+            </>
+          )}
+        </DropdownButton>
+      </div>
     </section>
   );
 }

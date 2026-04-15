@@ -33,12 +33,7 @@ export function WorkspacePanel({
       ) : (
         <div className="app-stack">
           <div className="room-section__head room-section__head--compact">
-            <div className="room-section__heading">
-              <span className="section-label">Rooms</span>
-              <span className="section-count">
-                {rooms.length} room{rooms.length === 1 ? "" : "s"}
-              </span>
-            </div>
+            <span className="section-label">Rooms</span>
             <div className="room-section__controls">
               <button
                 className="primary-button"
