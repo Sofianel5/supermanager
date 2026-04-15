@@ -25,6 +25,11 @@ enum Commands {
     },
     /// Remove the stored supermanager login for this machine.
     Logout,
+    /// Manage organization membership and the active organization.
+    Orgs {
+        #[command(subcommand)]
+        command: OrgCommands,
+    },
     /// Create new resources in supermanager.
     Create {
         #[command(subcommand)]
@@ -73,6 +78,25 @@ enum CreateCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum OrgCommands {
+    /// List every organization available to the current account.
+    List {
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+    },
+    /// Create a new organization by entering its name interactively.
+    Create {
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+    },
+    /// Select the active organization with an interactive picker.
+    Configure {
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
+        server: String,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let home_dir = supermanager::resolve_home_dir()?;
@@ -98,7 +122,9 @@ fn main() -> Result<()> {
             if let Some(org_slug) = outcome.active_org_slug {
                 println!("    \x1b[2mOrg\x1b[0m        {}", org_slug);
             } else {
-                println!("    \x1b[2mOrg\x1b[0m        choose later with `--org <slug>`");
+                println!(
+                    "    \x1b[2mOrg\x1b[0m        choose later with `supermanager orgs configure` or `--org <slug>`"
+                );
             }
             println!();
         }
@@ -113,6 +139,75 @@ fn main() -> Result<()> {
             }
             println!();
         }
+        Commands::Orgs { command } => match command {
+            OrgCommands::List { server } => {
+                let outcome =
+                    supermanager::list_organizations(supermanager::ListOrganizationsConfig {
+                        home_dir,
+                        server_url: server,
+                    })?;
+
+                println!();
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mOrganizations\x1b[0m");
+                println!();
+                println!(
+                    "    \x1b[2mCount\x1b[0m      {}",
+                    outcome.organizations.len()
+                );
+                println!(
+                    "    \x1b[2mActive\x1b[0m     {}",
+                    outcome.active_org_slug.as_deref().unwrap_or("not set")
+                );
+
+                for organization in outcome.organizations {
+                    println!();
+                    println!(
+                        "    \x1b[2mSlug\x1b[0m       {}",
+                        organization.organization_slug
+                    );
+                    println!(
+                        "    \x1b[2mName\x1b[0m       {}",
+                        organization.organization_name
+                    );
+                }
+            }
+            OrgCommands::Create { server } => {
+                let outcome = supermanager::create_organization_interactive(
+                    supermanager::CreateOrganizationConfig {
+                        home_dir,
+                        server_url: server,
+                    },
+                )?;
+
+                println!();
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mOrganization created\x1b[0m");
+                println!();
+                println!("    \x1b[2mName\x1b[0m       {}", outcome.organization_name);
+                println!("    \x1b[2mSlug\x1b[0m       {}", outcome.organization_slug);
+                println!("    \x1b[2mActive\x1b[0m     {}", outcome.organization_slug);
+                println!();
+            }
+            OrgCommands::Configure { server } => {
+                let outcome = supermanager::configure_organizations_interactive(
+                    supermanager::ConfigureOrganizationsConfig {
+                        home_dir,
+                        server_url: server,
+                    },
+                )?;
+
+                println!();
+                if outcome.created_new {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[1mOrganization created and selected\x1b[0m");
+                } else {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[1mActive organization updated\x1b[0m");
+                }
+                println!();
+                println!("    \x1b[2mName\x1b[0m       {}", outcome.organization_name);
+                println!("    \x1b[2mSlug\x1b[0m       {}", outcome.organization_slug);
+                println!("    \x1b[2mActive\x1b[0m     {}", outcome.organization_slug);
+                println!();
+            }
+        },
         Commands::Create { command } => match command {
             CreateCommands::Room {
                 name,
@@ -268,6 +363,7 @@ fn should_auto_update(command: &Commands) -> bool {
             | Commands::Leave { .. }
             | Commands::List
             | Commands::Login { .. }
+            | Commands::Orgs { .. }
     )
 }
 

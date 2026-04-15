@@ -90,10 +90,16 @@ Then authenticate the CLI on any machine that will report repo activity:
 supermanager login --server "http://127.0.0.1:8787"
 ```
 
-If your account belongs to multiple organizations, pass the slug explicitly:
+If your account belongs to multiple organizations, either pass the slug explicitly during login:
 
 ```sh
 supermanager login --server "http://127.0.0.1:8787" --org "<org-slug>"
+```
+
+or configure the active organization later from the CLI:
+
+```sh
+supermanager orgs configure --server "http://127.0.0.1:8787"
 ```
 
 ### 5. Create a room from the CLI
@@ -101,13 +107,13 @@ supermanager login --server "http://127.0.0.1:8787" --org "<org-slug>"
 Create the room from inside a git repo:
 
 ```sh
-supermanager create room --server "http://127.0.0.1:8787" --org "<org-slug>"
+supermanager create room --server "http://127.0.0.1:8787"
 ```
 
-That uses the current git repo name as the room name by default, joins the current repo automatically, prints a dashboard URL, and prints a join command for additional repos. To pick the room name explicitly:
+That uses the active organization and the current git repo name by default, joins the current repo automatically, prints a dashboard URL, and prints a join command for additional repos. To pick the room name explicitly:
 
 ```sh
-supermanager create room "My Team" --server "http://127.0.0.1:8787" --org "<org-slug>"
+supermanager create room "My Team" --server "http://127.0.0.1:8787"
 ```
 
 ### 6. Join more repos to the room
@@ -130,6 +136,14 @@ To list every room this machine is currently joined to:
 
 ```sh
 supermanager list
+```
+
+To inspect or change the active organization from the CLI:
+
+```sh
+supermanager orgs list --server "http://127.0.0.1:8787"
+supermanager orgs configure --server "http://127.0.0.1:8787"
+supermanager orgs create --server "http://127.0.0.1:8787"
 ```
 
 ### 7. Use the dashboard
