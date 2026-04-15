@@ -968,18 +968,9 @@ pre {
   gap: 14px;
 }
 
-.invite-dialog__result,
-.invite-panel__meta {
+.invite-dialog__result {
   display: grid;
   gap: 14px;
-}
-
-.invite-panel {
-  width: min(100%, 560px);
-}
-
-.invite-panel strong {
-  color: var(--text);
 }
 
 .create-room-dialog__label {
