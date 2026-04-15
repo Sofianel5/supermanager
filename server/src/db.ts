@@ -32,6 +32,7 @@ interface OrganizationMembershipRow {
   organization_id: unknown;
   organization_name: unknown;
   organization_slug: unknown;
+  member_count: unknown;
   role: unknown;
 }
 
@@ -106,9 +107,17 @@ export class Db {
         organization.id AS organization_id,
         organization.name AS organization_name,
         organization.slug AS organization_slug,
+        organization_member_counts.member_count AS member_count,
         member.role AS role
       FROM member
       INNER JOIN organization ON organization.id = member."organizationId"
+      INNER JOIN (
+        SELECT
+          member."organizationId" AS organization_id,
+          COUNT(*)::INT AS member_count
+        FROM member
+        GROUP BY member."organizationId"
+      ) AS organization_member_counts ON organization_member_counts.organization_id = organization.id
       WHERE member."userId" = ${userId}
       ORDER BY organization.name ASC, organization."createdAt" ASC
     `;
@@ -168,9 +177,17 @@ export class Db {
         organization.id AS organization_id,
         organization.name AS organization_name,
         organization.slug AS organization_slug,
+        organization_member_counts.member_count AS member_count,
         member.role AS role
       FROM member
       INNER JOIN organization ON organization.id = member."organizationId"
+      INNER JOIN (
+        SELECT
+          member."organizationId" AS organization_id,
+          COUNT(*)::INT AS member_count
+        FROM member
+        GROUP BY member."organizationId"
+      ) AS organization_member_counts ON organization_member_counts.organization_id = organization.id
       WHERE member."userId" = ${userId}
         AND ${filterColumn === "slug" ? this.client`organization.slug = ${filterValue}` : this.client`member."organizationId" = ${filterValue}`}
     `;
@@ -386,6 +403,7 @@ function mapOrganizationMembership(row: OrganizationMembershipRow): Organization
     organization_id: readString(row.organization_id, "organization_id"),
     organization_name: readString(row.organization_name, "organization_name"),
     organization_slug: readString(row.organization_slug, "organization_slug"),
+    member_count: toNumber(row.member_count),
     role: readString(row.role, "role"),
   };
 }

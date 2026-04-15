@@ -8,6 +8,7 @@ import { CreateRoomDialog } from "../components/app-page/create-room-dialog";
 import { DeviceApprovalDialog } from "../components/app-page/device-approval-dialog";
 import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
 import { InviteJoinGate } from "../components/app-page/invite-join-gate";
+import { InviteTeammatesBanner } from "../components/app-page/invite-teammates-banner";
 import { OrganizationOnboarding } from "../components/app-page/organization-onboarding";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
@@ -182,6 +183,12 @@ export function AppPage() {
             onOpenDocs={openDocs}
             onSignOut={() => void handleSignOut()}
           />
+
+          {activeOrganization && activeOrganization.member_count <= 1 && (
+            <InviteTeammatesBanner
+              onInviteTeammate={() => setIsInviteDialogOpen(true)}
+            />
+          )}
 
           {activeOrganization && viewer && !viewer.has_cli_auth && (
             <CliSetupBanner />

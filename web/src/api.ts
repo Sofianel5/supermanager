@@ -18,6 +18,7 @@ export interface ViewerOrganization {
   organization_id: string;
   organization_name: string;
   organization_slug: string;
+  member_count: number;
   role: string;
 }
 
