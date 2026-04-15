@@ -1,10 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
 import { authClient, sanitizeReturnTo } from "../auth-client";
 import { roomListQueryRootKey, workspaceQueryKey } from "../queries/workspace";
-import { readMessage } from "../utils";
+import { readAuthError, readMessage } from "../utils";
 
 export function InvitePage() {
   const { invitationId = "" } = useParams();
@@ -17,7 +16,23 @@ export function InvitePage() {
 
   const invitationQuery = useQuery({
     enabled: Boolean(invitationId && session.data),
-    queryFn: () => api.getInvitation(invitationId),
+    queryFn: async () => {
+      const result = await authClient.organization.getInvitation({
+        query: {
+          id: invitationId,
+        },
+      });
+
+      if (result.error) {
+        throw new Error(readAuthError(result.error));
+      }
+
+      if (!result.data) {
+        throw new Error("Invitation not found.");
+      }
+
+      return result.data;
+    },
     queryKey: ["invitation", invitationId],
     staleTime: 0,
   });
@@ -40,17 +55,19 @@ export function InvitePage() {
     setIsAccepting(true);
     setAcceptError(null);
 
-    try {
-      await api.acceptInvitation(invitationId);
-      await queryClient.invalidateQueries({ queryKey: workspaceQueryKey() });
-      await queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() });
-      navigate("/app", { replace: true });
-    } catch (error) {
-      setAcceptError(readMessage(error));
+    const result = await authClient.organization.acceptInvitation({ invitationId });
+
+    setIsAccepting(false);
+
+    if (result.error) {
+      setAcceptError(readAuthError(result.error));
       void invitationQuery.refetch();
-    } finally {
-      setIsAccepting(false);
+      return;
     }
+
+    await queryClient.invalidateQueries({ queryKey: workspaceQueryKey() });
+    await queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() });
+    navigate("/app", { replace: true });
   }
 
   if (!invitationId) {
@@ -140,7 +157,7 @@ export function InvitePage() {
       <section className="dialog-card invite-panel">
         <div>
           <div className="section-label">Invite</div>
-          <h2>Join {invitation.organization_name}</h2>
+          <h2>Join {invitation.organizationName}</h2>
           <p className="message">
             Accept the invitation to join the organization and open its workspace.
           </p>
@@ -148,7 +165,7 @@ export function InvitePage() {
 
         <div className="invite-panel__meta">
           <p className="message">
-            <strong>Organization:</strong> {invitation.organization_slug}
+            <strong>Organization:</strong> {invitation.organizationSlug}
           </p>
           <p className="message">
             <strong>Invited email:</strong> {invitation.email}
@@ -157,13 +174,13 @@ export function InvitePage() {
             <strong>Signed in as:</strong> {session.data.user.email}
           </p>
           <p className="message">
-            <strong>Invited by:</strong> {invitation.inviter_email}
+            <strong>Invited by:</strong> {invitation.inviterEmail}
           </p>
           <p className="message">
             <strong>Status:</strong> {invitation.status}
           </p>
           <p className="message">
-            <strong>Expires:</strong> {formatDate(invitation.expires_at)}
+            <strong>Expires:</strong> {formatDate(invitation.expiresAt)}
           </p>
         </div>
 
@@ -206,10 +223,11 @@ export function InvitePage() {
   );
 }
 
-function formatDate(value: string) {
-  const timestamp = Date.parse(value);
+function formatDate(value: string | Date) {
+  const timestamp =
+    value instanceof Date ? value.getTime() : Date.parse(value);
   if (Number.isNaN(timestamp)) {
-    return value;
+    return String(value);
   }
 
   return new Intl.DateTimeFormat(undefined, {

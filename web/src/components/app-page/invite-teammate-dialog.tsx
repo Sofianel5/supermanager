@@ -1,11 +1,15 @@
 import { useEffect, useRef } from "react";
-import type { CreateInvitationResponse } from "../../api";
 import { useCopyHandler } from "../../utils";
+
+export interface InviteTeammateLink {
+  email: string;
+  inviteUrl: string;
+}
 
 interface InviteTeammateDialogProps {
   email: string;
   error?: string | null;
-  invitation?: CreateInvitationResponse | null;
+  invitation?: InviteTeammateLink | null;
   isCreating?: boolean;
   organizationName: string;
   onClose(): void;
@@ -59,12 +63,12 @@ export function InviteTeammateDialog({
             <button
               className="copy-sheet"
               type="button"
-              onClick={() => void copy("invite-link", invitation.invite_url)}
+              onClick={() => void copy("invite-link", invitation.inviteUrl)}
             >
               <span className="copy-label">
                 Invite link {copiedValue === "invite-link" ? "copied" : "click to copy"}
               </span>
-              <code>{invitation.invite_url}</code>
+              <code>{invitation.inviteUrl}</code>
             </button>
             <div className="dialog-actions">
               <button className="secondary-button" type="button" onClick={onReset}>
@@ -72,7 +76,7 @@ export function InviteTeammateDialog({
               </button>
               <a
                 className="primary-button"
-                href={buildMailtoLink(organizationName, invitation.email, invitation.invite_url)}
+                href={buildMailtoLink(organizationName, invitation.email, invitation.inviteUrl)}
               >
                 Draft email
               </a>
