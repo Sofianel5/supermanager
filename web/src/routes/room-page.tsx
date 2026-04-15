@@ -1,4 +1,4 @@
-import { type InfiniteData, useQueryClient } from "@tanstack/react-query";
+import { type InfiniteData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ComponentPropsWithoutRef, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -17,6 +17,7 @@ import {
   roomSummaryQueryOptions,
   useRoomData,
 } from "../queries/room";
+import { findOrganizationBySlug, viewerQueryOptions } from "../queries/workspace";
 import {
   accentSurfaceClass,
   cx,
@@ -44,10 +45,15 @@ export function RoomPage() {
   const { copiedValue, copy } = useCopyHandler();
   const [clock, setClock] = useState(() => Date.now());
   const { feedQuery, roomQuery, summaryQuery } = useRoomData(roomId);
+  const viewerQuery = useQuery(viewerQueryOptions());
 
   const room = roomQuery.data ?? null;
   const events = flattenFeedEvents(feedQuery.data?.pages);
   const snapshot = summaryQuery.data ?? emptyRoomSnapshot();
+  const organization = findOrganizationBySlug(
+    viewerQuery.data?.organizations ?? [],
+    room?.organization_slug ?? null,
+  );
   const summaryStatus =
     streamedSummaryStatus === "idle" && summaryQuery.data
       ? "ready"
@@ -68,6 +74,11 @@ export function RoomPage() {
             : null;
 
   const canonicalRoomId = room?.room_id || roomId;
+  const organizationLabel = formatOrganizationLabel(
+    organization?.organization_name ?? null,
+    room?.organization_slug ?? null,
+  );
+  const organizationHref = buildOrganizationHref(room?.organization_slug ?? null);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -163,7 +174,7 @@ export function RoomPage() {
           {roomId || "unknown"}
         </h1>
         <p className="m-0 text-[0.95rem] leading-7 text-danger">{error}</p>
-        <Link className={secondaryButtonClass} to="/app">
+        <Link className={secondaryButtonClass} to={organizationHref}>
           Back to workspace
         </Link>
       </main>
@@ -173,14 +184,21 @@ export function RoomPage() {
   return (
     <main className={pageShellClass}>
       <header className="flex flex-col gap-7 border-b border-border pb-9 pt-7 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className={sectionLabelClass}>supermanager</div>
-          <h1 className="mt-4 max-w-full text-4xl font-semibold leading-none text-ink sm:text-5xl lg:text-6xl">
+        <div className="max-w-[44rem]">
+          <Link
+            className="group inline-flex max-w-full flex-wrap items-center gap-3 text-base font-medium text-ink no-underline transition hover:text-white"
+            to={organizationHref}
+          >
+            <span className="font-mono text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-accent transition-transform duration-150 group-hover:-translate-x-px">
+              &lt;
+            </span>
+            <span>{`Back to ${organizationLabel}`}</span>
+          </Link>
+          <h1 className="mt-5 max-w-full text-4xl font-semibold leading-none text-ink sm:text-5xl lg:text-6xl">
             {room?.name || roomId}
           </h1>
-          <p className={roomMetaClass}>
+          <p className={cx(roomMetaClass, "mt-4")}>
             <span>{canonicalRoomId}</span>
-            {room?.organization_slug && <span>{room.organization_slug}</span>}
             <span className={cx(pillBaseClass, connectionToneClass(connectionStatus))}>
               {connectionStatus}
             </span>
@@ -507,6 +525,33 @@ function summaryToneClass(status: SummaryStatus) {
     return "border-red-400/30 text-danger";
   }
   return "border-border text-ink-dim";
+}
+
+function buildOrganizationHref(organizationSlug: string | null) {
+  if (!organizationSlug) {
+    return "/app";
+  }
+
+  return `/app?organization=${encodeURIComponent(organizationSlug)}`;
+}
+
+function formatOrganizationLabel(
+  organizationName: string | null,
+  organizationSlug: string | null,
+) {
+  if (organizationName) {
+    return organizationName;
+  }
+
+  if (!organizationSlug) {
+    return "workspace";
+  }
+
+  return organizationSlug
+    .split("-")
+    .filter(Boolean)
+    .map((segment) => segment[0]!.toUpperCase() + segment.slice(1))
+    .join(" ");
 }
 
 const markdownComponents = {

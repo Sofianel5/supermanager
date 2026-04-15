@@ -38,8 +38,11 @@ export function AppPage() {
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [createRoomName, setCreateRoomName] = useState("");
 
-  const userCode = normalizeUserCode(new URLSearchParams(location.search).get("user_code"));
-  const { activeOrganization, rooms, roomsQuery, viewerQuery } = useWorkspaceData(null);
+  const searchParams = new URLSearchParams(location.search);
+  const userCode = normalizeUserCode(searchParams.get("user_code"));
+  const preferredOrganizationSlug = searchParams.get("organization");
+  const { activeOrganization, rooms, roomsQuery, viewerQuery } =
+    useWorkspaceData(preferredOrganizationSlug);
   const deviceStatusQuery = useDeviceStatus(userCode);
 
   const viewer = viewerQuery.data ?? null;
