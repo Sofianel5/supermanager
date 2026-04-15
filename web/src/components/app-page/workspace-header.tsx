@@ -3,6 +3,7 @@ interface WorkspaceHeaderProps {
   activeOrganizationSlug: string | null;
   isSigningOut: boolean;
   userEmail: string | null;
+  onOpenInstallInstructions(): void;
   onSignOut(): void;
 }
 
@@ -11,17 +12,14 @@ export function WorkspaceHeader({
   activeOrganizationSlug,
   isSigningOut,
   userEmail,
+  onOpenInstallInstructions,
   onSignOut,
 }: WorkspaceHeaderProps) {
   return (
     <section className="room-header">
       <div>
-        <div className="section-label">Workspace</div>
-        <h1>{activeOrganizationName || "Set up your organization"}</h1>
-        <p className="hero-text">
-          Authenticate once, pick the active organization, and keep room creation
-          and repo joins in the CLI.
-        </p>
+        <div className="section-label">Rooms</div>
+        <h1>{activeOrganizationName || "Workspace"}</h1>
         {userEmail && (
           <p className="room-meta">
             <span>{userEmail}</span>
@@ -30,16 +28,26 @@ export function WorkspaceHeader({
         )}
       </div>
 
-      <div className="room-header__actions app-toolbar">
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={isSigningOut}
-          onClick={onSignOut}
-        >
-          {isSigningOut ? "Signing out..." : "Sign out"}
-        </button>
-      </div>
+      <details className="account-menu">
+        <summary className="secondary-button account-menu__trigger">Menu</summary>
+        <div className="account-menu__panel">
+          <button
+            className="account-menu__item"
+            type="button"
+            onClick={onOpenInstallInstructions}
+          >
+            CLI install instructions
+          </button>
+          <button
+            className="account-menu__item"
+            type="button"
+            disabled={isSigningOut}
+            onClick={onSignOut}
+          >
+            {isSigningOut ? "Signing out..." : "Sign out"}
+          </button>
+        </div>
+      </details>
     </section>
   );
 }

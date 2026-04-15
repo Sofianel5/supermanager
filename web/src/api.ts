@@ -32,6 +32,8 @@ export interface RoomListEntry {
   name: string;
   organization_slug: string;
   room_id: string;
+  bluf_markdown: string;
+  employee_count: number;
 }
 
 export interface RoomListResponse {
@@ -79,13 +81,16 @@ export function getApiBaseUrl() {
 }
 
 export const api = {
-  createRoom(input: { name: string; organization_slug?: string | null }) {
+  createRoom(input: { name: string; organizationSlug?: string | null }) {
     return requestJson<CreateRoomResponse>("/v1/rooms", {
-      body: JSON.stringify(input),
-      headers: {
-        "content-type": "application/json",
-      },
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: input.name,
+        organization_slug: input.organizationSlug ?? undefined,
+      }),
     });
   },
   getFeed(roomId: string, opts: { limit?: number; before?: number } = {}) {

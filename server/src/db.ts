@@ -23,6 +23,8 @@ interface RoomRow {
   organization_id: unknown;
   organization_slug: unknown;
   created_by_user_id: unknown;
+  bluf_markdown?: unknown;
+  employee_count?: unknown;
 }
 
 interface OrganizationMembershipRow {
@@ -182,9 +184,12 @@ export class Db {
         rooms.created_at,
         rooms.organization_id,
         organization.slug AS organization_slug,
-        rooms.created_by_user_id
+        rooms.created_by_user_id,
+        summaries.content_json->>'bluf_markdown' AS bluf_markdown,
+        COALESCE(jsonb_array_length(summaries.content_json->'employees'), 0) AS employee_count
       FROM rooms
       INNER JOIN organization ON organization.id = rooms.organization_id
+      LEFT JOIN summaries ON summaries.room_id = rooms.room_id
       WHERE rooms.organization_id = ${organizationId}
       ORDER BY rooms.created_at DESC, rooms.room_id DESC
     `;
@@ -360,6 +365,8 @@ function mapRoom(row: RoomRow): RoomRecord {
     organization_id: readString(row.organization_id, "organization_id"),
     organization_slug: readString(row.organization_slug, "organization_slug"),
     created_by_user_id: readString(row.created_by_user_id, "created_by_user_id"),
+    bluf_markdown: row.bluf_markdown == null ? "" : String(row.bluf_markdown),
+    employee_count: row.employee_count == null ? 0 : toNumber(row.employee_count),
   };
 }
 

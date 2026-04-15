@@ -1,4 +1,3 @@
-import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { RoomListEntry, ViewerOrganization, ViewerResponse } from "../../api";
 
@@ -6,39 +5,23 @@ interface WorkspacePanelProps {
   activeOrganization: ViewerOrganization | null;
   error: string | null;
   isLoading: boolean;
-  organizationName: string;
-  pendingAction: string | null;
-  roomName: string;
+  isCreatingRoom: boolean;
   rooms: RoomListEntry[];
   viewer: ViewerResponse | null;
-  onCreateOrganization(event: FormEvent<HTMLFormElement>): void;
-  onCreateRoom(event: FormEvent<HTMLFormElement>): void;
-  onOrganizationNameChange(value: string): void;
-  onOrganizationSwitch(organization: ViewerOrganization): void;
-  onRoomNameChange(value: string): void;
+  onCreateRoom(): void;
 }
 
 export function WorkspacePanel({
   activeOrganization,
   error,
+  isCreatingRoom,
   isLoading,
-  organizationName,
-  pendingAction,
-  roomName,
   rooms,
   viewer,
-  onCreateOrganization,
   onCreateRoom,
-  onOrganizationNameChange,
-  onOrganizationSwitch,
-  onRoomNameChange,
 }: WorkspacePanelProps) {
   return (
-    <div className="landing-column">
-      <div className="section-label">
-        {activeOrganization ? "Organization" : "Onboarding"}
-      </div>
-
+    <section className="landing-column workspace-panel">
       {error && <p className="message message--error">{error}</p>}
 
       {isLoading ? (
@@ -46,75 +29,24 @@ export function WorkspacePanel({
       ) : !viewer ? (
         <p className="message message--error">Failed to load your workspace.</p>
       ) : !activeOrganization ? (
-        <form className="room-form room-form--gate" onSubmit={onCreateOrganization}>
-          <label htmlFor="organization-name">Organization name</label>
-          <input
-            id="organization-name"
-            value={organizationName}
-            onChange={(event) => onOrganizationNameChange(event.target.value)}
-            placeholder="Acme"
-            autoComplete="organization"
-          />
-
-          <button
-            type="submit"
-            disabled={pendingAction === "create-organization"}
-          >
-            {pendingAction === "create-organization"
-              ? "Creating..."
-              : "Create organization"}
-          </button>
-        </form>
+        <p className="message">No active organization is available for this account.</p>
       ) : (
         <div className="app-stack">
-          {viewer.organizations.length > 1 && (
-            <label className="app-select" htmlFor="active-organization">
-              <span className="copy-label">Active organization</span>
-              <select
-                id="active-organization"
-                value={activeOrganization.organization_id}
-                disabled={pendingAction?.startsWith("switch:")}
-                onChange={(event) => {
-                  const nextOrganization = viewer.organizations.find(
-                    (organization) =>
-                      organization.organization_id === event.target.value,
-                  );
-                  if (nextOrganization) {
-                    onOrganizationSwitch(nextOrganization);
-                  }
-                }}
-              >
-                {viewer.organizations.map((organization) => (
-                  <option
-                    key={organization.organization_id}
-                    value={organization.organization_id}
-                  >
-                    {organization.organization_name} ({organization.organization_slug})
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          <form className="room-form room-form--gate" onSubmit={onCreateRoom}>
-            <label htmlFor="room-name">Room name</label>
-            <input
-              id="room-name"
-              value={roomName}
-              onChange={(event) => onRoomNameChange(event.target.value)}
-              placeholder="Frontend"
-            />
-
-            <button type="submit" disabled={pendingAction === "create-room"}>
-              {pendingAction === "create-room" ? "Creating..." : "Create room"}
-            </button>
-          </form>
-
           <div className="room-section__head room-section__head--compact">
             <span className="section-label">Rooms</span>
-            <span className="section-count">
-              {rooms.length} room{rooms.length === 1 ? "" : "s"}
-            </span>
+            <div className="room-section__controls">
+              <span className="section-count">
+                {rooms.length} room{rooms.length === 1 ? "" : "s"}
+              </span>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={isCreatingRoom}
+                onClick={onCreateRoom}
+              >
+                {isCreatingRoom ? "Creating..." : "Create room"}
+              </button>
+            </div>
           </div>
 
           {rooms.length > 0 ? (
@@ -130,21 +62,34 @@ export function WorkspacePanel({
                     <span>{room.room_id}</span>
                   </div>
                   <p className="app-room-card__meta">
-                    <span>{room.organization_slug}</span>
+                    <span>
+                      {room.employee_count} employee{room.employee_count === 1 ? "" : "s"}
+                    </span>
                     <span>{formatDate(room.created_at)}</span>
+                  </p>
+                  <p className="app-room-card__summary">
+                    {readBlufPreview(room.bluf_markdown)}
                   </p>
                 </Link>
               ))}
             </div>
           ) : (
-            <p className="message">
-              No rooms yet. Create the first room here, then join repos from the CLI.
-            </p>
+            <p className="message">No rooms yet.</p>
           )}
         </div>
       )}
-    </div>
+    </section>
   );
+}
+
+function readBlufPreview(markdown: string) {
+  const preview = markdown
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[`*_>#-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return preview || "No BLUF yet.";
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {

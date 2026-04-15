@@ -1,9 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { api, type ViewerOrganization } from "../api";
+import { api } from "../api";
 import { authClient } from "../auth-client";
-import { CliPanel } from "../components/app-page/cli-panel";
+import { CreateRoomDialog } from "../components/app-page/create-room-dialog";
 import { DeviceApprovalDialog } from "../components/app-page/device-approval-dialog";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
@@ -17,26 +17,24 @@ import {
   useWorkspaceData,
   workspaceQueryKey,
 } from "../queries/workspace";
-import { readAuthError, readMessage, useCopyHandler } from "../utils";
+import { readAuthError, readMessage } from "../utils";
 
 export function AppPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { copiedValue, copy } = useCopyHandler();
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
+  const [createRoomError, setCreateRoomError] = useState<string | null>(null);
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
-  const [organizationName, setOrganizationName] = useState("");
-  const [roomName, setRoomName] = useState("");
-  const [preferredOrganizationSlug, setPreferredOrganizationSlug] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<"sign-out" | "create-room" | null>(null);
   const [pendingDeviceAction, setPendingDeviceAction] = useState<"approve" | "deny" | null>(null);
+  const [isCreateRoomDialogOpen, setIsCreateRoomDialogOpen] = useState(false);
+  const [createRoomName, setCreateRoomName] = useState("");
 
   const userCode = normalizeUserCode(
     new URLSearchParams(location.search).get("user_code"),
   );
-  const { activeOrganization, rooms, roomsQuery, viewerQuery } =
-    useWorkspaceData(preferredOrganizationSlug);
+  const { activeOrganization, rooms, roomsQuery, viewerQuery } = useWorkspaceData(null);
   const deviceStatusQuery = useDeviceStatus(userCode);
 
   const viewer = viewerQuery.data ?? null;
@@ -49,6 +47,7 @@ export function AppPage() {
     readQueryError(roomsQuery.error);
   const deviceError =
     deviceActionError || readQueryError(deviceStatusQuery.error);
+  const isCreatingRoom = pendingAction === "create-room";
 
   async function handleSignOut() {
     setPendingAction("sign-out");
@@ -62,81 +61,53 @@ export function AppPage() {
       return;
     }
 
-    navigate("/", { replace: true });
+    navigate("/login", { replace: true });
   }
 
-  async function handleOrganizationSwitch(organization: ViewerOrganization) {
-    setPendingAction(`switch:${organization.organization_id}`);
-    setWorkspaceActionError(null);
-
-    const result = await authClient.organization.setActive({
-      organizationId: organization.organization_id,
-    });
-
-    if (result.error) {
-      setPendingAction(null);
-      setWorkspaceActionError(readAuthError(result.error));
-      return;
-    }
-
-    setPreferredOrganizationSlug(organization.organization_slug);
-    await refreshWorkspace();
+  function openCreateRoomDialog() {
+    setCreateRoomError(null);
+    setCreateRoomName("");
+    setIsCreateRoomDialogOpen(true);
   }
 
-  async function handleCreateOrganization(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const name = organizationName.trim();
-    if (!name) {
-      setWorkspaceActionError("Organization name is required.");
-      return;
-    }
-    const slug = generateOrganizationSlug(name);
-
-    setPendingAction("create-organization");
-    setWorkspaceActionError(null);
-
-    const result = await authClient.organization.create({
-      name,
-      slug,
-    });
-
-    if (result.error) {
-      setPendingAction(null);
-      setWorkspaceActionError(readAuthError(result.error));
+  function closeCreateRoomDialog() {
+    if (isCreatingRoom) {
       return;
     }
 
-    setPreferredOrganizationSlug(slug);
-    setOrganizationName("");
-    await refreshWorkspace();
+    setIsCreateRoomDialogOpen(false);
+    setCreateRoomError(null);
+    setCreateRoomName("");
   }
 
-  async function handleCreateRoom(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const name = roomName.trim();
-    if (!name) {
-      setWorkspaceActionError("Room name is required.");
-      return;
-    }
+  async function handleCreateRoomSubmit() {
     if (!activeOrganization) {
-      setWorkspaceActionError("Create or select an organization first.");
+      return;
+    }
+
+    const name = createRoomName.trim();
+    if (!name) {
+      setCreateRoomError("Room name is required.");
       return;
     }
 
     setPendingAction("create-room");
-    setWorkspaceActionError(null);
+    setCreateRoomError(null);
 
     try {
-      const created = await api.createRoom({
+      const room = await api.createRoom({
         name,
-        organization_slug: activeOrganization.organization_slug,
+        organizationSlug: activeOrganization.organization_slug,
       });
-      navigate(`/r/${created.room_id}`);
-    } catch (createError: unknown) {
+
+      await refreshWorkspace();
+      setIsCreateRoomDialogOpen(false);
+      setCreateRoomName("");
+      navigate(`/r/${room.room_id}`);
+    } catch (error) {
+      setCreateRoomError(readMessage(error));
+    } finally {
       setPendingAction(null);
-      setWorkspaceActionError(readMessage(createError));
     }
   }
 
@@ -187,32 +158,31 @@ export function AppPage() {
           activeOrganizationSlug={activeOrganization?.organization_slug ?? null}
           isSigningOut={pendingAction === "sign-out"}
           userEmail={viewer?.user.email ?? null}
+          onOpenInstallInstructions={() => navigate("/install")}
           onSignOut={() => void handleSignOut()}
         />
 
-        <section className="landing-body">
-          <WorkspacePanel
-            activeOrganization={activeOrganization}
-            error={workspaceError}
-            isLoading={isLoading}
-            organizationName={organizationName}
-            pendingAction={pendingAction}
-            roomName={roomName}
-            rooms={rooms}
-            viewer={viewer}
-            onCreateOrganization={(event) => void handleCreateOrganization(event)}
-            onCreateRoom={(event) => void handleCreateRoom(event)}
-            onOrganizationNameChange={setOrganizationName}
-            onOrganizationSwitch={(organization) => void handleOrganizationSwitch(organization)}
-            onRoomNameChange={setRoomName}
-          />
-          <CliPanel
-            activeOrganization={activeOrganization}
-            copiedValue={copiedValue}
-            onCopy={copy}
-          />
-        </section>
+        <WorkspacePanel
+          activeOrganization={activeOrganization}
+          error={workspaceError}
+          isCreatingRoom={isCreatingRoom}
+          isLoading={isLoading}
+          rooms={rooms}
+          viewer={viewer}
+          onCreateRoom={openCreateRoomDialog}
+        />
       </main>
+
+      {isCreateRoomDialogOpen && (
+        <CreateRoomDialog
+          error={createRoomError}
+          isCreating={isCreatingRoom}
+          name={createRoomName}
+          onClose={closeCreateRoomDialog}
+          onCreate={() => void handleCreateRoomSubmit()}
+          onNameChange={setCreateRoomName}
+        />
+      )}
 
       {userCode && (
         <DeviceApprovalDialog
@@ -231,18 +201,4 @@ export function AppPage() {
 
 function readQueryError(error: unknown) {
   return error instanceof Error ? error.message : null;
-}
-
-function slugify(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function generateOrganizationSlug(name: string) {
-  const base = slugify(name) || "team";
-  const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
-  return `${base}-${suffix}`;
 }

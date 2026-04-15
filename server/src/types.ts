@@ -32,6 +32,8 @@ export interface RoomListEntry {
   name: string;
   created_at: string;
   organization_slug: string;
+  bluf_markdown: string;
+  employee_count: number;
 }
 
 export interface ConnectionResponse {

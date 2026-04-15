@@ -146,6 +146,10 @@ pre {
   margin-top: 28px;
 }
 
+.landing-body--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .room-layout {
   display: grid;
   gap: 20px;
@@ -314,6 +318,55 @@ pre {
   width: min(19rem, 100%);
 }
 
+.account-menu {
+  position: relative;
+  width: min(14rem, 100%);
+}
+
+.account-menu__trigger {
+  width: 100%;
+  list-style: none;
+}
+
+.account-menu__trigger::-webkit-details-marker {
+  display: none;
+}
+
+.account-menu__panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 4;
+  display: grid;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: rgba(8, 12, 19, 0.96);
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.42);
+}
+
+.account-menu__item {
+  padding: 14px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.account-menu__item:last-child {
+  border-bottom: 0;
+}
+
+.account-menu__item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.account-menu__item:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .room-info-dropdown {
   width: 100%;
 }
@@ -375,6 +428,14 @@ pre {
 
 .room-section__head--compact {
   margin-bottom: 18px;
+}
+
+.room-section__controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .summary-layout {
@@ -758,34 +819,22 @@ pre {
   gap: 18px;
 }
 
-.app-select {
-  display: grid;
-  gap: 10px;
+.workspace-panel {
+  margin-top: 28px;
 }
 
-.app-select select,
-.room-form select {
-  width: 100%;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  background: rgba(6, 9, 15, 0.82);
-  color: var(--text);
-  outline: none;
-}
-
-.app-select select:focus,
-.room-form select:focus {
-  border-color: var(--accent);
+.install-instructions {
+  width: min(100%, 720px);
 }
 
 .app-room-list {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .app-room-card {
   display: block;
-  padding: 16px 18px;
+  padding: 18px;
   border: 1px solid var(--border);
   background: rgba(6, 9, 15, 0.74);
   text-decoration: none;
@@ -821,6 +870,13 @@ pre {
   font-family: var(--mono);
   font-size: 0.76rem;
   color: var(--text-dim);
+}
+
+.app-room-card__summary {
+  margin: 14px 0 0;
+  color: var(--text-dim);
+  font-size: 1rem;
+  line-height: 1.75;
 }
 
 .login-panel {
@@ -863,6 +919,40 @@ pre {
   box-shadow: 0 24px 60px rgba(2, 6, 23, 0.46);
   display: grid;
   gap: 16px;
+}
+
+.create-room-dialog {
+  width: min(100%, 460px);
+}
+
+.create-room-dialog__copy {
+  margin-top: 12px;
+}
+
+.create-room-dialog__form {
+  display: grid;
+  gap: 14px;
+}
+
+.create-room-dialog__label {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.create-room-dialog__form input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  background: rgba(6, 9, 15, 0.82);
+  color: var(--text);
+  outline: none;
+}
+
+.create-room-dialog__form input:focus {
+  border-color: var(--accent);
 }
 
 .dialog-actions {
@@ -959,6 +1049,10 @@ pre {
   .app-room-card__head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .account-menu {
+    width: 100%;
   }
 
   .dialog-actions {
