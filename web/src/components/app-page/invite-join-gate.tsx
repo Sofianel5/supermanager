@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { authClient } from "../../auth-client";
+import { cx, sectionLabelClass, statusBlockClass } from "../../ui";
 import { readAuthError } from "../../utils";
 
 interface InviteJoinGateProps {
@@ -89,10 +90,12 @@ export function InviteJoinGate({ onRefreshWorkspace }: InviteJoinGateProps) {
   return (
     <>
       {inviteId && (
-        <div className="dialog-backdrop">
-          <section className="status-block">
-            <div className="section-label">Organization</div>
-            <h1>Joining workspace…</h1>
+        <div className="fixed inset-0 z-40 grid place-items-center bg-black/55 p-5 backdrop-blur-md">
+          <section className={statusBlockClass}>
+            <div className={sectionLabelClass}>Organization</div>
+            <h1 className="mt-4 text-4xl font-semibold leading-none text-ink sm:text-5xl">
+              Joining workspace…
+            </h1>
           </section>
         </div>
       )}
@@ -100,7 +103,10 @@ export function InviteJoinGate({ onRefreshWorkspace }: InviteJoinGateProps) {
       {toast && (
         <div
           aria-live="polite"
-          className={`app-toast app-toast--${toast.kind}`}
+          className={cx(
+            "fixed right-6 top-6 z-50 w-full max-w-[360px] rounded-lg border bg-panel-strong px-4 py-3 shadow-float",
+            toast.kind === "error" ? "border-red-400/40" : "border-emerald-400/40",
+          )}
           role={toast.kind === "error" ? "alert" : "status"}
         >
           {toast.message}

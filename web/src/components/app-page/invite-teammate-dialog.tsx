@@ -1,5 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { authClient } from "../../auth-client";
+import {
+  copyLabelClass,
+  copySheetClass,
+  dialogCardClass,
+  errorMessageClass,
+  fieldLabelClass,
+  inputClass,
+  messageClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+  sectionLabelClass,
+} from "../../ui";
 import { readAuthError, useCopyHandler } from "../../utils";
 
 interface InviteTeammateLink {
@@ -82,64 +94,72 @@ export function InviteTeammateDialog({
   }
 
   return (
-    <div className="dialog-backdrop">
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/55 p-5 backdrop-blur-md">
       <div
-        className="dialog-card invite-dialog"
+        className={`${dialogCardClass} w-full max-w-[560px]`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="invite-teammate-dialog-title"
       >
         <div>
-          <div className="section-label">Invite teammate</div>
-          <h2 id="invite-teammate-dialog-title">Add someone to {organizationName}</h2>
-          <p className="message create-room-dialog__copy">
+          <div className={sectionLabelClass}>Invite teammate</div>
+          <h2
+            className="mt-4 text-4xl font-semibold leading-none text-ink sm:text-[2.8rem]"
+            id="invite-teammate-dialog-title"
+          >
+            Add someone to {organizationName}
+          </h2>
+          <p className={`${messageClass} mt-3`}>
             Create an email-bound invite link. The recipient needs to sign in with
             that email, then the link takes them straight into the organization.
           </p>
         </div>
 
         {invitation ? (
-          <div className="invite-dialog__result">
-            <p className="message">
+          <div className="grid gap-3.5">
+            <p className={messageClass}>
               Invite ready for <strong>{invitation.email}</strong>.
             </p>
             <button
-              className="copy-sheet"
+              className={copySheetClass}
               type="button"
               onClick={() => void copy("invite-link", invitation.inviteUrl)}
             >
-              <span className="copy-label">
+              <span className={copyLabelClass}>
                 Invite link {copiedValue === "invite-link" ? "copied" : "click to copy"}
               </span>
-              <code>{invitation.inviteUrl}</code>
+              <code className="mt-2.5 block break-words font-mono text-[13px] leading-7 text-[#f4bf63]">
+                {invitation.inviteUrl}
+              </code>
             </button>
-            <div className="dialog-actions">
-              <button className="secondary-button" type="button" onClick={resetInviteForm}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button className={secondaryButtonClass} type="button" onClick={resetInviteForm}>
                 Invite another
               </button>
               <a
-                className="primary-button"
+                className={primaryButtonClass}
                 href={buildMailtoLink(organizationName, invitation.email, invitation.inviteUrl)}
               >
                 Draft email
               </a>
             </div>
-            <button className="secondary-button" type="button" onClick={handleClose}>
+            <button className={secondaryButtonClass} type="button" onClick={handleClose}>
               Done
             </button>
           </div>
         ) : (
           <form
-            className="create-room-dialog__form"
+            className="grid gap-3.5"
             onSubmit={(event) => {
               event.preventDefault();
               void handleInviteSubmit();
             }}
           >
-            <label className="create-room-dialog__label" htmlFor="invite-email">
+            <label className={fieldLabelClass} htmlFor="invite-email">
               Teammate email
             </label>
             <input
+              className={inputClass}
               ref={inputRef}
               id="invite-email"
               name="invite-email"
@@ -150,13 +170,13 @@ export function InviteTeammateDialog({
               onChange={(event) => setEmail(event.target.value)}
             />
 
-            {error && <p className="message message--error">{error}</p>}
+            {error && <p className={errorMessageClass}>{error}</p>}
 
-            <div className="dialog-actions">
-              <button className="secondary-button" type="button" onClick={handleClose}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button className={secondaryButtonClass} type="button" onClick={handleClose}>
                 Cancel
               </button>
-              <button className="primary-button" type="submit" disabled={isCreating}>
+              <button className={primaryButtonClass} type="submit" disabled={isCreating}>
                 {isCreating ? "Creating..." : "Create invite"}
               </button>
             </div>

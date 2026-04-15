@@ -1,5 +1,13 @@
 import { Link } from "react-router-dom";
 import type { RoomListEntry, ViewerOrganization } from "../../api";
+import {
+  cx,
+  errorMessageClass,
+  messageClass,
+  primaryButtonClass,
+  sectionLabelClass,
+  surfaceClass,
+} from "../../ui";
 
 interface WorkspacePanelProps {
   activeOrganization: ViewerOrganization | null;
@@ -19,20 +27,20 @@ export function WorkspacePanel({
   onCreateRoom,
 }: WorkspacePanelProps) {
   return (
-    <section className="landing-column workspace-panel">
-      {error && <p className="message message--error">{error}</p>}
+    <section className={cx(surfaceClass, "mt-7 p-[22px]")}>
+      {error && <p className={errorMessageClass}>{error}</p>}
 
       {isLoading ? (
-        <p className="message">Loading workspace...</p>
+        <p className={messageClass}>Loading workspace...</p>
       ) : !activeOrganization ? (
-        <p className="message message--error">Failed to load your workspace.</p>
+        <p className={errorMessageClass}>Failed to load your workspace.</p>
       ) : (
-        <div className="app-stack">
-          <div className="room-section__head room-section__head--compact">
-            <span className="section-label">Rooms</span>
-            <div className="room-section__controls">
+        <div className="grid gap-[18px]">
+          <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <span className={sectionLabelClass}>Rooms</span>
+            <div className="flex flex-wrap items-center justify-end gap-3">
               <button
-                className="primary-button"
+                className={primaryButtonClass}
                 type="button"
                 disabled={isCreatingRoom}
                 onClick={onCreateRoom}
@@ -43,31 +51,33 @@ export function WorkspacePanel({
           </div>
 
           {rooms.length > 0 ? (
-            <div className="app-room-list">
+            <div className="grid gap-3.5">
               {rooms.map((room) => (
                 <Link
-                  className="app-room-card"
+                  className="block rounded-lg border border-border bg-[rgba(6,9,15,0.74)] p-[18px] no-underline transition duration-150 hover:-translate-y-px hover:border-border-strong"
                   key={room.room_id}
                   to={`/r/${room.room_id}`}
                 >
-                  <div className="app-room-card__head">
+                  <div className="flex flex-col gap-2 text-ink sm:flex-row sm:items-center sm:justify-between">
                     <strong>{room.name}</strong>
-                    <span>{room.room_id}</span>
+                    <span className="font-mono text-[0.78rem] text-ink-muted">
+                      {room.room_id}
+                    </span>
                   </div>
-                  <p className="app-room-card__meta">
+                  <p className="mt-2.5 flex flex-wrap gap-2.5 font-mono text-[0.76rem] text-ink-dim">
                     <span>
                       {room.employee_count} employee{room.employee_count === 1 ? "" : "s"}
                     </span>
                     <span>{formatDate(room.created_at)}</span>
                   </p>
-                  <p className="app-room-card__summary">
+                  <p className="mt-3.5 text-base leading-7 text-ink-dim">
                     {readBlufPreview(room.bluf_markdown)}
                   </p>
                 </Link>
               ))}
             </div>
           ) : (
-            <p className="message">No rooms yet.</p>
+            <p className={messageClass}>No rooms yet.</p>
           )}
         </div>
       )}

@@ -22,6 +22,7 @@ import {
   useWorkspaceData,
   workspaceQueryKey,
 } from "../queries/workspace";
+import { pageShellClass } from "../ui";
 import { readAuthError, readMessage } from "../utils";
 
 export function AppPage() {
@@ -173,7 +174,7 @@ export function AppPage() {
           userEmail={viewer?.user.email ?? null}
         />
       ) : (
-        <main className="landing-page">
+        <main className={pageShellClass}>
           <WorkspaceHeader
             activeOrganizationName={activeOrganization?.organization_name ?? null}
             activeOrganizationSlug={activeOrganization?.organization_slug ?? null}

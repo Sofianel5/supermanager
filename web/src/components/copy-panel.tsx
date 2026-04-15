@@ -1,3 +1,5 @@
+import { copyLabelClass, copySheetClass } from "../ui";
+
 export function CopyPanel({
   copiedValue,
   label,
@@ -10,11 +12,13 @@ export function CopyPanel({
   value: string;
 }) {
   return (
-    <button className="copy-sheet" type="button" onClick={() => onCopy(label, value)}>
-      <span className="copy-label">
+    <button className={copySheetClass} type="button" onClick={() => onCopy(label, value)}>
+      <span className={copyLabelClass}>
         {label} {copiedValue === label ? "copied" : "click to copy"}
       </span>
-      <code>{value}</code>
+      <code className="mt-2.5 block break-words font-mono text-[13px] leading-7 text-[#f4bf63]">
+        {value}
+      </code>
     </button>
   );
 }
