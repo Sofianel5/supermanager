@@ -20,8 +20,6 @@ enum Commands {
     Login {
         #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
         server: String,
-        #[arg(long)]
-        org: Option<String>,
     },
     /// Remove the stored supermanager login for this machine.
     Logout,
@@ -108,10 +106,9 @@ fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Login { server, org } => {
+        Commands::Login { server } => {
             let outcome = supermanager::login(supermanager::LoginConfig {
                 home_dir,
-                organization_slug: org,
                 server_url: server,
             })?;
 
@@ -119,13 +116,9 @@ fn main() -> Result<()> {
             println!("  \x1b[32m✓\x1b[0m \x1b[1mLogged in\x1b[0m");
             println!();
             println!("    \x1b[2mServer\x1b[0m     {}", outcome.server_url);
-            if let Some(org_slug) = outcome.active_org_slug {
-                println!("    \x1b[2mOrg\x1b[0m        {}", org_slug);
-            } else {
-                println!(
-                    "    \x1b[2mOrg\x1b[0m        choose later with `supermanager orgs configure` or `--org <slug>`"
-                );
-            }
+            println!(
+                "    \x1b[2mOrg\x1b[0m        choose later with `supermanager orgs configure` or `--org <slug>` on room commands"
+            );
             println!();
         }
         Commands::Logout => {

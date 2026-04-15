@@ -77,10 +77,10 @@ export function DocsPage() {
             </button>
           </div>
           <p className="mt-4 max-w-[64rem] text-base leading-7 text-ink-dim">
-            If your account belongs to multiple organizations, add{" "}
-            <code>--org &quot;&lt;org-slug&gt;&quot;</code> to the login
-            command or run <code>supermanager orgs configure</code> once after
-            logging in.
+            Login is global. If your account belongs to multiple organizations,
+            run <code>supermanager orgs configure</code> after logging in, or
+            pass <code>--org &quot;&lt;org-slug&gt;&quot;</code> to room
+            commands.
           </p>
         </article>
 

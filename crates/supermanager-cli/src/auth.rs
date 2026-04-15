@@ -81,22 +81,18 @@ pub fn login(config: LoginConfig) -> Result<LoginOutcome> {
 
     let access_token =
         poll_for_access_token(&http, &server_url, &device.device_code, polling_interval)?;
-    let viewer = get_viewer(&http, &server_url, &access_token)?;
-    let active_org_slug = resolve_login_org_slug(&viewer, config.organization_slug.as_deref())?;
+    get_viewer(&http, &server_url, &access_token)?;
 
     write_auth_state(
         &auth_state_path(&config.home_dir),
         &AuthState {
             access_token,
-            active_org_slug: active_org_slug.clone(),
+            active_org_slug: None,
             server_url: server_url.clone(),
         },
     )?;
 
-    Ok(LoginOutcome {
-        active_org_slug,
-        server_url,
-    })
+    Ok(LoginOutcome { server_url })
 }
 
 pub fn logout(home_dir: &Path) -> Result<bool> {
@@ -338,14 +334,6 @@ fn find_preferred_org<'a>(
     }
 
     Ok(None)
-}
-
-fn resolve_login_org_slug(
-    viewer: &ViewerResponse,
-    requested_slug: Option<&str>,
-) -> Result<Option<String>> {
-    Ok(find_preferred_org(viewer, requested_slug, None)?
-        .map(|organization| organization.organization_slug.clone()))
 }
 
 pub(crate) fn select_active_org(
