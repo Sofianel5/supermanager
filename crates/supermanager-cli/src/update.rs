@@ -14,7 +14,9 @@ use sha2::{Digest, Sha256};
 use tar::Archive;
 use tempfile::TempDir;
 
-use crate::{API_TIMEOUT_SECONDS, build_http_client, read_optional_text, write_text};
+use crate::support::{
+    API_TIMEOUT_SECONDS, build_http_client, ensure_success, read_optional_text, write_text,
+};
 
 const DEFAULT_RELEASE_REPO: &str = "Sofianel5/supermanager";
 const INSTALL_REPO_ENV: &str = "SUPERMANAGER_INSTALL_REPO";
@@ -241,7 +243,7 @@ fn fetch_release() -> Result<GitHubRelease> {
         .send()
         .context("failed to fetch CLI release metadata")?;
 
-    let response = crate::ensure_success(response, "fetch CLI release metadata")?;
+    let response = ensure_success(response, "fetch CLI release metadata")?;
     response
         .json()
         .context("failed to parse CLI release metadata")
@@ -296,7 +298,7 @@ fn download_bytes(url: &str) -> Result<Vec<u8>> {
         .send()
         .with_context(|| format!("failed to download {url}"))?;
 
-    let response = crate::ensure_success(response, "download CLI release asset")?;
+    let response = ensure_success(response, "download CLI release asset")?;
     let bytes = response
         .bytes()
         .with_context(|| format!("failed to read response body from {url}"))?;
