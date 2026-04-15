@@ -28,11 +28,15 @@
   body {
     @apply m-0 min-h-screen bg-[#06080e] font-sans text-ink antialiased;
     background-image:
-      radial-gradient(circle at top, rgba(245, 158, 11, 0.12), transparent 42%),
       radial-gradient(
-        circle at bottom right,
-        rgba(24, 118, 210, 0.12),
-        transparent 30%
+        980px 460px at 50% -80px,
+        rgba(245, 158, 11, 0.09),
+        transparent 72%
+      ),
+      radial-gradient(
+        720px 420px at 100% 100%,
+        rgba(24, 118, 210, 0.1),
+        transparent 68%
       ),
       linear-gradient(180deg, #090d15 0%, #06080e 100%);
   }

@@ -13,6 +13,9 @@ export const surfaceClass =
 export const strongSurfaceClass =
   "border border-border-strong bg-[linear-gradient(180deg,rgba(17,24,37,0.72),rgba(8,12,19,0.88))] backdrop-blur-xl";
 
+export const accentSurfaceClass =
+  "border border-border-strong [background:linear-gradient(180deg,rgba(245,158,11,0.12),rgba(6,9,15,0.82)),rgba(6,9,15,0.82)]";
+
 export const elevatedSurfaceClass =
   "border border-border-strong bg-[linear-gradient(180deg,rgba(18,25,39,0.94),rgba(7,11,18,0.98))] shadow-float";
 

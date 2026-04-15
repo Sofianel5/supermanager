@@ -18,6 +18,7 @@ import {
   useRoomData,
 } from "../queries/room";
 import {
+  accentSurfaceClass,
   cx,
   messageClass,
   pageShellClass,
@@ -316,7 +317,7 @@ function SummaryContent({
 
   return (
     <div className="grid gap-4">
-      <section className="border border-border-strong bg-[linear-gradient(180deg,rgba(245,158,11,0.12),rgba(6,9,15,0.82))] p-[18px]">
+      <section className={cx(accentSurfaceClass, "p-[18px]")}>
         <div className="mb-3.5 inline-flex font-mono text-[11px] font-semibold uppercase text-accent">
           BLUF
         </div>
