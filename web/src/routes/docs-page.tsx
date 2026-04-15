@@ -129,9 +129,9 @@ export function DocsPage() {
             Querying usage with the Supermanager MCP
           </div>
           <p className="max-w-[64rem] text-[1.08rem] leading-8 text-ink-dim">
-            The Supermanager MCP is still planned. Once it ships, this section
-            will document the real Codex and Claude Code setup commands for
-            querying org usage from inside the assistant.
+            The Supermanager MCP is available from the server&apos;s{" "}
+            <code>/mcp</code> endpoint for querying rooms, summaries, raw hook
+            events, and semantic event search from inside the assistant.
           </p>
           <div className="mt-[18px]">
             <div className={copyLabelClass}>Example use cases</div>
