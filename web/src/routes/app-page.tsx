@@ -5,7 +5,10 @@ import { api } from "../api";
 import { authClient } from "../auth-client";
 import { CreateRoomDialog } from "../components/app-page/create-room-dialog";
 import { DeviceApprovalDialog } from "../components/app-page/device-approval-dialog";
-import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
+import {
+  InviteTeammateDialog,
+  type InviteTeammateLink,
+} from "../components/app-page/invite-teammate-dialog";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
 import {
@@ -36,9 +39,7 @@ export function AppPage() {
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [createRoomName, setCreateRoomName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
-  const [createdInvitation, setCreatedInvitation] = useState<Awaited<
-    ReturnType<typeof api.createInvitation>
-  > | null>(null);
+  const [createdInvitation, setCreatedInvitation] = useState<InviteTeammateLink | null>(null);
 
   const userCode = normalizeUserCode(
     new URLSearchParams(location.search).get("user_code"),
@@ -157,17 +158,28 @@ export function AppPage() {
     setPendingAction("create-invite");
     setInviteError(null);
 
-    try {
-      const invitation = await api.createInvitation({
-        email,
-        organizationSlug: activeOrganization.organization_slug,
-      });
-      setCreatedInvitation(invitation);
-    } catch (error) {
-      setInviteError(readMessage(error));
-    } finally {
-      setPendingAction(null);
+    const result = await authClient.organization.inviteMember({
+      email,
+      organizationId: activeOrganization.organization_id,
+      role: "member",
+    });
+
+    setPendingAction(null);
+
+    if (result.error) {
+      setInviteError(readAuthError(result.error));
+      return;
     }
+
+    if (!result.data) {
+      setInviteError("Failed to create invite.");
+      return;
+    }
+
+    setCreatedInvitation({
+      email: result.data.email,
+      inviteUrl: buildInvitationUrl(result.data.id),
+    });
   }
 
   async function handleDeviceAction(action: "approve" | "deny") {
@@ -300,4 +312,8 @@ export function AppPage() {
 
 function readQueryError(error: unknown) {
   return error instanceof Error ? error.message : null;
+}
+
+function buildInvitationUrl(invitationId: string) {
+  return new URL(`/invite/${encodeURIComponent(invitationId)}`, window.location.origin).toString();
 }

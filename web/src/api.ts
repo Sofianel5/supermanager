@@ -49,30 +49,6 @@ export interface CreateRoomResponse {
   room_id: string;
 }
 
-export interface OrganizationInvitation {
-  email: string;
-  expires_at: string;
-  invitation_id: string;
-  inviter_email: string;
-  organization_name: string;
-  organization_slug: string;
-  status: string;
-}
-
-export interface CreateInvitationResponse {
-  email: string;
-  expires_at: string;
-  invitation_id: string;
-  invite_url: string;
-  organization_slug: string;
-}
-
-export interface AcceptInvitationResponse {
-  invitation_id: string;
-  organization_name: string;
-  organization_slug: string;
-}
-
 const API_BASE_URL = normalizeBaseUrl(
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8787",
 );
@@ -106,26 +82,6 @@ export function getApiBaseUrl() {
 }
 
 export const api = {
-  acceptInvitation(invitationId: string) {
-    return requestJson<AcceptInvitationResponse>(
-      `/v1/invitations/${encodeURIComponent(invitationId)}/accept`,
-      {
-        method: "POST",
-      },
-    );
-  },
-  createInvitation(input: { email: string; organizationSlug?: string | null }) {
-    return requestJson<CreateInvitationResponse>("/v1/invitations", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: input.email,
-        organization_slug: input.organizationSlug ?? undefined,
-      }),
-    });
-  },
   createRoom(input: { name: string; organizationSlug?: string | null }) {
     return requestJson<CreateRoomResponse>("/v1/rooms", {
       method: "POST",
@@ -150,11 +106,6 @@ export const api = {
   },
   getMe() {
     return requestJson<ViewerResponse>("/v1/me");
-  },
-  getInvitation(invitationId: string) {
-    return requestJson<OrganizationInvitation>(
-      `/v1/invitations/${encodeURIComponent(invitationId)}`,
-    );
   },
   getRoom(roomId: string) {
     return requestJson<RoomMetadataResponse>(
