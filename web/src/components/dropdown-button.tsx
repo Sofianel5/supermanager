@@ -29,7 +29,7 @@ export function DropdownButton({
     typeof children === "function" ? children({ closeDropdown }) : children;
   const rootClassName = cx("group relative block w-full", className);
   const panelClasses = cx(
-    "absolute right-0 top-[calc(100%+12px)] z-20 w-full rounded-lg border border-border bg-[linear-gradient(180deg,rgba(17,24,37,0.72),rgba(8,12,19,0.88))] p-[22px] shadow-float backdrop-blur-xl",
+    "absolute right-0 top-[calc(100%+12px)] z-20 w-full border border-border bg-[linear-gradient(180deg,rgba(17,24,37,0.72),rgba(8,12,19,0.88))] p-[22px] shadow-float backdrop-blur-xl",
     panelClassName,
   );
 

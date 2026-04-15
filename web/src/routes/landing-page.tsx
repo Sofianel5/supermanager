@@ -23,28 +23,23 @@ export function LandingPage() {
           <h1 className="m-0 max-w-[11ch] text-5xl font-semibold leading-none text-ink sm:text-6xl lg:text-[88px]">
             Real-time visibility into your team&apos;s AI productivity.
           </h1>
-          <p className="mt-[18px] max-w-[34rem] text-[1.08rem] leading-8 text-ink-dim">
-            Sign in once, approve CLI access when prompted, and keep room creation
-            and repo joins in the CLI.
-          </p>
-          <div className="mt-5 grid gap-3">
-            <Link className={secondaryButtonClass} to="/login">
-              Sign in
-            </Link>
-          </div>
         </div>
       </section>
 
       <section className="mt-7 grid gap-5 md:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
         <div className={cx(surfaceClass, "p-[22px]")}>
           <div className={sectionLabelClass}>How it works</div>
-          <ol className="grid gap-4 pl-5 text-ink leading-7">
+          <ol className="mt-4 grid list-inside list-decimal gap-4 pl-0 text-ink leading-7 marker:text-ink">
             <li>Sign in from the browser.</li>
             <li>Create your organization and first room.</li>
             <li>
-              Run `supermanager login`, then create or join rooms inside each repo.
+              Run `supermanager login`, then create or join rooms inside each
+              repo.
             </li>
-            <li>Claude Code and Codex hook turns flow into the private room dashboard.</li>
+            <li>
+              Claude Code and Codex hook turns flow into the private room
+              dashboard.
+            </li>
           </ol>
         </div>
 
@@ -67,7 +62,10 @@ export function LandingPage() {
             className={cx(copySheetClass, "mt-4")}
             type="button"
             onClick={() =>
-              copy("install", "curl -fsSL https://supermanager.dev/install.sh | sh")
+              copy(
+                "install",
+                "curl -fsSL https://supermanager.dev/install.sh | sh",
+              )
             }
           >
             <span className={copyLabelClass}>

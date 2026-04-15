@@ -292,7 +292,7 @@ function SummaryContent({
 
   if (summaryStatus === "error" && !hasContent) {
     return (
-      <p className="m-0 rounded-lg border border-dashed border-red-400/30 p-[18px] leading-7 text-danger">
+      <p className="m-0 border border-dashed border-red-400/30 p-[18px] leading-7 text-danger">
         Summary generation failed.
       </p>
     );
@@ -300,7 +300,7 @@ function SummaryContent({
 
   if (summaryStatus === "generating" && !hasContent) {
     return (
-      <p className="m-0 rounded-lg border border-dashed border-border p-[18px] leading-7 text-ink-dim">
+      <p className="m-0 border border-dashed border-border p-[18px] leading-7 text-ink-dim">
         Generating room summary...
       </p>
     );
@@ -308,7 +308,7 @@ function SummaryContent({
 
   if (!hasContent) {
     return (
-      <p className="m-0 rounded-lg border border-dashed border-border p-[18px] leading-7 text-ink-dim">
+      <p className="m-0 border border-dashed border-border p-[18px] leading-7 text-ink-dim">
         No updates yet. New hook activity will build the room summary here.
       </p>
     );
@@ -316,7 +316,7 @@ function SummaryContent({
 
   return (
     <div className="grid gap-4">
-      <section className="rounded-lg border border-border-strong bg-[linear-gradient(180deg,rgba(245,158,11,0.12),rgba(6,9,15,0.82))] p-[18px]">
+      <section className="border border-border-strong bg-[linear-gradient(180deg,rgba(245,158,11,0.12),rgba(6,9,15,0.82))] p-[18px]">
         <div className="mb-3.5 inline-flex font-mono text-[11px] font-semibold uppercase text-accent">
           BLUF
         </div>
@@ -357,7 +357,7 @@ function SummaryContent({
           <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
             {snapshot.employees.map((employee) => (
               <article
-                className="rounded-lg border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px]"
+                className="border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px]"
                 key={employee.employee_name}
               >
                 <div className="mb-3.5 flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
@@ -534,7 +534,7 @@ const markdownComponents = {
       return (
         <code
           {...props}
-          className="rounded-md border border-border bg-panel px-1.5 py-0.5 font-mono text-[0.9em] text-[#f4bf63]"
+          className="border border-border bg-panel px-1.5 py-0.5 font-mono text-[0.9em] text-[#f4bf63]"
         />
       );
     }
@@ -569,7 +569,7 @@ const markdownComponents = {
     return (
       <pre
         {...props}
-        className="mb-4 overflow-x-auto rounded-lg border border-border bg-panel px-4 py-3 text-[0.95rem] text-[#dbe7ff] last:mb-0"
+        className="mb-4 overflow-x-auto border border-border bg-panel px-4 py-3 text-[0.95rem] text-[#dbe7ff] last:mb-0"
       />
     );
   },
