@@ -57,6 +57,14 @@
   a {
     color: inherit;
   }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: wait;
+  }
 }
 
 @keyframes rise-in {
