@@ -1,4 +1,5 @@
 import { type ReactNode, useRef } from "react";
+import { cx, secondaryButtonClass } from "../ui";
 
 interface DropdownButtonProps {
   children: ReactNode | ((options: { closeDropdown(): void }) => ReactNode);
@@ -26,17 +27,25 @@ export function DropdownButton({
 
   const panelContent =
     typeof children === "function" ? children({ closeDropdown }) : children;
-  const rootClassName = ["room-info-dropdown", className].filter(Boolean).join(" ");
-  const panelClasses = ["room-info-dropdown__panel", panelClassName]
-    .filter(Boolean)
-    .join(" ");
+  const rootClassName = cx("group relative block w-full", className);
+  const panelClasses = cx(
+    "absolute right-0 top-[calc(100%+12px)] z-20 w-full rounded-lg border border-border bg-[linear-gradient(180deg,rgba(17,24,37,0.72),rgba(8,12,19,0.88))] p-[22px] shadow-float backdrop-blur-xl",
+    panelClassName,
+  );
 
   return (
     <details className={rootClassName} ref={detailsRef}>
-      <summary className="room-info-dropdown__trigger">{label}</summary>
+      <summary
+        className={cx(
+          secondaryButtonClass,
+          "relative z-30 w-full list-none justify-center pr-12 text-center text-base font-medium [&::-webkit-details-marker]:hidden [&::marker]:content-[''] after:absolute after:right-[18px] after:top-1/2 after:-translate-y-1/2 after:text-base after:leading-none after:content-['+'] after:transition-transform group-open:after:rotate-45",
+        )}
+      >
+        {label}
+      </summary>
       <div
         aria-hidden="true"
-        className="details-dropdown__backdrop"
+        className="fixed inset-0 z-10"
         onClick={closeDropdown}
       />
       <div className={panelClasses}>{panelContent}</div>

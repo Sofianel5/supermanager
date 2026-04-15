@@ -1,4 +1,5 @@
 import { DropdownButton } from "../dropdown-button";
+import { roomMetaClass, sectionLabelClass } from "../../ui";
 
 interface WorkspaceHeaderProps {
   activeOrganizationName: string | null;
@@ -20,24 +21,29 @@ export function WorkspaceHeader({
   onSignOut,
 }: WorkspaceHeaderProps) {
   return (
-    <section className="room-header">
+    <section className="flex flex-col gap-7 border-b border-border pb-9 pt-7 md:flex-row md:items-end md:justify-between">
       <div>
-        <div className="section-label">Rooms</div>
-        <h1>{activeOrganizationName || "Workspace"}</h1>
+        <div className={sectionLabelClass}>Rooms</div>
+        <h1 className="mt-4 max-w-full text-4xl font-semibold leading-none text-ink sm:text-5xl lg:text-6xl">
+          {activeOrganizationName || "Workspace"}
+        </h1>
         {userEmail && (
-          <p className="room-meta">
+          <p className={roomMetaClass}>
             <span>{userEmail}</span>
             {activeOrganizationSlug && <span>{activeOrganizationSlug}</span>}
           </p>
         )}
       </div>
 
-      <div className="room-header__actions">
-        <DropdownButton label="Menu" panelClassName="room-section account-menu__panel">
+      <div className="w-full md:max-w-[19rem]">
+        <DropdownButton
+          label="Menu"
+          panelClassName="grid overflow-hidden p-0"
+        >
           {({ closeDropdown }) => (
             <>
               <button
-                className="account-menu__item"
+                className="border-b border-border bg-transparent px-4 py-3 text-left text-ink transition hover:bg-white/5"
                 type="button"
                 onClick={() => {
                   closeDropdown();
@@ -47,7 +53,7 @@ export function WorkspaceHeader({
                 Invite teammate
               </button>
               <button
-                className="account-menu__item"
+                className="border-b border-border bg-transparent px-4 py-3 text-left text-ink transition hover:bg-white/5"
                 type="button"
                 onClick={() => {
                   closeDropdown();
@@ -57,7 +63,7 @@ export function WorkspaceHeader({
                 Docs
               </button>
               <button
-                className="account-menu__item"
+                className="bg-transparent px-4 py-3 text-left text-ink transition hover:bg-white/5 disabled:cursor-wait disabled:opacity-70"
                 type="button"
                 disabled={isSigningOut}
                 onClick={() => {

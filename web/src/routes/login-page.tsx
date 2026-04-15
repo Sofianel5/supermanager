@@ -2,6 +2,14 @@ import { useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { authClient, sanitizeReturnTo, toAbsoluteCallbackUrl } from "../auth-client";
 import { normalizeUserCode } from "../queries/device-status";
+import {
+  centeredShellClass,
+  errorMessageClass,
+  messageClass,
+  secondaryButtonClass,
+  sectionLabelClass,
+  statusBlockClass,
+} from "../ui";
 import { readAuthError, readMessage } from "../utils";
 
 type SocialProvider = "github" | "google";
@@ -53,10 +61,12 @@ export function LoginPage() {
 
   if (session.isPending) {
     return (
-      <main className="shell shell--centered">
-        <div className="status-block">
-          <span className="eyebrow">supermanager</span>
-          <h1>Checking your session…</h1>
+      <main className={centeredShellClass}>
+        <div className={statusBlockClass}>
+          <span className={sectionLabelClass}>supermanager</span>
+          <h1 className="mt-4 text-4xl font-semibold leading-none text-ink sm:text-5xl">
+            Checking your session…
+          </h1>
         </div>
       </main>
     );
@@ -67,19 +77,21 @@ export function LoginPage() {
   }
 
   return (
-    <main className="shell shell--centered">
-      <section className="status-block login-panel">
+    <main className={centeredShellClass}>
+      <section className={`${statusBlockClass} grid w-full max-w-[460px] gap-[18px]`}>
         <div>
-          <div className="eyebrow">supermanager</div>
-          <h1>Sign in</h1>
-          <p className="message">
+          <div className={sectionLabelClass}>supermanager</div>
+          <h1 className="mt-4 text-5xl font-semibold leading-none text-ink sm:text-6xl">
+            Sign in
+          </h1>
+          <p className={`${messageClass} mt-4`}>
             Continue with Google or GitHub to manage rooms and approve CLI logins.
           </p>
         </div>
 
-        <div className="auth-actions">
+        <div className="mt-[18px] grid gap-3">
           <button
-            className="secondary-button auth-button"
+            className={`${secondaryButtonClass} w-full`}
             type="button"
             disabled={pendingProvider !== null}
             onClick={() => void signIn("google")}
@@ -87,7 +99,7 @@ export function LoginPage() {
             {pendingProvider === "google" ? "Connecting to Google..." : "Continue with Google"}
           </button>
           <button
-            className="secondary-button auth-button"
+            className={`${secondaryButtonClass} w-full`}
             type="button"
             disabled={pendingProvider !== null}
             onClick={() => void signIn("github")}
@@ -95,8 +107,8 @@ export function LoginPage() {
             {pendingProvider === "github" ? "Connecting to GitHub..." : "Continue with GitHub"}
           </button>
         </div>
-        {error && <p className="message message--error">{error}</p>}
-        <Link className="inline-link" to="/">
+        {error && <p className={errorMessageClass}>{error}</p>}
+        <Link className={secondaryButtonClass} to="/">
           Back
         </Link>
       </section>

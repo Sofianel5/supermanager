@@ -1,5 +1,17 @@
 import { useState } from "react";
 import { authClient } from "../../auth-client";
+import {
+  cx,
+  errorMessageClass,
+  fieldLabelClass,
+  jumboInputClass,
+  messageClass,
+  pageShellClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+  sectionLabelClass,
+  surfaceClass,
+} from "../../ui";
 import { readAuthError, readMessage } from "../../utils";
 
 interface OrganizationOnboardingProps {
@@ -59,19 +71,23 @@ export function OrganizationOnboarding({
   }
 
   return (
-    <main className="landing-page first-run-page">
-      <div className="first-run-header">
-        <div className="first-run-header__copy">
-          <div className="eyebrow">supermanager</div>
-          <h1>Choose how you want to start.</h1>
-          <p className="hero-text first-run-header__text">
+    <main className={cx(pageShellClass, "pt-14")}>
+      <div className="flex flex-col gap-7 md:flex-row md:items-start md:justify-between">
+        <div className="max-w-[44rem]">
+          <div className={sectionLabelClass}>supermanager</div>
+          <h1 className="m-0 max-w-[14ch] text-5xl font-semibold leading-none text-ink sm:text-6xl lg:text-[4.6rem]">
+            Choose how you want to start.
+          </h1>
+          <p className="mt-4 max-w-[30rem] text-[1.08rem] leading-8 text-ink-dim">
             Create your organization now, or join one through an invite link.
           </p>
         </div>
-        <div className="first-run-header__actions">
-          {userEmail && <p className="first-run-header__email">{userEmail}</p>}
+        <div className="grid gap-3 md:justify-items-end">
+          {userEmail && (
+            <p className="m-0 font-mono text-[0.78rem] text-ink-muted">{userEmail}</p>
+          )}
           <button
-            className="secondary-button"
+            className={secondaryButtonClass}
             type="button"
             onClick={onSignOut}
           >
@@ -81,25 +97,23 @@ export function OrganizationOnboarding({
       </div>
 
       <section
-        className="first-run-layout"
+        className="mt-14 grid items-start gap-7 md:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]"
         aria-label="Organization onboarding"
       >
         <form
-          className="first-run-column first-run-column--primary"
+          className={cx(surfaceClass, "grid max-w-[760px] gap-[18px] p-[22px]")}
           onSubmit={(event) => {
             event.preventDefault();
             void handleCreateOrganization();
           }}
         >
-          <div className="section-label">Create organization</div>
+          <div className={sectionLabelClass}>Create organization</div>
 
-          <label
-            className="create-room-dialog__label"
-            htmlFor="organization-name"
-          >
+          <label className={fieldLabelClass} htmlFor="organization-name">
             Organization name
           </label>
           <input
+            className={jumboInputClass}
             id="organization-name"
             name="organization-name"
             type="text"
@@ -111,12 +125,12 @@ export function OrganizationOnboarding({
           />
 
           {(error || createError) && (
-            <p className="message message--error">{error || createError}</p>
+            <p className={errorMessageClass}>{error || createError}</p>
           )}
 
-          <div className="first-run-actions">
+          <div className="flex flex-wrap items-center gap-4">
             <button
-              className="primary-button"
+              className={primaryButtonClass}
               type="submit"
               disabled={isCreating}
             >
@@ -126,16 +140,21 @@ export function OrganizationOnboarding({
         </form>
 
         <section
-          className="first-run-column"
+          className={cx(surfaceClass, "grid gap-[18px] p-[22px]")}
           aria-labelledby="join-existing-organization"
         >
-          <div className="section-label">Join existing organization</div>
-          <h2 id="join-existing-organization">Join with an invite.</h2>
-          <p className="message first-run-copy">
+          <div className={sectionLabelClass}>Join existing organization</div>
+          <h2
+            className="m-0 max-w-[12ch] text-4xl font-semibold leading-none text-ink sm:text-5xl"
+            id="join-existing-organization"
+          >
+            Join with an invite.
+          </h2>
+          <p className="max-w-[32rem] text-[1.05rem] leading-8 text-ink-dim">
             You can&apos;t join organizations directly. Use an email-bound
             invite link from your manager.
           </p>
-          <p className="message first-run-hint">
+          <p className={`${messageClass} max-w-[24rem]`}>
             Ask your manager for an invite link, then sign in with that email
             address.
           </p>

@@ -6,6 +6,7 @@ import { DocsPage } from "./routes/docs-page";
 import { LandingPage } from "./routes/landing-page";
 import { LoginPage } from "./routes/login-page";
 import { RoomPage } from "./routes/room-page";
+import { centeredShellClass, sectionLabelClass, statusBlockClass } from "./ui";
 
 export function App() {
   return (
@@ -42,10 +43,12 @@ function RequireSession({ children }: { children: ReactNode }) {
 
   if (session.isPending) {
     return (
-      <main className="shell shell--centered">
-        <div className="status-block">
-          <span className="eyebrow">supermanager</span>
-          <h1>Checking your session…</h1>
+      <main className={centeredShellClass}>
+        <div className={statusBlockClass}>
+          <span className={sectionLabelClass}>supermanager</span>
+          <h1 className="mt-4 text-4xl font-semibold leading-none text-ink sm:text-5xl">
+            Checking your session…
+          </h1>
         </div>
       </main>
     );
