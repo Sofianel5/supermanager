@@ -86,14 +86,6 @@ export function AppPage() {
     setCreateRoomName("");
   }
 
-  function openInviteDialog() {
-    setIsInviteDialogOpen(true);
-  }
-
-  function closeInviteDialog() {
-    setIsInviteDialogOpen(false);
-  }
-
   async function handleCreateRoomSubmit() {
     if (!activeOrganization) {
       return;
@@ -176,13 +168,13 @@ export function AppPage() {
           activeOrganizationSlug={activeOrganization?.organization_slug ?? null}
           isSigningOut={pendingAction === "sign-out"}
           userEmail={viewer?.user.email ?? null}
-          onInviteTeammate={openInviteDialog}
+          onInviteTeammate={() => setIsInviteDialogOpen(true)}
           onOpenInstallInstructions={openInstallInstructions}
           onSignOut={() => void handleSignOut()}
         />
 
         {activeOrganization && viewer && !viewer.has_cli_auth && (
-          <CliSetupBanner onOpenInstallInstructions={openInstallInstructions} />
+          <CliSetupBanner />
         )}
 
         <WorkspacePanel
@@ -211,7 +203,7 @@ export function AppPage() {
         <InviteTeammateDialog
           organizationId={activeOrganization.organization_id}
           organizationName={activeOrganization.organization_name}
-          onClose={closeInviteDialog}
+          onClose={() => setIsInviteDialogOpen(false)}
         />
       )}
 

@@ -1,8 +1,8 @@
-interface CliSetupBannerProps {
-  onOpenInstallInstructions(): void;
-}
+import { useNavigate } from "react-router-dom";
 
-export function CliSetupBanner({ onOpenInstallInstructions }: CliSetupBannerProps) {
+export function CliSetupBanner() {
+  const navigate = useNavigate();
+
   return (
     <section className="workspace-banner">
       <div className="workspace-banner__body">
@@ -17,7 +17,7 @@ export function CliSetupBanner({ onOpenInstallInstructions }: CliSetupBannerProp
       <button
         className="secondary-button"
         type="button"
-        onClick={onOpenInstallInstructions}
+        onClick={() => navigate("/install")}
       >
         Open setup docs
       </button>
