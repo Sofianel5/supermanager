@@ -127,8 +127,10 @@ export class Db {
 
   async hasCliAuth(userId: string): Promise<boolean> {
     // Better Auth removes approved device codes after the CLI exchanges them,
-    // so we treat either an approved device code or the resulting headerless
-    // session row as evidence that the CLI has been configured recently.
+    // so we treat either an approved device code or the resulting CLI session
+    // row as evidence that the CLI has been configured recently. Older CLI
+    // sessions have a blank user-agent; newer ones send an explicit
+    // supermanager-cli/<version> user-agent.
     const [row] = await this.client<CliAuthRow[]>`
       SELECT (
         EXISTS(
@@ -144,8 +146,10 @@ export class Db {
           FROM "session"
           WHERE "userId" = ${userId}
             AND "expiresAt" > NOW()
-            AND COALESCE("ipAddress", '') = ''
-            AND COALESCE("userAgent", '') = ''
+            AND (
+              COALESCE("userAgent", '') = ''
+              OR COALESCE("userAgent", '') LIKE 'supermanager-cli/%'
+            )
         )
       ) AS has_cli_auth
     `;

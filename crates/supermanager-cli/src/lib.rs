@@ -12,7 +12,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use reporter_protocol::{
     CreateRoomRequest, CreateRoomResponse, HookTurnReport, RoomMetadataResponse,
 };
-use reqwest::blocking::Client;
+use reqwest::{
+    blocking::Client,
+    header::{HeaderMap, HeaderValue, USER_AGENT},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use toml_edit::{DocumentMut, Item, Table, value};
@@ -38,6 +41,7 @@ const DEVICE_SCOPE: &str = "openid profile email";
 const HOOK_TIMEOUT_SECONDS: u64 = 10;
 const REPORT_TIMEOUT_SECONDS: u64 = 5;
 const API_TIMEOUT_SECONDS: u64 = 10;
+const CLI_USER_AGENT: &str = concat!("supermanager-cli/", env!("CARGO_PKG_VERSION"));
 
 pub const DEFAULT_SERVER_URL: &str = "https://api.supermanager.dev";
 
@@ -208,9 +212,9 @@ pub fn logout(home_dir: &Path) -> Result<bool> {
     match fs::remove_file(&path) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(
-            anyhow::Error::new(error).context(format!("failed to remove {}", path.display()))
-        ),
+        Err(error) => {
+            Err(anyhow::Error::new(error).context(format!("failed to remove {}", path.display())))
+        }
     }
 }
 
@@ -442,13 +446,19 @@ fn default_room_name(repo_dir: &Path) -> String {
 fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
     upsert_command_hooks(
         &repo_dir.join(CLAUDE_SETTINGS_LOCAL),
-        &[("UserPromptSubmit", CLAUDE_HOOK_COMMAND), ("Stop", CLAUDE_HOOK_COMMAND)],
+        &[
+            ("UserPromptSubmit", CLAUDE_HOOK_COMMAND),
+            ("Stop", CLAUDE_HOOK_COMMAND),
+        ],
     )?;
 
     upsert_codex_config(&repo_dir.join(CODEX_CONFIG))?;
     upsert_command_hooks(
         &repo_dir.join(CODEX_HOOKS_JSON),
-        &[("UserPromptSubmit", CODEX_HOOK_COMMAND), ("Stop", CODEX_HOOK_COMMAND)],
+        &[
+            ("UserPromptSubmit", CODEX_HOOK_COMMAND),
+            ("Stop", CODEX_HOOK_COMMAND),
+        ],
     )?;
 
     Ok(())
@@ -503,7 +513,7 @@ fn read_auth_state(path: &Path) -> Result<Option<AuthState>> {
         Err(error) => {
             return Err(
                 anyhow::Error::new(error).context(format!("failed to read {}", path.display()))
-            )
+            );
         }
     };
     if text.trim().is_empty() {
@@ -768,7 +778,11 @@ fn path_basename(path: &Path) -> Option<String> {
 }
 
 fn build_http_client(timeout_seconds: u64) -> Result<Client> {
+    let mut default_headers = HeaderMap::new();
+    default_headers.insert(USER_AGENT, HeaderValue::from_static(CLI_USER_AGENT));
+
     Client::builder()
+        .default_headers(default_headers)
         .timeout(Duration::from_secs(timeout_seconds))
         .build()
         .context("failed to build HTTP client")
@@ -1281,6 +1295,8 @@ fn write_private_text(path: &Path, text: &str) -> Result<()> {
 mod tests {
     use std::{
         fs,
+        io::{Read as _, Write as _},
+        net::TcpListener,
         process::Command,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -1526,6 +1542,47 @@ mod tests {
         assert!(outcome.rooms.is_empty());
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn build_http_client_sets_cli_user_agent() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener binds");
+        let address = listener.local_addr().expect("listener addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection accepted");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+
+            loop {
+                let read = stream.read(&mut buffer).expect("request bytes read");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .expect("response written");
+
+            String::from_utf8(request).expect("request is utf-8")
+        });
+
+        let client = build_http_client(API_TIMEOUT_SECONDS).unwrap();
+        let response = client
+            .get(format!("http://{address}"))
+            .send()
+            .expect("request sends");
+        assert!(response.status().is_success());
+
+        let request = server.join().expect("server joins");
+        assert!(
+            request.contains(&format!("user-agent: {CLI_USER_AGENT}\r\n")),
+            "request headers were: {request}"
+        );
     }
 
     fn test_dir(name: &str) -> PathBuf {
