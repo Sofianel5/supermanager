@@ -11,6 +11,7 @@ import { trimUrl, type ServerConfig } from "./config";
 
 export const AUTH_BASE_PATH = "/api/auth";
 export const CLI_DEVICE_CLIENT_ID = "supermanager-cli";
+export const CLI_USER_AGENT_PREFIX = "supermanager-cli/";
 export const ROOM_CONNECTION_KEY_CONFIG = "room-connection";
 const RDS_CA_BUNDLE_PATH = "/etc/ssl/certs/rds-global-bundle.pem";
 export const HOOK_WRITE_PERMISSIONS: Record<string, string[]> = {

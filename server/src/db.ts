@@ -8,7 +8,7 @@ import {
   type SummaryStatus,
   emptyRoomSnapshot,
 } from "./types";
-import { CLI_DEVICE_CLIENT_ID } from "./auth";
+import { CLI_DEVICE_CLIENT_ID, CLI_USER_AGENT_PREFIX } from "./auth";
 
 const ROOM_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const ROOM_CODE_LENGTH = 6;
@@ -127,10 +127,9 @@ export class Db {
 
   async hasCliAuth(userId: string): Promise<boolean> {
     // Better Auth removes approved device codes after the CLI exchanges them,
-    // so we treat either an approved device code or the resulting CLI session
-    // row as evidence that the CLI has been configured recently. Older CLI
-    // sessions have a blank user-agent; newer ones send an explicit
-    // supermanager-cli/<version> user-agent.
+    // so we treat either an approved device code or a session row created by
+    // the CLI's explicit user-agent as evidence that the CLI has been
+    // configured recently.
     const [row] = await this.client<CliAuthRow[]>`
       SELECT (
         EXISTS(
@@ -146,10 +145,7 @@ export class Db {
           FROM "session"
           WHERE "userId" = ${userId}
             AND "expiresAt" > NOW()
-            AND (
-              COALESCE("userAgent", '') = ''
-              OR COALESCE("userAgent", '') LIKE 'supermanager-cli/%'
-            )
+            AND COALESCE("userAgent", '') LIKE ${`${CLI_USER_AGENT_PREFIX}%`}
         )
       ) AS has_cli_auth
     `;
