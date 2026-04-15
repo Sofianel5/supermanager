@@ -426,6 +426,17 @@ pre {
   margin-bottom: 16px;
 }
 
+.room-section__head .section-label {
+  margin-bottom: 0;
+}
+
+.room-section__heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .room-section__head--compact {
   margin-bottom: 18px;
 }
