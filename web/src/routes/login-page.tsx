@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { authClient, sanitizeReturnTo, toAbsoluteCallbackUrl } from "../auth-client";
 import { normalizeUserCode } from "../queries/device-status";
-import { readAuthError } from "../utils";
+import { readAuthError, readMessage } from "../utils";
 
 type SocialProvider = "github" | "google";
 
@@ -10,6 +10,7 @@ export function LoginPage() {
   const location = useLocation();
   const session = authClient.useSession();
   const [error, setError] = useState<string | null>(null);
+  const [pendingProvider, setPendingProvider] = useState<SocialProvider | null>(null);
 
   const searchParams = new URLSearchParams(location.search);
   const userCode = normalizeUserCode(searchParams.get("user_code"));
@@ -21,16 +22,32 @@ export function LoginPage() {
     : returnTo;
 
   async function signIn(provider: SocialProvider) {
+    if (pendingProvider) {
+      return;
+    }
+
     setError(null);
+    setPendingProvider(provider);
 
-    const result = await authClient.signIn.social({
-      callbackURL: toAbsoluteCallbackUrl(callbackPath),
-      errorCallbackURL: toAbsoluteCallbackUrl(loginPath),
-      provider,
-    });
+    try {
+      const result = await authClient.signIn.social({
+        callbackURL: toAbsoluteCallbackUrl(callbackPath),
+        errorCallbackURL: toAbsoluteCallbackUrl(loginPath),
+        provider,
+      });
 
-    if (result.error) {
-      setError(readAuthError(result.error));
+      if (result.error) {
+        setError(readAuthError(result.error));
+      }
+    } catch (error) {
+      const message = readMessage(error);
+      setError(
+        /fetch/i.test(message)
+          ? "Couldn't reach the sign-in service. Try again in a moment."
+          : message,
+      );
+    } finally {
+      setPendingProvider(null);
     }
   }
 
@@ -64,16 +81,18 @@ export function LoginPage() {
           <button
             className="secondary-button auth-button"
             type="button"
+            disabled={pendingProvider !== null}
             onClick={() => void signIn("google")}
           >
-            Continue with Google
+            {pendingProvider === "google" ? "Connecting to Google..." : "Continue with Google"}
           </button>
           <button
             className="secondary-button auth-button"
             type="button"
+            disabled={pendingProvider !== null}
             onClick={() => void signIn("github")}
           >
-            Continue with GitHub
+            {pendingProvider === "github" ? "Connecting to GitHub..." : "Continue with GitHub"}
           </button>
         </div>
         {error && <p className="message message--error">{error}</p>}

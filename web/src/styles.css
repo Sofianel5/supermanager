@@ -235,7 +235,8 @@ pre {
 }
 
 .room-form button:disabled,
-.primary-button:disabled {
+.primary-button:disabled,
+.secondary-button:disabled {
   cursor: wait;
   opacity: 0.7;
 }
