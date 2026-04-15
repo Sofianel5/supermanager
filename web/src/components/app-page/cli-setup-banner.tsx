@@ -17,7 +17,7 @@ export function CliSetupBanner() {
       <button
         className="secondary-button"
         type="button"
-        onClick={() => navigate("/install")}
+        onClick={() => navigate("/docs")}
       >
         Open setup docs
       </button>
