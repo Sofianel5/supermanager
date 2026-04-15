@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { authClient, sanitizeReturnTo } from "./auth-client";
 import { AppPage } from "./routes/app-page";
-import { InstallPage } from "./routes/install-page";
+import { DocsPage } from "./routes/docs-page";
 import { LandingPage } from "./routes/landing-page";
 import { LoginPage } from "./routes/login-page";
 import { RoomPage } from "./routes/room-page";
@@ -12,7 +12,7 @@ export function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        <Route path="/install" element={<InstallPage />} />
+        <Route path="/docs" element={<DocsPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route
           path="/app"

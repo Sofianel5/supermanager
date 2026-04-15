@@ -840,11 +840,6 @@ pre {
   width: 100%;
 }
 
-.app-toolbar {
-  display: flex;
-  justify-content: flex-end;
-}
-
 .app-stack {
   gap: 18px;
 }
@@ -853,8 +848,78 @@ pre {
   margin-top: 28px;
 }
 
-.install-instructions {
-  width: min(100%, 720px);
+.docs-page {
+  padding-top: 56px;
+}
+
+.docs-page__header {
+  display: grid;
+  gap: 20px;
+  padding-bottom: 28px;
+}
+
+.docs-page__header h1 {
+  margin: 0;
+  max-width: 11ch;
+  font-size: clamp(3.4rem, 9vw, 6rem);
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.docs-page__intro {
+  margin: 0;
+  max-width: 48rem;
+}
+
+.docs-sections {
+  display: grid;
+  gap: 20px;
+}
+
+.docs-section {
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.docs-section__body,
+.docs-section__note {
+  max-width: 64rem;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+.docs-section__body {
+  margin: 0;
+  font-size: 1.08rem;
+}
+
+.docs-section__note {
+  margin: 16px 0 0;
+  font-size: 1rem;
+}
+
+.docs-command-stack {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.docs-command {
+  width: 100%;
+}
+
+.docs-command--hero {
+  width: min(100%, 880px);
+  margin-top: 8px;
+}
+
+.docs-section__examples {
+  margin-top: 18px;
+}
+
+.docs-example-list {
+  margin-top: 10px;
+  color: var(--text-dim);
 }
 
 .app-room-list {
