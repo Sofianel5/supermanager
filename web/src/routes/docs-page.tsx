@@ -10,6 +10,7 @@ import {
 
 const INSTALL_COMMAND = "curl -fsSL https://supermanager.dev/install.sh | sh";
 const LOGIN_COMMAND = "supermanager login";
+const CONFIGURE_ORG_COMMAND = "supermanager orgs configure";
 const CREATE_ROOM_COMMAND = 'supermanager create room "Frontend"';
 const JOIN_ROOM_COMMAND = 'supermanager join "<room-id>"';
 
@@ -61,11 +62,25 @@ export function DocsPage() {
                 {LOGIN_COMMAND}
               </code>
             </button>
+            <button
+              className={copySheetClass}
+              type="button"
+              onClick={() => void copy("configure-org", CONFIGURE_ORG_COMMAND)}
+            >
+              <span className={copyLabelClass}>
+                Configure org{" "}
+                {copiedValue === "configure-org" ? "copied" : "click to copy"}
+              </span>
+              <code className="mt-2.5 block break-words font-mono text-[13px] leading-7 text-[#f4bf63]">
+                {CONFIGURE_ORG_COMMAND}
+              </code>
+            </button>
           </div>
           <p className="mt-4 max-w-[64rem] text-base leading-7 text-ink-dim">
             If your account belongs to multiple organizations, add{" "}
             <code>--org &quot;&lt;org-slug&gt;&quot;</code> to the login
-            command.
+            command or run <code>supermanager orgs configure</code> once after
+            logging in.
           </p>
         </article>
 
