@@ -3,12 +3,10 @@ import { useCallback, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { authClient } from "../auth-client";
+import { CliSetupBanner } from "../components/app-page/cli-setup-banner";
 import { CreateRoomDialog } from "../components/app-page/create-room-dialog";
 import { DeviceApprovalDialog } from "../components/app-page/device-approval-dialog";
-import {
-  InviteTeammateDialog,
-  type InviteTeammateLink,
-} from "../components/app-page/invite-teammate-dialog";
+import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
 import { InviteJoinGate } from "../components/app-page/invite-join-gate";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
@@ -30,17 +28,12 @@ export function AppPage() {
   const queryClient = useQueryClient();
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [createRoomError, setCreateRoomError] = useState<string | null>(null);
-  const [inviteError, setInviteError] = useState<string | null>(null);
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<
-    "sign-out" | "create-invite" | "create-room" | null
-  >(null);
+  const [pendingAction, setPendingAction] = useState<"sign-out" | "create-room" | null>(null);
   const [pendingDeviceAction, setPendingDeviceAction] = useState<"approve" | "deny" | null>(null);
   const [isCreateRoomDialogOpen, setIsCreateRoomDialogOpen] = useState(false);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [createRoomName, setCreateRoomName] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [createdInvitation, setCreatedInvitation] = useState<InviteTeammateLink | null>(null);
 
   const userCode = normalizeUserCode(new URLSearchParams(location.search).get("user_code"));
   const { activeOrganization, rooms, roomsQuery, viewerQuery } = useWorkspaceData(null);
@@ -57,7 +50,6 @@ export function AppPage() {
   const deviceError =
     deviceActionError || readQueryError(deviceStatusQuery.error);
   const isCreatingRoom = pendingAction === "create-room";
-  const isCreatingInvite = pendingAction === "create-invite";
 
   function openInstallInstructions() {
     navigate("/install");
@@ -95,21 +87,11 @@ export function AppPage() {
   }
 
   function openInviteDialog() {
-    setInviteError(null);
-    setInviteEmail("");
-    setCreatedInvitation(null);
     setIsInviteDialogOpen(true);
   }
 
   function closeInviteDialog() {
-    if (isCreatingInvite) {
-      return;
-    }
-
     setIsInviteDialogOpen(false);
-    setInviteError(null);
-    setInviteEmail("");
-    setCreatedInvitation(null);
   }
 
   async function handleCreateRoomSubmit() {
@@ -141,44 +123,6 @@ export function AppPage() {
     } finally {
       setPendingAction(null);
     }
-  }
-
-  async function handleInviteSubmit() {
-    if (!activeOrganization) {
-      return;
-    }
-
-    const email = inviteEmail.trim().toLowerCase();
-    if (!email) {
-      setInviteError("Teammate email is required.");
-      return;
-    }
-
-    setPendingAction("create-invite");
-    setInviteError(null);
-
-    const result = await authClient.organization.inviteMember({
-      email,
-      organizationId: activeOrganization.organization_id,
-      role: "member",
-    });
-
-    setPendingAction(null);
-
-    if (result.error) {
-      setInviteError(readAuthError(result.error));
-      return;
-    }
-
-    if (!result.data) {
-      setInviteError("Failed to create invite.");
-      return;
-    }
-
-    setCreatedInvitation({
-      email: result.data.email,
-      inviteUrl: buildInvitationUrl(result.data.id),
-    });
   }
 
   async function handleDeviceAction(action: "approve" | "deny") {
@@ -238,24 +182,7 @@ export function AppPage() {
         />
 
         {activeOrganization && viewer && !viewer.has_cli_auth && (
-          <section className="workspace-banner">
-            <div className="workspace-banner__body">
-              <div className="section-label">CLI setup</div>
-              <h2>Install and sign in to the CLI before repo activity lands here.</h2>
-              <p className="message">
-                Open the setup docs, run the install command on the repo machine, then
-                authenticate and join a room from that checkout.
-              </p>
-            </div>
-
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={openInstallInstructions}
-            >
-              Open setup docs
-            </button>
-          </section>
+          <CliSetupBanner onOpenInstallInstructions={openInstallInstructions} />
         )}
 
         <WorkspacePanel
@@ -282,19 +209,9 @@ export function AppPage() {
 
       {isInviteDialogOpen && activeOrganization && (
         <InviteTeammateDialog
-          email={inviteEmail}
-          error={inviteError}
-          invitation={createdInvitation}
-          isCreating={isCreatingInvite}
+          organizationId={activeOrganization.organization_id}
           organizationName={activeOrganization.organization_name}
           onClose={closeInviteDialog}
-          onCreate={() => void handleInviteSubmit()}
-          onEmailChange={setInviteEmail}
-          onReset={() => {
-            setInviteError(null);
-            setInviteEmail("");
-            setCreatedInvitation(null);
-          }}
         />
       )}
 
@@ -315,11 +232,4 @@ export function AppPage() {
 
 function readQueryError(error: unknown) {
   return error instanceof Error ? error.message : null;
-}
-
-function buildInvitationUrl(invitationId: string) {
-  const params = new URLSearchParams({
-    invite: invitationId,
-  });
-  return new URL(`/app?${params.toString()}`, window.location.origin).toString();
 }

@@ -1,42 +1,85 @@
-import { useEffect, useRef } from "react";
-import { useCopyHandler } from "../../utils";
+import { useEffect, useRef, useState } from "react";
+import { authClient } from "../../auth-client";
+import { readAuthError, useCopyHandler } from "../../utils";
 
-export interface InviteTeammateLink {
+interface InviteTeammateLink {
   email: string;
   inviteUrl: string;
 }
 
 interface InviteTeammateDialogProps {
-  email: string;
-  error?: string | null;
-  invitation?: InviteTeammateLink | null;
-  isCreating?: boolean;
+  organizationId: string;
   organizationName: string;
   onClose(): void;
-  onCreate(): void;
-  onEmailChange(email: string): void;
-  onReset(): void;
 }
 
 export function InviteTeammateDialog({
-  email,
-  error,
-  invitation,
-  isCreating = false,
+  organizationId,
   organizationName,
   onClose,
-  onCreate,
-  onEmailChange,
-  onReset,
 }: InviteTeammateDialogProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { copiedValue, copy } = useCopyHandler();
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [invitation, setInvitation] = useState<InviteTeammateLink | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
     if (!invitation) {
       inputRef.current?.focus();
     }
   }, [invitation]);
+
+  function handleClose() {
+    if (isCreating) {
+      return;
+    }
+
+    onClose();
+  }
+
+  async function handleInviteSubmit() {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setError("Teammate email is required.");
+      return;
+    }
+
+    setIsCreating(true);
+    setError(null);
+
+    try {
+      const result = await authClient.organization.inviteMember({
+        email: normalizedEmail,
+        organizationId,
+        role: "member",
+      });
+
+      if (result.error) {
+        setError(readAuthError(result.error));
+        return;
+      }
+
+      if (!result.data) {
+        setError("Failed to create invite.");
+        return;
+      }
+
+      setInvitation({
+        email: result.data.email,
+        inviteUrl: buildInvitationUrl(result.data.id),
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  function resetInviteForm() {
+    setEmail("");
+    setError(null);
+    setInvitation(null);
+  }
 
   return (
     <div className="dialog-backdrop">
@@ -71,7 +114,7 @@ export function InviteTeammateDialog({
               <code>{invitation.inviteUrl}</code>
             </button>
             <div className="dialog-actions">
-              <button className="secondary-button" type="button" onClick={onReset}>
+              <button className="secondary-button" type="button" onClick={resetInviteForm}>
                 Invite another
               </button>
               <a
@@ -81,7 +124,7 @@ export function InviteTeammateDialog({
                 Draft email
               </a>
             </div>
-            <button className="secondary-button" type="button" onClick={onClose}>
+            <button className="secondary-button" type="button" onClick={handleClose}>
               Done
             </button>
           </div>
@@ -90,7 +133,7 @@ export function InviteTeammateDialog({
             className="create-room-dialog__form"
             onSubmit={(event) => {
               event.preventDefault();
-              onCreate();
+              void handleInviteSubmit();
             }}
           >
             <label className="create-room-dialog__label" htmlFor="invite-email">
@@ -104,13 +147,13 @@ export function InviteTeammateDialog({
               autoComplete="email"
               spellCheck={false}
               value={email}
-              onChange={(event) => onEmailChange(event.target.value)}
+              onChange={(event) => setEmail(event.target.value)}
             />
 
             {error && <p className="message message--error">{error}</p>}
 
             <div className="dialog-actions">
-              <button className="secondary-button" type="button" onClick={onClose}>
+              <button className="secondary-button" type="button" onClick={handleClose}>
                 Cancel
               </button>
               <button className="primary-button" type="submit" disabled={isCreating}>
@@ -136,4 +179,11 @@ function buildMailtoLink(organizationName: string, email: string, inviteUrl: str
   ].join("\n");
 
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function buildInvitationUrl(invitationId: string) {
+  const params = new URLSearchParams({
+    invite: invitationId,
+  });
+  return new URL(`/app?${params.toString()}`, window.location.origin).toString();
 }
