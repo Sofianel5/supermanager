@@ -20,7 +20,7 @@ export function LandingPage() {
       <section className="flex min-h-[42vh] flex-col justify-between gap-7 border-b border-border pb-9 pt-7 md:flex-row md:items-end animate-[rise-in_500ms_ease-out_both]">
         <div className="max-w-[720px]">
           <div className={sectionLabelClass}>supermanager</div>
-          <h1 className="m-0 max-w-[11ch] text-5xl font-semibold leading-none text-ink sm:text-6xl lg:text-[88px]">
+          <h1 className="m-0 max-w-[11ch] text-[clamp(3rem,9vw,6.5rem)] font-bold leading-[0.95] tracking-[-0.06em] text-ink">
             Real-time visibility into your team&apos;s AI productivity.
           </h1>
         </div>

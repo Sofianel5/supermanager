@@ -3,7 +3,7 @@ export function cx(...values: Array<string | false | null | undefined>) {
 }
 
 export const pageShellClass =
-  "relative z-10 mx-auto w-full max-w-[1180px] px-5 pb-[72px] pt-9";
+  "relative z-10 mx-auto w-[min(1180px,calc(100vw-40px))] pb-[72px] pt-9 max-[900px]:w-[min(1180px,calc(100vw-28px))] max-[900px]:pt-[18px] max-[640px]:w-[min(1180px,calc(100vw-20px))] max-[640px]:pb-10";
 
 export const centeredShellClass = `${pageShellClass} flex min-h-screen items-center justify-center`;
 
@@ -20,7 +20,7 @@ export const subduedSurfaceClass =
   "border border-border bg-[rgba(6,9,15,0.74)]";
 
 export const sectionLabelClass =
-  "inline-flex items-center gap-2 font-mono text-[11px] font-semibold uppercase text-accent";
+  "inline-flex items-center gap-2 font-mono text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-accent";
 
 export const messageClass = "m-0 text-[0.95rem] leading-7 text-ink-dim";
 export const errorMessageClass = "m-0 text-[0.95rem] leading-7 text-danger";
