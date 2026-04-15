@@ -166,6 +166,15 @@ From there you can create room-scoped workspaces, generate organization invite l
 | `/v1/rooms/{room_id}/connections` | POST | Mint a repo-scoped API key for the room |
 | `/v1/hooks/turn` | POST | Submit a hook-captured turn event using `x-api-key` |
 | `/v1/rooms/{room_id}/summary` | GET | Read the current room summary JSON (`bluf_markdown`, `overview_markdown`, `employees[]`) |
+| `/mcp` | POST | Streamable HTTP MCP endpoint with manager-facing read-only tools |
+
+The MCP endpoint currently exposes these tools:
+
+- `list_rooms`
+- `get_room_summary`
+- `get_room_feed`
+- `query_events`
+- `search_events`
 
 ## Project structure
 

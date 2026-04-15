@@ -15,6 +15,8 @@ import {
   requireViewer,
   resolveOrganizationMembership,
 } from "./middleware";
+import { createMcpRoutes } from "./mcp/routes";
+import { indexEventById } from "./search/store";
 import type { FeedStreamHub } from "./sse";
 import type { StoragePaths } from "./storage";
 import type { SummaryAgentHost } from "./summary/agent-host";
@@ -77,18 +79,26 @@ export function createApp(context: AppContext) {
     .use(
       cors({
         allowedHeaders: [
+          "Accept",
           "Authorization",
           "Content-Type",
           "Last-Event-ID",
+          "MCP-Protocol-Version",
+          "MCP-Session-Id",
           "X-API-Key",
         ],
         credentials: true,
-        exposeHeaders: ["set-auth-token"],
-        methods: ["GET", "POST", "OPTIONS"],
+        exposeHeaders: [
+          "mcp-protocol-version",
+          "mcp-session-id",
+          "set-auth-token",
+        ],
+        methods: ["DELETE", "GET", "POST", "OPTIONS"],
         origin: allowedOrigins,
       }),
     )
     .mount(context.auth.handler)
+    .use(createMcpRoutes(context))
     .onError(({ code, error }) => {
       if (code === "NOT_FOUND") {
         return new Response("not found", { status: 404 });
@@ -380,6 +390,11 @@ export function createApp(context: AppContext) {
 
         context.feedHub.publishHookEvent(room.room_id, stored);
         await context.agent.enqueue(room.room_id, stored);
+        void indexEventById(context.db, stored.event_id).catch((error) => {
+          console.error(
+            `[search] failed to index hook event ${stored.event_id}: ${formatError(error)}`,
+          );
+        });
 
         return status(202, {
           event_id: stored.event_id,

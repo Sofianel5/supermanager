@@ -19,9 +19,11 @@
   "dependencies": {
     "@better-auth/api-key": "1.6.2",
     "@elysiajs/cors": "^1.4.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "better-auth": "1.6.2",
     "elysia": "^1.4.28",
     "kysely": "^0.28.16",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "zod": "^4.3.6"
   }
 }

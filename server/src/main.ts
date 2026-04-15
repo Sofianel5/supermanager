@@ -5,6 +5,7 @@ import { createAuthServices } from "./auth";
 import { loadConfig, trimUrl } from "./config";
 import { Db } from "./db";
 import { runAppMigrations } from "./migrations";
+import { indexUnembeddedEvents } from "./search/store";
 import { FeedStreamHub } from "./sse";
 import { StoragePaths } from "./storage";
 import { SummaryAgentHost } from "./summary/agent-host";
@@ -19,6 +20,10 @@ async function main(): Promise<void> {
 
   const storage = new StoragePaths(config.dataDir);
   await storage.initialize();
+  const indexedEvents = await indexUnembeddedEvents(db);
+  if (indexedEvents > 0) {
+    console.log(`indexed ${indexedEvents} hook events for semantic search`);
+  }
 
   const feedHub = new FeedStreamHub([
     trimUrl(config.publicApiUrl),
