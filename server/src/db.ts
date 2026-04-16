@@ -449,13 +449,17 @@ export class Db {
     }));
   }
 
-  async getOrganizationSummary(organizationId: string): Promise<OrganizationSnapshot> {
+  async getOrganizationSummary(
+    organizationId: string,
+  ): Promise<OrganizationSnapshot> {
     const [row] = await this.client<SummaryRow[]>`
       SELECT content_json
       FROM organization_summaries
       WHERE organization_id = ${organizationId}
     `;
-    return row ? normalizeOrganizationSnapshot(row.content_json) : emptyOrganizationSnapshot();
+    return row
+      ? normalizeOrganizationSnapshot(row.content_json)
+      : emptyOrganizationSnapshot();
   }
 
   async getRoomSummary(roomId: string): Promise<RoomSnapshot> {
@@ -487,7 +491,10 @@ export class Db {
     `;
   }
 
-  async setOrganizationSummary(organizationId: string, content: OrganizationSnapshot): Promise<void> {
+  async setOrganizationSummary(
+    organizationId: string,
+    content: OrganizationSnapshot,
+  ): Promise<void> {
     await this.client`
       INSERT INTO organization_summaries (organization_id, content_json, status, updated_at)
       VALUES (${organizationId}, ${normalizeOrganizationSnapshot(content)}, 'ready', NOW())

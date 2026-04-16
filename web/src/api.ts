@@ -1,22 +1,28 @@
 import type {
-  EmployeeSnapshot,
   FeedResponse,
-  OrganizationSnapshot,
   RoomMetadataResponse,
-  RoomBlufSnapshot,
-  RoomSnapshot,
   StoredHookEvent,
 } from "./generated";
+import type {
+  EmployeeSnapshot,
+  OrganizationSnapshot,
+  RoomBlufSnapshot,
+  RoomSnapshot,
+  SummaryStatus,
+} from "../../server/src/generated/summary-protocol";
 
 export type {
-  EmployeeSnapshot,
   FeedResponse,
-  OrganizationSnapshot,
-  RoomBlufSnapshot,
   RoomMetadataResponse,
-  RoomSnapshot,
   StoredHookEvent,
 } from "./generated";
+export type {
+  EmployeeSnapshot,
+  OrganizationSnapshot,
+  RoomBlufSnapshot,
+  RoomSnapshot,
+  SummaryStatus,
+} from "../../server/src/generated/summary-protocol";
 
 export interface ViewerUser {
   email: string;
@@ -39,8 +45,6 @@ export interface ViewerResponse {
   organizations: ViewerOrganization[];
   user: ViewerUser;
 }
-
-export type SummaryStatus = "generating" | "ready" | "error";
 
 export interface RoomListEntry {
   created_at: string;

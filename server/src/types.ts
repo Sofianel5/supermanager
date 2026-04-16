@@ -1,3 +1,8 @@
+import type {
+  OrganizationSnapshot,
+  RoomSnapshot,
+} from "./generated/summary-protocol";
+
 export interface IngestResponse {
   event_id: string;
   received_at: string;
@@ -63,30 +68,6 @@ export interface ViewerResponse {
   };
 }
 
-export interface EmployeeSnapshot {
-  employee_name: string;
-  room_ids: string[];
-  bluf_markdown: string;
-  last_update_at: string;
-}
-
-export interface RoomBlufSnapshot {
-  room_id: string;
-  bluf_markdown: string;
-  last_update_at: string;
-}
-
-export interface RoomSnapshot {
-  bluf_markdown: string;
-  employees: EmployeeSnapshot[];
-}
-
-export interface OrganizationSnapshot {
-  bluf_markdown: string;
-  rooms: RoomBlufSnapshot[];
-  employees: EmployeeSnapshot[];
-}
-
 export interface HookTurnReport {
   employee_name: string;
   client: string;
@@ -106,7 +87,13 @@ export interface StoredHookEvent {
   payload: unknown;
 }
 
-export type SummaryStatus = "generating" | "ready" | "error";
+export type {
+  EmployeeSnapshot,
+  OrganizationSnapshot,
+  RoomBlufSnapshot,
+  RoomSnapshot,
+  SummaryStatus,
+} from "./generated/summary-protocol";
 
 export function emptyRoomSnapshot(): RoomSnapshot {
   return {

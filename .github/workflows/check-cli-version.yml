@@ -5,7 +5,9 @@ on:
     paths:
       - Cargo.toml
       - Cargo.lock
-      - crates/reporter-protocol/**
+      - crates/reporter-protocol/Cargo.toml
+      - crates/reporter-protocol/src/hook.rs
+      - crates/reporter-protocol/src/room.rs
       - crates/supermanager-cli/**
       - scripts/check-cli-release.py
       - scripts/package-release.sh
