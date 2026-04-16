@@ -78,7 +78,7 @@ Each employee BLUF represents one currently relevant person in the organization.
 
 Heartbeat refresh requests include:
 - `current_rooms`: the current room roster.
-- `recent_org_events`: recent hook events across the organization.
+- `org_events_since_previous_heartbeat`: hook events that arrived since the previous successful heartbeat.
 
 Tool contract:
 - Always call `get_snapshot` before deciding what to edit.
