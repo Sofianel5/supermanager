@@ -14,7 +14,6 @@ import {
   errorMessageClass,
   messageClass,
   pillBaseClass,
-  secondaryButtonClass,
   sectionLabelClass,
   subduedSurfaceClass,
   surfaceClass,
@@ -65,7 +64,17 @@ export function OrganizationInsightsPanel({
         <p className={errorMessageClass}>Failed to load your workspace.</p>
       ) : (
         <div className="grid gap-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="grid gap-4">
+            <Link
+              className="group inline-flex max-w-full flex-wrap items-center gap-3 text-base font-medium text-ink no-underline transition hover:text-white"
+              to={buildOrganizationHref(activeOrganization.organization_slug)}
+            >
+              <span className="font-mono text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-accent transition-transform duration-150 group-hover:-translate-x-px">
+                &lt;
+              </span>
+              <span>{`Back to ${activeOrganization.organization_name || "your org"}`}</span>
+            </Link>
+
             <div className="grid gap-3">
               <span className={sectionLabelClass}>Org insights</span>
               <div className="flex flex-wrap gap-3">
@@ -79,13 +88,6 @@ export function OrganizationInsightsPanel({
                 </span>
               </div>
             </div>
-
-            <Link
-              className={cx(secondaryButtonClass, "w-full lg:w-auto")}
-              to={buildOrganizationHref(activeOrganization.organization_slug)}
-            >
-              View rooms
-            </Link>
           </div>
 
           <OrgWideBlufCard

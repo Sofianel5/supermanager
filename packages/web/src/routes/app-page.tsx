@@ -221,7 +221,7 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
             />
           )}
 
-          {activeOrganization && viewer && !viewer.has_cli_auth && (
+          {view === "rooms" && activeOrganization && viewer && !viewer.has_cli_auth && (
             <CliSetupBanner />
           )}
 
