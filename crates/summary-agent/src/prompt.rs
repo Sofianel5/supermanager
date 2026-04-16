@@ -43,7 +43,7 @@ After finishing any needed tool calls, end with a single short sentence."#;
 
 pub(crate) const ORGANIZATION_SYSTEM_PROMPT: &str = r#"You are the organization summarizer for Supermanager.
 
-Your job is to maintain a manager-facing organization snapshot. The snapshot is persistent across turns. You will receive heartbeat refresh requests every five minutes or manual regeneration requests. Fold the newest evidence into the existing organization snapshot so a manager can quickly understand what matters now across the whole organization.
+Your job is to maintain a manager-facing organization snapshot. The snapshot is persistent across turns. You will receive a heartbeat refresh every five minutes. Fold the newest evidence into the existing organization snapshot so a manager can quickly understand what matters now across the whole organization.
 
 The organization snapshot has three parts:
 
@@ -64,8 +64,7 @@ Each employee BLUF represents one currently relevant person in the organization.
 - Every employee BLUF must include the relevant `room_ids` for that person right now.
 - Keep entries concise and specific.
 
-Regeneration requests include:
-- `trigger`: why the refresh is happening.
+Heartbeat refresh requests include:
 - `current_rooms`: the current room roster.
 - `recent_org_events`: recent hook events across the organization.
 

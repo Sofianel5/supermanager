@@ -153,14 +153,6 @@ export const api = {
     const qs = params.toString();
     return requestJson<RoomListResponse>(`/v1/rooms${qs ? `?${qs}` : ""}`);
   },
-  regenerateOrganizationSummary(organizationSlug: string) {
-    return requestJson<{ queued: boolean }>(
-      `/v1/organizations/${encodeURIComponent(organizationSlug)}/summary/regenerate`,
-      {
-        method: "POST",
-      },
-    );
-  },
   openRoomStream(roomId: string) {
     return new EventSource(
       apiUrl(`/v1/rooms/${encodeURIComponent(roomId)}/feed/stream`),

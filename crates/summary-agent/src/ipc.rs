@@ -10,7 +10,7 @@ use tokio::{
 };
 
 use crate::agent::AgentCommand;
-use crate::event::{RegenerationEvent, RegenerationRoom};
+use crate::event::{OrganizationHeartbeatEvent, OrganizationHeartbeatRoom};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -20,11 +20,10 @@ enum HostMessage {
         room_name: String,
         event: StoredHookEvent,
     },
-    RegenerateOrganization {
+    OrganizationHeartbeat {
         organization_id: String,
-        events: Vec<RegenerationEvent>,
-        rooms: Vec<RegenerationRoom>,
-        reason: String,
+        events: Vec<OrganizationHeartbeatEvent>,
+        rooms: Vec<OrganizationHeartbeatRoom>,
     },
     ToolResult {
         id: String,
@@ -101,18 +100,16 @@ pub(crate) async fn read_host_messages(
                     break;
                 }
             }
-            HostMessage::RegenerateOrganization {
+            HostMessage::OrganizationHeartbeat {
                 organization_id,
                 events,
                 rooms,
-                reason,
             } => {
                 if command_tx
-                    .send(AgentCommand::RegenerateOrganization {
+                    .send(AgentCommand::OrganizationHeartbeat {
                         organization_id,
                         events,
                         rooms,
-                        reason,
                     })
                     .await
                     .is_err()
