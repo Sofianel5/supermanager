@@ -3,7 +3,6 @@ import {
   copyLabelClass,
   copySheetClass,
   cx,
-  messageClass,
   pageShellClass,
   sectionLabelClass,
 } from "../ui";
@@ -11,6 +10,7 @@ import {
 const INSTALL_COMMAND = "curl -fsSL https://supermanager.dev/install.sh | sh";
 const LOGIN_COMMAND = "supermanager login";
 const CONFIGURE_ORG_COMMAND = "supermanager orgs configure";
+const MCP_INSTALL_COMMAND = "supermanager mcp install";
 const CREATE_ROOM_COMMAND = 'supermanager create room "Frontend"';
 const JOIN_ROOM_COMMAND = 'supermanager join "<room-id>"';
 
@@ -82,6 +82,21 @@ export function DocsPage() {
             pass <code>--org &quot;&lt;org-slug&gt;&quot;</code> to room
             commands.
           </p>
+          <div className="mt-[18px] grid gap-3">
+            <button
+              className={copySheetClass}
+              type="button"
+              onClick={() => void copy("mcp-install", MCP_INSTALL_COMMAND)}
+            >
+              <span className={copyLabelClass}>
+                Install MCP{" "}
+                {copiedValue === "mcp-install" ? "copied" : "click to copy"}
+              </span>
+              <code className="mt-2.5 block break-words font-mono text-[13px] leading-7 text-[#f4bf63]">
+                {MCP_INSTALL_COMMAND}
+              </code>
+            </button>
+          </div>
         </article>
 
         <article className="border-t border-border pt-6">

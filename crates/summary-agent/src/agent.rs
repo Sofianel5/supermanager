@@ -253,7 +253,8 @@ impl AgentLoop {
                 }
                 Err(error) => {
                     eprintln!("[summary-agent] turn start failed for room {room_id}: {error}");
-                    self.emit_summary_status(room_id, SummaryStatus::Error).await;
+                    self.emit_summary_status(room_id, SummaryStatus::Error)
+                        .await;
                 }
             }
         }

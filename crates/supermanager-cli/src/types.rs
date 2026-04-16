@@ -70,6 +70,17 @@ pub struct ConfigureOrganizationsOutcome {
     pub organization_slug: String,
 }
 
+pub struct InstallMcpConfig {
+    pub home_dir: PathBuf,
+    pub server_url: Option<String>,
+}
+
+pub struct InstallMcpOutcome {
+    pub server_url: String,
+    pub mcp_url: String,
+    pub updated_paths: Vec<String>,
+}
+
 pub struct CreateRoomOutcome {
     pub room_id: String,
     pub room_name: String,

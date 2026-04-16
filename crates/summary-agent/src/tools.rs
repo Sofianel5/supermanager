@@ -24,10 +24,19 @@ struct RemoveEmployeeCardArgs {
 
 pub(crate) enum SummaryTool {
     GetSnapshot,
-    SetBluf { markdown: String },
-    SetOverview { markdown: String },
-    SetEmployeeCard { employee_name: String, markdown: String },
-    RemoveEmployeeCard { employee_name: String },
+    SetBluf {
+        markdown: String,
+    },
+    SetOverview {
+        markdown: String,
+    },
+    SetEmployeeCard {
+        employee_name: String,
+        markdown: String,
+    },
+    RemoveEmployeeCard {
+        employee_name: String,
+    },
 }
 
 impl SummaryTool {
@@ -38,8 +47,7 @@ impl SummaryTool {
             input_schema: schema,
             defer_loading: false,
         };
-        let empty =
-            || json!({ "type": "object", "additionalProperties": false, "properties": {} });
+        let empty = || json!({ "type": "object", "additionalProperties": false, "properties": {} });
         let markdown_only = || {
             json!({
                 "type": "object",
@@ -117,9 +125,8 @@ impl SummaryTool {
                 })
             }
             "remove_employee_card" => {
-                let args: RemoveEmployeeCardArgs =
-                    serde_json::from_value(params.arguments.clone())
-                        .context("invalid remove_employee_card arguments")?;
+                let args: RemoveEmployeeCardArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid remove_employee_card arguments")?;
                 Ok(Self::RemoveEmployeeCard {
                     employee_name: args.employee_name,
                 })
