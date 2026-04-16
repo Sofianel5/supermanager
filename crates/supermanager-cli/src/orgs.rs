@@ -1,15 +1,11 @@
 use std::{
-    io::{self, IsTerminal, Write},
+    fmt,
+    io::{self, IsTerminal},
     path::Path,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
-use crossterm::{
-    ExecutableCommand,
-    cursor::{self, Hide, Show},
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use anyhow::{Result, anyhow, bail};
+use inquire::{InquireError, Select, Text, validator::Validation};
 use reqwest::blocking::Client;
 
 use crate::{
@@ -25,43 +21,21 @@ use crate::{
     },
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OrganizationMenuChoice {
     Existing(usize),
     CreateNew,
 }
 
-struct TerminalScreen {
-    stdout: io::Stdout,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OrganizationMenuOption {
+    choice: OrganizationMenuChoice,
+    label: String,
 }
 
-impl TerminalScreen {
-    fn enter() -> Result<Self> {
-        let mut stdout = io::stdout();
-        terminal::enable_raw_mode().context("failed to enable raw terminal mode")?;
-        let setup_result = stdout
-            .execute(EnterAlternateScreen)
-            .and_then(|stdout| stdout.execute(Hide))
-            .map(|_| ())
-            .context("failed to initialize terminal UI");
-
-        if let Err(error) = setup_result {
-            let _ = terminal::disable_raw_mode();
-            return Err(error);
-        }
-
-        Ok(Self { stdout })
-    }
-
-    fn stdout(&mut self) -> &mut io::Stdout {
-        &mut self.stdout
-    }
-}
-
-impl Drop for TerminalScreen {
-    fn drop(&mut self) {
-        let _ = self.stdout.execute(Show);
-        let _ = self.stdout.execute(LeaveAlternateScreen);
-        let _ = terminal::disable_raw_mode();
+impl fmt::Display for OrganizationMenuOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label)
     }
 }
 
@@ -176,126 +150,35 @@ fn ensure_interactive_terminal(command: &str) -> Result<()> {
 }
 
 fn prompt_for_organization_name() -> Result<(String, String)> {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
+    let name = Text::new("Organization name")
+        .with_placeholder("Acme Labs")
+        .with_help_message("Slug is generated automatically. Esc cancels.")
+        .with_validator(validate_organization_name)
+        .prompt()
+        .map_err(|error| prompt_error(error, "organization creation cancelled"))?;
+    let name = name.trim();
+    let slug = slugify_organization_name(name);
 
-    println!();
-    println!("  Create organization");
-    println!();
-
-    loop {
-        print!("    Name       ");
-        stdout.flush().context("failed to flush stdout")?;
-
-        let mut line = String::new();
-        let bytes = stdin
-            .read_line(&mut line)
-            .context("failed to read organization name")?;
-        if bytes == 0 {
-            bail!("organization creation cancelled");
-        }
-
-        let name = line.trim();
-        if name.is_empty() {
-            println!("    Error      organization name is required");
-            println!();
-            continue;
-        }
-
-        let slug = slugify_organization_name(name);
-        if slug.is_empty() {
-            println!("    Error      use letters or numbers in the organization name");
-            println!();
-            continue;
-        }
-
-        println!("    Slug       {slug}");
-        println!();
-        return Ok((name.to_owned(), slug));
-    }
+    Ok((name.to_owned(), slug))
 }
 
 fn prompt_for_organization_choice(
     organizations: &[ViewerOrganization],
     active_org_slug: Option<&str>,
 ) -> Result<OrganizationMenuChoice> {
-    let total_items = organizations.len() + 1;
-    let mut selection = initial_organization_menu_selection(organizations, active_org_slug);
-    let mut screen = TerminalScreen::enter()?;
+    let options = organization_menu_options(organizations, active_org_slug);
+    let selection = Select::new("Choose active organization", options)
+        .with_help_message("Use Up/Down to move, Enter to select, Esc to cancel")
+        .with_page_size((organizations.len() + 1).min(8))
+        .with_starting_cursor(initial_organization_menu_selection(
+            organizations,
+            active_org_slug,
+        ))
+        .without_filtering()
+        .prompt()
+        .map_err(|error| prompt_error(error, "organization configuration cancelled"))?;
 
-    loop {
-        render_organization_menu(screen.stdout(), organizations, selection, active_org_slug)?;
-
-        let Event::Key(key) = event::read().context("failed to read terminal input")? else {
-            continue;
-        };
-
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
-
-        match key.code {
-            KeyCode::Up => {
-                selection = move_menu_selection(selection, total_items, -1);
-            }
-            KeyCode::Down => {
-                selection = move_menu_selection(selection, total_items, 1);
-            }
-            KeyCode::Enter => {
-                if selection == organizations.len() {
-                    return Ok(OrganizationMenuChoice::CreateNew);
-                }
-                return Ok(OrganizationMenuChoice::Existing(selection));
-            }
-            KeyCode::Esc => bail!("organization configuration cancelled"),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                bail!("organization configuration cancelled");
-            }
-            _ => {}
-        }
-    }
-}
-
-fn render_organization_menu(
-    stdout: &mut io::Stdout,
-    organizations: &[ViewerOrganization],
-    selection: usize,
-    active_org_slug: Option<&str>,
-) -> Result<()> {
-    stdout
-        .execute(cursor::MoveTo(0, 0))
-        .context("failed to position terminal cursor")?;
-    stdout
-        .execute(terminal::Clear(ClearType::All))
-        .context("failed to clear terminal")?;
-
-    writeln!(stdout, "  Configure active organization")?;
-    writeln!(stdout)?;
-    writeln!(stdout, "  Use Up/Down arrows and Enter. Esc cancels.")?;
-    writeln!(stdout)?;
-
-    for (index, organization) in organizations.iter().enumerate() {
-        let marker = if index == selection { ">" } else { " " };
-        let active = if Some(organization.organization_slug.as_str()) == active_org_slug {
-            " [active]"
-        } else {
-            ""
-        };
-        writeln!(
-            stdout,
-            "  {marker} {} ({}){active}",
-            organization.organization_slug, organization.organization_name
-        )?;
-    }
-
-    let marker = if selection == organizations.len() {
-        ">"
-    } else {
-        " "
-    };
-    writeln!(stdout)?;
-    writeln!(stdout, "  {marker} Create organization")?;
-    stdout.flush().context("failed to flush terminal")
+    Ok(selection.choice)
 }
 
 fn initial_organization_menu_selection(
@@ -311,14 +194,62 @@ fn initial_organization_menu_selection(
         .unwrap_or(0)
 }
 
-fn move_menu_selection(current: usize, item_count: usize, delta: isize) -> usize {
-    if item_count == 0 {
-        return 0;
+fn organization_menu_options(
+    organizations: &[ViewerOrganization],
+    active_org_slug: Option<&str>,
+) -> Vec<OrganizationMenuOption> {
+    let mut options = organizations
+        .iter()
+        .enumerate()
+        .map(|(index, organization)| {
+            let active_suffix = if Some(organization.organization_slug.as_str()) == active_org_slug
+            {
+                " [active]"
+            } else {
+                ""
+            };
+
+            OrganizationMenuOption {
+                choice: OrganizationMenuChoice::Existing(index),
+                label: format!(
+                    "{} ({}){active_suffix}",
+                    organization.organization_slug, organization.organization_name
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    options.push(OrganizationMenuOption {
+        choice: OrganizationMenuChoice::CreateNew,
+        label: "Create organization".to_owned(),
+    });
+    options
+}
+
+fn validate_organization_name(
+    value: &str,
+) -> std::result::Result<Validation, inquire::CustomUserError> {
+    let name = value.trim();
+    if name.is_empty() {
+        return Ok(Validation::Invalid("Organization name is required.".into()));
     }
 
-    let item_count = item_count as isize;
-    let next = (current as isize + delta).rem_euclid(item_count);
-    next as usize
+    if slugify_organization_name(name).is_empty() {
+        return Ok(Validation::Invalid(
+            "Use letters or numbers in the organization name.".into(),
+        ));
+    }
+
+    Ok(Validation::Valid)
+}
+
+fn prompt_error(error: InquireError, cancelled_message: &'static str) -> anyhow::Error {
+    match error {
+        InquireError::OperationCanceled | InquireError::OperationInterrupted => {
+            anyhow!(cancelled_message)
+        }
+        other => anyhow!("interactive prompt failed: {other}"),
+    }
 }
 
 fn slugify_organization_name(value: &str) -> String {
@@ -370,13 +301,6 @@ mod tests {
     }
 
     #[test]
-    fn move_menu_selection_wraps_in_both_directions() {
-        assert_eq!(move_menu_selection(0, 3, -1), 2);
-        assert_eq!(move_menu_selection(2, 3, 1), 0);
-        assert_eq!(move_menu_selection(1, 3, 1), 2);
-    }
-
-    #[test]
     fn initial_organization_menu_selection_prefers_active_slug() {
         let organizations = vec![test_org("acme", "Acme"), test_org("beta", "Beta")];
 
@@ -388,6 +312,35 @@ mod tests {
         assert_eq!(
             initial_organization_menu_selection(&organizations, Some("missing")),
             0
+        );
+    }
+
+    #[test]
+    fn organization_menu_options_marks_active_org_and_appends_create() {
+        let organizations = vec![test_org("acme", "Acme"), test_org("beta", "Beta")];
+
+        let options = organization_menu_options(&organizations, Some("beta"));
+
+        assert_eq!(options.len(), 3);
+        assert_eq!(options[0].label, "acme (Acme)");
+        assert_eq!(options[1].label, "beta (Beta) [active]");
+        assert_eq!(options[2].choice, OrganizationMenuChoice::CreateNew);
+        assert_eq!(options[2].label, "Create organization");
+    }
+
+    #[test]
+    fn organization_name_validator_rejects_empty_or_invalid_names() {
+        assert_eq!(
+            validate_organization_name("   ").unwrap(),
+            Validation::Invalid("Organization name is required.".into())
+        );
+        assert_eq!(
+            validate_organization_name("***").unwrap(),
+            Validation::Invalid("Use letters or numbers in the organization name.".into())
+        );
+        assert_eq!(
+            validate_organization_name("Acme Labs").unwrap(),
+            Validation::Valid
         );
     }
 }
