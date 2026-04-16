@@ -50,7 +50,6 @@ export function WorkspacePanel({
           <OrgWideBlufCard
             action={
               <SecondaryActionLink
-                className="min-h-[38px] px-4 text-[0.84rem] text-ink-dim hover:text-ink"
                 to={buildOrganizationInsightsHref(activeOrganization.organization_slug)}
               >
                 View org insights
