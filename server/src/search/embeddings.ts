@@ -1,4 +1,7 @@
+// pgvector's HNSW index supports up to 2000 dimensions, so keep the search
+// embeddings below that ceiling.
 const EMBEDDING_MODEL = "text-embedding-3-large";
+const EMBEDDING_DIMENSIONS = 1536;
 const EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 
 interface EmbeddingsResponse {
@@ -22,6 +25,7 @@ export async function embedText(text: string): Promise<number[]> {
     body: JSON.stringify({
       input: text,
       model: EMBEDDING_MODEL,
+      dimensions: EMBEDDING_DIMENSIONS,
     }),
   });
 
@@ -36,6 +40,11 @@ export async function embedText(text: string): Promise<number[]> {
   const embedding = payload.data?.[0]?.embedding;
   if (!Array.isArray(embedding) || embedding.some((value) => typeof value !== "number")) {
     throw new Error("invalid embeddings response");
+  }
+  if (embedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new Error(
+      `invalid embedding dimensions: expected ${EMBEDDING_DIMENSIONS}, received ${embedding.length}`,
+    );
   }
 
   return embedding;
