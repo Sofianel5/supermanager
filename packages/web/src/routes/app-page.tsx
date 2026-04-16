@@ -9,6 +9,7 @@ import { DeviceApprovalDialog } from "../components/app-page/device-approval-dia
 import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
 import { InviteJoinGate } from "../components/app-page/invite-join-gate";
 import { InviteTeammatesBanner } from "../components/app-page/invite-teammates-banner";
+import { OrganizationInsightsHeader } from "../components/app-page/organization-insights-header";
 import { OrganizationInsightsPanel } from "../components/app-page/organization-insights-panel";
 import { OrganizationOnboarding } from "../components/app-page/organization-onboarding";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
@@ -201,19 +202,26 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
         />
       ) : (
         <main className={pageShellClass}>
-          <WorkspaceHeader
-            activeOrganizationName={
-              activeOrganization?.organization_name ?? null
-            }
-            activeOrganizationSlug={
-              activeOrganization?.organization_slug ?? null
-            }
-            isSigningOut={pendingAction === "sign-out"}
-            userEmail={viewer?.user.email ?? null}
-            onInviteTeammate={() => setIsInviteDialogOpen(true)}
-            onOpenDocs={openDocs}
-            onSignOut={() => void handleSignOut()}
-          />
+          {view === "insights" ? (
+            <OrganizationInsightsHeader
+              organizationName={activeOrganization?.organization_name ?? null}
+              organizationSlug={activeOrganization?.organization_slug ?? null}
+            />
+          ) : (
+            <WorkspaceHeader
+              activeOrganizationName={
+                activeOrganization?.organization_name ?? null
+              }
+              activeOrganizationSlug={
+                activeOrganization?.organization_slug ?? null
+              }
+              isSigningOut={pendingAction === "sign-out"}
+              userEmail={viewer?.user.email ?? null}
+              onInviteTeammate={() => setIsInviteDialogOpen(true)}
+              onOpenDocs={openDocs}
+              onSignOut={() => void handleSignOut()}
+            />
+          )}
 
           {activeOrganization && activeOrganization.member_count <= 1 && (
             <InviteTeammatesBanner
