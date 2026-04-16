@@ -10,7 +10,7 @@ pub struct IngestResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../../web/src/generated/")]
+#[ts(export, export_to = "../../../packages/web/src/generated/")]
 pub struct FeedResponse {
     pub events: Vec<StoredHookEvent>,
 }
@@ -26,7 +26,7 @@ pub struct HookTurnReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../../web/src/generated/")]
+#[ts(export, export_to = "../../../packages/web/src/generated/")]
 pub struct StoredHookEvent {
     #[ts(type = "number")]
     pub seq: i64,

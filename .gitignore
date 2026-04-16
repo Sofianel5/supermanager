@@ -13,7 +13,7 @@
 output/
 AGENTS.md
 CLAUDE.md
-web/dist/
+packages/web/dist/
 infra/aws/local.auto.tfvars
 infra/aws/.terraform/
 infra/aws/.terraform.lock.hcl

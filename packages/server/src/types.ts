@@ -1,7 +1,7 @@
 import type {
   OrganizationSnapshot,
   RoomSnapshot,
-} from "./generated/summary-protocol";
+} from "@supermanager/common/summary-protocol";
 
 export interface IngestResponse {
   event_id: string;
@@ -93,7 +93,7 @@ export type {
   RoomBlufSnapshot,
   RoomSnapshot,
   SummaryStatus,
-} from "./generated/summary-protocol";
+} from "@supermanager/common/summary-protocol";
 
 export function emptyRoomSnapshot(): RoomSnapshot {
   return {

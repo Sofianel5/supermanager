@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
-#[ts(export, export_to = "../../../server/src/generated/summary-protocol/")]
+#[ts(export, export_to = "../../../packages/common/summary-protocol/")]
 pub struct RoomSnapshot {
     #[serde(default)]
     pub bluf_markdown: String,
@@ -11,7 +11,7 @@ pub struct RoomSnapshot {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
-#[ts(export, export_to = "../../../server/src/generated/summary-protocol/")]
+#[ts(export, export_to = "../../../packages/common/summary-protocol/")]
 pub struct EmployeeSnapshot {
     pub employee_name: String,
     #[serde(default)]
@@ -23,7 +23,7 @@ pub struct EmployeeSnapshot {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
-#[ts(export, export_to = "../../../server/src/generated/summary-protocol/")]
+#[ts(export, export_to = "../../../packages/common/summary-protocol/")]
 pub struct RoomBlufSnapshot {
     pub room_id: String,
     #[serde(default)]
@@ -33,7 +33,7 @@ pub struct RoomBlufSnapshot {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
-#[ts(export, export_to = "../../../server/src/generated/summary-protocol/")]
+#[ts(export, export_to = "../../../packages/common/summary-protocol/")]
 pub struct OrganizationSnapshot {
     #[serde(default)]
     pub bluf_markdown: String,
@@ -45,7 +45,7 @@ pub struct OrganizationSnapshot {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../../../server/src/generated/summary-protocol/")]
+#[ts(export, export_to = "../../../packages/common/summary-protocol/")]
 pub enum SummaryStatus {
     Generating,
     Ready,

@@ -24,7 +24,7 @@ pub struct CreateRoomResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../../web/src/generated/")]
+#[ts(export, export_to = "../../../packages/web/src/generated/")]
 pub struct RoomMetadataResponse {
     pub room_id: String,
     pub name: String,

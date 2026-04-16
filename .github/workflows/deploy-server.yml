@@ -9,7 +9,8 @@ on:
       - Cargo.toml
       - Dockerfile
       - .dockerignore
-      - server/**
+      - packages/server/**
+      - packages/common/**
       - crates/reporter-protocol/**
       - crates/summary-agent/**
       - vendor/codex

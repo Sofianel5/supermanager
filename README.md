@@ -7,7 +7,7 @@ Supermanager is an authenticated, organization-scoped coordination system for co
 ### 1. Start the coordination server
 
 ```sh
-cd server
+cd packages/server
 bun install
 export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
 export SUPERMANAGER_DATA_DIR='../.supermanager-data'
@@ -41,7 +41,7 @@ In local development the Bun server automatically starts the Rust summary agent 
 For production packaging, compile the server to a standalone Bun executable:
 
 ```sh
-cd server
+cd packages/server
 bun run build
 SUPERMANAGER_PUBLIC_API_URL='https://api.supermanager.dev' \
 SUPERMANAGER_PUBLIC_APP_URL='https://supermanager.dev' \
@@ -51,7 +51,7 @@ SUPERMANAGER_PUBLIC_APP_URL='https://supermanager.dev' \
 ### 2. Start the frontend
 
 ```sh
-cd web
+cd packages/web
 VITE_API_BASE_URL='http://127.0.0.1:8787' bun install
 VITE_API_BASE_URL='http://127.0.0.1:8787' bun run dev
 ```
@@ -194,8 +194,10 @@ crates/
   reporter-protocol/      # Shared room and hook-event types
   summary-agent/          # Rust Codex org summarizer
   supermanager-cli/       # Global CLI for joining/leaving repos
-server/                   # Bun + TypeScript coordination server
-web/                      # React + Vite frontend
+packages/
+  common/                 # Shared TypeScript types (consumed by server + web)
+  server/                 # Bun + TypeScript coordination server
+  web/                    # React + Vite frontend
 Dockerfile                # Production image
 infra/aws/                # Terraform for the AWS backend
 ```
@@ -293,11 +295,11 @@ Add these repository secrets:
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 
-The workflow runs on pushes to `master` when `web/**` changes, builds the Vite app, and deploys `web/dist` to Pages.
+The workflow runs on pushes to `master` when `packages/web/**` or `packages/common/**` changes, builds the Vite app, and deploys `packages/web/dist` to Pages.
 
 ## CLI release distribution
 
-`install.sh` is served from `web/public/install.sh`, so the Pages deployment publishes it at `https://supermanager.dev/install.sh` once the custom domain points at the Pages project.
+`install.sh` is served from `packages/web/public/install.sh`, so the Pages deployment publishes it at `https://supermanager.dev/install.sh` once the custom domain points at the Pages project.
 
 Tagging a version like `v0.2.0` triggers `.github/workflows/release-cli.yml`, which:
 

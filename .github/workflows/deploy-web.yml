@@ -6,7 +6,8 @@ on:
       - master
     paths:
       - .github/workflows/deploy-web.yml
-      - web/**
+      - packages/web/**
+      - packages/common/**
   workflow_dispatch:
 
 concurrency:
@@ -41,11 +42,11 @@ jobs:
           bun-version: latest
 
       - name: Install web dependencies
-        working-directory: web
+        working-directory: packages/web
         run: bun install --frozen-lockfile
 
       - name: Build web app
-        working-directory: web
+        working-directory: packages/web
         run: bun run build
 
       - name: Deploy Pages site
@@ -53,5 +54,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: web
+          workingDirectory: packages/web
           command: pages deploy dist --project-name=${{ env.CLOUDFLARE_PAGES_PROJECT_NAME }}

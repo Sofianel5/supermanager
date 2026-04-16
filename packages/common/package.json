@@ -1,0 +1,12 @@
+{
+  "name": "@supermanager/common",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./summary-protocol": "./summary-protocol/index.ts"
+  }
+}

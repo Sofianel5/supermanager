@@ -5,7 +5,7 @@ data/
 **/node_modules
 crates/supermanager-cli/**
 !crates/supermanager-cli/Cargo.toml
-web/
+packages/web/
 infra/
 .github/
 .claude/
