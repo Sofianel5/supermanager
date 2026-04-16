@@ -2,31 +2,31 @@ import type { StoredHookEvent, SummaryStatus } from "../types";
 
 export type SummaryToolName =
   | "get_snapshot"
+  | "set_bluf"
   | "set_org_bluf"
-  | "set_room_bluf"
-  | "remove_room_bluf"
   | "set_employee_bluf"
   | "remove_employee_bluf";
 
 export interface AgentToolCallMessage {
   type: "tool_call";
   id: string;
-  organization_id: string;
+  scope: "organization" | "room";
+  target_id: string;
   tool: SummaryToolName;
   arguments: unknown;
 }
 
 export interface AgentSummaryStatusMessage {
   type: "summary_status";
-  organization_id: string;
+  scope: "organization" | "room";
+  target_id: string;
   status: SummaryStatus;
 }
 
 export type AgentMessage = AgentToolCallMessage | AgentSummaryStatusMessage;
 
-export interface HostEnqueueEventMessage {
-  type: "enqueue_event";
-  organization_id: string;
+export interface HostEnqueueRoomEventMessage {
+  type: "enqueue_room_event";
   room_id: string;
   room_name: string;
   event: StoredHookEvent;
@@ -37,7 +37,7 @@ export interface HostRegenerateOrganizationMessage {
   organization_id: string;
   events: HostRegenerationEvent[];
   rooms: HostRegenerationRoom[];
-  reason: "manual" | "timer";
+  reason: "manual" | "heartbeat";
 }
 
 export interface HostRegenerationRoom {
@@ -58,6 +58,6 @@ export interface HostToolResultMessage {
 }
 
 export type HostMessage =
-  | HostEnqueueEventMessage
+  | HostEnqueueRoomEventMessage
   | HostRegenerateOrganizationMessage
   | HostToolResultMessage;

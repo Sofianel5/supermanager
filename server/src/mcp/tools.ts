@@ -174,7 +174,7 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
     "get_room_summary",
     {
       title: "Get Room Summary",
-      description: "Read the current room-level view derived from the organization summary.",
+      description: "Read the current room-level view composed from the room BLUF and matching employee BLUFs.",
       inputSchema: getRoomSummarySchema,
       annotations: READ_ONLY_TOOL,
     },

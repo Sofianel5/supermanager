@@ -15,8 +15,7 @@ use crate::event::{RegenerationEvent, RegenerationRoom};
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum HostMessage {
-    EnqueueEvent {
-        organization_id: String,
+    EnqueueRoomEvent {
         room_id: String,
         room_name: String,
         event: StoredHookEvent,
@@ -39,12 +38,14 @@ enum HostMessage {
 pub(crate) enum AgentMessage {
     ToolCall {
         id: String,
-        organization_id: String,
+        scope: String,
+        target_id: String,
         tool: String,
         arguments: Value,
     },
     SummaryStatus {
-        organization_id: String,
+        scope: String,
+        target_id: String,
         status: String,
     },
 }
@@ -83,15 +84,13 @@ pub(crate) async fn read_host_messages(
         };
 
         match message {
-            HostMessage::EnqueueEvent {
-                organization_id,
+            HostMessage::EnqueueRoomEvent {
                 room_id,
                 room_name,
                 event,
             } => {
                 if command_tx
-                    .send(AgentCommand::EnqueueEvent {
-                        organization_id,
+                    .send(AgentCommand::EnqueueRoomEvent {
                         room_id,
                         room_name,
                         event,

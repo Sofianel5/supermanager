@@ -33,7 +33,7 @@ struct Cli {
     #[arg(long)]
     codex_home: PathBuf,
     #[arg(long)]
-    organizations_dir: PathBuf,
+    summary_threads_dir: PathBuf,
 }
 
 #[tokio::main]
@@ -41,10 +41,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     fs::create_dir_all(&cli.codex_home)
         .with_context(|| format!("failed to create codex home {}", cli.codex_home.display()))?;
-    fs::create_dir_all(&cli.organizations_dir).with_context(|| {
+    fs::create_dir_all(&cli.summary_threads_dir).with_context(|| {
         format!(
-            "failed to create organizations dir {}",
-            cli.organizations_dir.display()
+            "failed to create summary threads dir {}",
+            cli.summary_threads_dir.display()
         )
     })?;
 
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
         client,
         command_rx,
         output_tx.clone(),
-        cli.organizations_dir,
+        cli.summary_threads_dir,
         pending_tool_calls,
     );
 

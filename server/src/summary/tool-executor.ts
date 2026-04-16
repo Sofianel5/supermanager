@@ -9,6 +9,61 @@ export interface ToolExecutionResult {
 
 export async function applySummaryToolCall(
   db: Db,
+  scope:
+    | { kind: "organization"; organizationId: string }
+    | { kind: "room"; roomId: string },
+  tool: SummaryToolName,
+  argumentsValue: unknown,
+): Promise<ToolExecutionResult> {
+  if (scope.kind === "room") {
+    return applyRoomSummaryToolCall(db, scope.roomId, tool, argumentsValue);
+  }
+
+  return applyOrganizationSummaryToolCall(
+    db,
+    scope.organizationId,
+    tool,
+    argumentsValue,
+  );
+}
+
+async function applyRoomSummaryToolCall(
+  db: Db,
+  roomId: string,
+  tool: SummaryToolName,
+  argumentsValue: unknown,
+): Promise<ToolExecutionResult> {
+  switch (tool) {
+    case "get_snapshot": {
+      const snapshot = await db.getRoomBlufSnapshot(roomId);
+      return {
+        success: true,
+        message: JSON.stringify(snapshot, null, 2),
+      };
+    }
+    case "set_bluf": {
+      const markdown = readRequiredString(argumentsValue, "markdown").trim();
+      const updatedAt = new Date().toISOString();
+      await db.setRoomSummary(roomId, {
+        room_id: normalizeRoomId(roomId),
+        bluf_markdown: markdown,
+        last_update_at: updatedAt,
+      });
+      return {
+        success: true,
+        message: `updated room BLUF for ${normalizeRoomId(roomId)}`,
+      };
+    }
+    default:
+      return {
+        success: false,
+        message: `tool ${tool} is not available for room summaries`,
+      };
+  }
+}
+
+async function applyOrganizationSummaryToolCall(
+  db: Db,
   organizationId: string,
   tool: SummaryToolName,
   argumentsValue: unknown,
@@ -28,55 +83,6 @@ export async function applySummaryToolCall(
         return {
           changed: true,
           message: "updated organization BLUF",
-        };
-      });
-    }
-    case "set_room_bluf": {
-      const roomId = normalizeRoomId(
-        readRequiredString(argumentsValue, "room_id").trim(),
-      );
-      if (!roomId) {
-        return {
-          success: false,
-          message: "room_id must not be empty",
-        };
-      }
-
-      const markdown = readRequiredString(argumentsValue, "markdown").trim();
-      const updatedAt = new Date().toISOString();
-
-      return mutateSummary(db, organizationId, (snapshot) => {
-        const existing = snapshot.rooms.find((room) => room.room_id === roomId);
-
-        if (existing) {
-          existing.bluf_markdown = markdown;
-          existing.last_update_at = updatedAt;
-        } else {
-          snapshot.rooms.push({
-            room_id: roomId,
-            bluf_markdown: markdown,
-            last_update_at: updatedAt,
-          });
-        }
-
-        return {
-          changed: true,
-          message: `updated room BLUF for ${roomId}`,
-        };
-      });
-    }
-    case "remove_room_bluf": {
-      const roomId = normalizeRoomId(
-        readRequiredString(argumentsValue, "room_id").trim(),
-      );
-      return mutateSummary(db, organizationId, (snapshot) => {
-        const before = snapshot.rooms.length;
-        snapshot.rooms = snapshot.rooms.filter((room) => room.room_id !== roomId);
-
-        const removed = snapshot.rooms.length !== before;
-        return {
-          changed: removed,
-          message: removed ? `removed room BLUF for ${roomId}` : `room BLUF already absent for ${roomId}`,
         };
       });
     }
@@ -143,10 +149,9 @@ export async function applySummaryToolCall(
       });
     }
     default: {
-      const unreachable: never = tool;
       return {
         success: false,
-        message: `unknown tool: ${String(unreachable)}`,
+        message: `tool ${tool} is not available for organization summaries`,
       };
     }
   }

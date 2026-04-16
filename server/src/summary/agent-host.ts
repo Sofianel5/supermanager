@@ -50,13 +50,12 @@ export class SummaryAgentHost {
   }
 
   async enqueue(
-    room: Pick<RoomRecord, "name" | "organization_id" | "room_id">,
+    room: Pick<RoomRecord, "name" | "room_id">,
     event: StoredHookEvent,
   ): Promise<void> {
     await this.ensureRunning();
     this.send({
-      type: "enqueue_event",
-      organization_id: room.organization_id,
+      type: "enqueue_room_event",
       room_id: room.room_id,
       room_name: room.name,
       event,
@@ -65,7 +64,7 @@ export class SummaryAgentHost {
 
   async regenerateOrganization(
     organizationId: string,
-    reason: "manual" | "timer",
+    reason: "manual" | "heartbeat",
   ): Promise<void> {
     await this.ensureRunning();
     const [events, rooms] = await Promise.all([
@@ -99,8 +98,8 @@ export class SummaryAgentHost {
           ...summaryAgent.args,
           "--codex-home",
           this.options.storage.codexHome,
-          "--organizations-dir",
-          this.options.storage.organizationsDir,
+          "--summary-threads-dir",
+          this.options.storage.summaryThreadsDir,
         ],
         cwd: summaryAgent.cwd,
         env: Bun.env,
@@ -163,22 +162,29 @@ export class SummaryAgentHost {
 
     switch (message.type) {
       case "summary_status": {
-        await this.options.db.setOrganizationSummaryStatus(
-          message.organization_id,
-          message.status,
-        );
-        const roomIds = await this.options.db.listRoomIdsForOrganization(
-          message.organization_id,
-        );
-        for (const roomId of roomIds) {
-          this.options.feedHub.publishSummaryStatus(roomId, message.status);
+        if (message.scope === "organization") {
+          await this.options.db.setOrganizationSummaryStatus(
+            message.target_id,
+            message.status,
+          );
+        } else {
+          await this.options.db.setRoomSummaryStatus(
+            message.target_id,
+            message.status,
+          );
+          this.options.feedHub.publishSummaryStatus(
+            message.target_id,
+            message.status,
+          );
         }
         return;
       }
       case "tool_call": {
         const result = await applySummaryToolCall(
           this.options.db,
-          message.organization_id,
+          message.scope === "organization"
+            ? { kind: "organization", organizationId: message.target_id }
+            : { kind: "room", roomId: message.target_id },
           message.tool,
           message.arguments,
         );
@@ -238,7 +244,7 @@ export class SummaryAgentHost {
             return;
           }
 
-          await this.regenerateOrganization(organizationId, "timer");
+          await this.regenerateOrganization(organizationId, "heartbeat");
         }),
       );
     } finally {

@@ -65,6 +65,11 @@ interface SummaryRow {
   content_json?: OrganizationSnapshot;
 }
 
+interface RoomSummaryRow {
+  content_json?: RoomBlufSnapshot;
+  status: unknown;
+}
+
 interface SummaryStatusRow {
   status: unknown;
 }
@@ -260,17 +265,20 @@ export class Db {
       ORDER BY rooms.created_at DESC, rooms.room_id DESC
     `;
 
-    const snapshot = await this.getOrganizationSummary(organizationId);
-    const roomBlufs = new Map(
-      snapshot.rooms.map((room) => [normalizeRoomId(room.room_id), room.bluf_markdown]),
+    const [roomBlufs, orgSummary] = await Promise.all([
+      this.listRoomBlufsForOrganization(organizationId),
+      this.getStoredOrganizationSummary(organizationId),
+    ]);
+    const roomBlufMap = new Map(
+      roomBlufs.map((room) => [normalizeRoomId(room.room_id), room.bluf_markdown]),
     );
-    const employeeCounts = countEmployeesByRoom(snapshot.employees);
+    const employeeCounts = countEmployeesByRoom(orgSummary.employees);
 
     return rows.map((row) => {
       const room = mapRoom(row);
       return {
         ...room,
-        bluf_markdown: roomBlufs.get(room.room_id) ?? "",
+        bluf_markdown: roomBlufMap.get(room.room_id) ?? "",
         employee_count: employeeCounts.get(room.room_id) ?? 0,
       };
     });
@@ -452,14 +460,15 @@ export class Db {
   async getOrganizationSummary(
     organizationId: string,
   ): Promise<OrganizationSnapshot> {
-    const [row] = await this.client<SummaryRow[]>`
-      SELECT content_json
-      FROM organization_summaries
-      WHERE organization_id = ${organizationId}
-    `;
-    return row
-      ? normalizeOrganizationSnapshot(row.content_json)
-      : emptyOrganizationSnapshot();
+    const [snapshot, rooms] = await Promise.all([
+      this.getStoredOrganizationSummary(organizationId),
+      this.listRoomBlufsForOrganization(organizationId),
+    ]);
+
+    return {
+      ...snapshot,
+      rooms,
+    };
   }
 
   async getRoomSummary(roomId: string): Promise<RoomSnapshot> {
@@ -468,8 +477,17 @@ export class Db {
       return emptyRoomSnapshot();
     }
 
-    const snapshot = await this.getOrganizationSummary(room.organization_id);
-    return deriveRoomSnapshot(snapshot, room.room_id);
+    const [roomBluf, organizationSummary] = await Promise.all([
+      this.getRoomBlufSnapshot(room.room_id),
+      this.getStoredOrganizationSummary(room.organization_id),
+    ]);
+
+    return {
+      bluf_markdown: roomBluf.bluf_markdown,
+      employees: organizationSummary.employees.filter((employee) =>
+        employee.room_ids.some((entry) => normalizeRoomId(entry) === room.room_id),
+      ),
+    };
   }
 
   async getOrganizationSummaryStatus(organizationId: string): Promise<SummaryStatus> {
@@ -484,7 +502,7 @@ export class Db {
   async setOrganizationSummaryStatus(organizationId: string, status: SummaryStatus): Promise<void> {
     await this.client`
       INSERT INTO organization_summaries (organization_id, content_json, status, updated_at)
-      VALUES (${organizationId}, ${emptyOrganizationSnapshot()}, ${status}, NOW())
+      VALUES (${organizationId}, ${normalizeStoredOrganizationSummary()}, ${status}, NOW())
       ON CONFLICT(organization_id) DO UPDATE SET
         status = EXCLUDED.status,
         updated_at = EXCLUDED.updated_at
@@ -497,12 +515,92 @@ export class Db {
   ): Promise<void> {
     await this.client`
       INSERT INTO organization_summaries (organization_id, content_json, status, updated_at)
-      VALUES (${organizationId}, ${normalizeOrganizationSnapshot(content)}, 'ready', NOW())
+      VALUES (${organizationId}, ${normalizeStoredOrganizationSummary(content)}, 'ready', NOW())
       ON CONFLICT(organization_id) DO UPDATE SET
         content_json = EXCLUDED.content_json,
         status = 'ready',
         updated_at = EXCLUDED.updated_at
     `;
+  }
+
+  async listRoomBlufsForOrganization(
+    organizationId: string,
+  ): Promise<RoomBlufSnapshot[]> {
+    const rows = await this.client<
+      Array<Pick<RoomRow, "room_id"> & { content_json?: RoomBlufSnapshot }>
+    >`
+      SELECT
+        rooms.room_id,
+        room_summaries.content_json
+      FROM rooms
+      LEFT JOIN room_summaries ON room_summaries.room_id = rooms.room_id
+      WHERE rooms.organization_id = ${organizationId}
+      ORDER BY rooms.created_at DESC, rooms.room_id DESC
+    `;
+
+    return rows.map((row) =>
+      normalizeRoomBlufSnapshot(row.content_json, readString(row.room_id, "room_id")),
+    );
+  }
+
+  async getRoomBlufSnapshot(roomId: string): Promise<RoomBlufSnapshot> {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const [row] = await this.client<Pick<RoomSummaryRow, "content_json">[]>`
+      SELECT content_json
+      FROM room_summaries
+      WHERE room_id = ${normalizedRoomId}
+    `;
+
+    return normalizeRoomBlufSnapshot(row?.content_json, normalizedRoomId);
+  }
+
+  async getRoomSummaryStatus(roomId: string): Promise<SummaryStatus> {
+    const [row] = await this.client<Pick<RoomSummaryRow, "status">[]>`
+      SELECT status
+      FROM room_summaries
+      WHERE room_id = ${normalizeRoomId(roomId)}
+    `;
+
+    return row ? parseSummaryStatus(row.status) : "ready";
+  }
+
+  async setRoomSummaryStatus(roomId: string, status: SummaryStatus): Promise<void> {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    await this.client`
+      INSERT INTO room_summaries (room_id, content_json, status, updated_at)
+      VALUES (
+        ${normalizedRoomId},
+        ${normalizeRoomBlufSnapshot(undefined, normalizedRoomId)},
+        ${status},
+        NOW()
+      )
+      ON CONFLICT(room_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        updated_at = EXCLUDED.updated_at
+    `;
+  }
+
+  async setRoomSummary(roomId: string, content: RoomBlufSnapshot): Promise<void> {
+    const normalizedRoom = normalizeRoomBlufSnapshot(content, roomId);
+    await this.client`
+      INSERT INTO room_summaries (room_id, content_json, status, updated_at)
+      VALUES (${normalizedRoom.room_id}, ${normalizedRoom}, 'ready', NOW())
+      ON CONFLICT(room_id) DO UPDATE SET
+        content_json = EXCLUDED.content_json,
+        status = 'ready',
+        updated_at = EXCLUDED.updated_at
+    `;
+  }
+
+  private async getStoredOrganizationSummary(
+    organizationId: string,
+  ): Promise<OrganizationSnapshot> {
+    const [row] = await this.client<SummaryRow[]>`
+      SELECT content_json
+      FROM organization_summaries
+      WHERE organization_id = ${organizationId}
+    `;
+    return normalizeStoredOrganizationSummary(row?.content_json);
   }
 }
 
@@ -559,20 +657,37 @@ function normalizeOrganizationSnapshot(
   const base = snapshot ?? emptyOrganizationSnapshot();
   return {
     bluf_markdown: typeof base.bluf_markdown === "string" ? base.bluf_markdown : "",
-    rooms: Array.isArray(base.rooms) ? base.rooms.map(normalizeRoomBlufSnapshot) : [],
+    rooms: Array.isArray(base.rooms)
+      ? base.rooms.map((room) => normalizeRoomBlufSnapshot(room))
+      : [],
     employees: Array.isArray(base.employees)
       ? base.employees.map(normalizeEmployeeSnapshot)
       : [],
   };
 }
 
-function normalizeRoomBlufSnapshot(snapshot: RoomBlufSnapshot): RoomBlufSnapshot {
+function normalizeStoredOrganizationSummary(
+  snapshot?: OrganizationSnapshot,
+): OrganizationSnapshot {
+  const normalized = normalizeOrganizationSnapshot(snapshot);
+  return {
+    ...normalized,
+    rooms: [],
+  };
+}
+
+function normalizeRoomBlufSnapshot(
+  snapshot: RoomBlufSnapshot | undefined,
+  fallbackRoomId = "",
+): RoomBlufSnapshot {
   return {
     room_id: normalizeRoomId(
-      typeof snapshot.room_id === "string" ? snapshot.room_id : "",
+      typeof snapshot?.room_id === "string" ? snapshot.room_id : fallbackRoomId,
     ),
-    bluf_markdown: typeof snapshot.bluf_markdown === "string" ? snapshot.bluf_markdown : "",
-    last_update_at: typeof snapshot.last_update_at === "string" ? snapshot.last_update_at : "",
+    bluf_markdown:
+      typeof snapshot?.bluf_markdown === "string" ? snapshot.bluf_markdown : "",
+    last_update_at:
+      typeof snapshot?.last_update_at === "string" ? snapshot.last_update_at : "",
   };
 }
 
@@ -590,21 +705,6 @@ function normalizeEmployeeSnapshot(snapshot: EmployeeSnapshot): EmployeeSnapshot
       : [],
     bluf_markdown: typeof snapshot.bluf_markdown === "string" ? snapshot.bluf_markdown : "",
     last_update_at: typeof snapshot.last_update_at === "string" ? snapshot.last_update_at : "",
-  };
-}
-
-function deriveRoomSnapshot(
-  snapshot: OrganizationSnapshot,
-  roomId: string,
-): RoomSnapshot {
-  const normalizedRoomId = normalizeRoomId(roomId);
-  return {
-    bluf_markdown:
-      snapshot.rooms.find((room) => normalizeRoomId(room.room_id) === normalizedRoomId)
-        ?.bluf_markdown ?? "",
-    employees: snapshot.employees.filter((employee) =>
-      employee.room_ids.some((entry) => normalizeRoomId(entry) === normalizedRoomId),
-    ),
   };
 }
 
