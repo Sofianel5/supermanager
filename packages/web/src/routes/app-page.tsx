@@ -204,8 +204,12 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
         <main className={pageShellClass}>
           {view === "insights" ? (
             <OrganizationInsightsHeader
+              isSigningOut={pendingAction === "sign-out"}
               organizationName={activeOrganization?.organization_name ?? null}
               organizationSlug={activeOrganization?.organization_slug ?? null}
+              onInviteTeammate={() => setIsInviteDialogOpen(true)}
+              onOpenDocs={openDocs}
+              onSignOut={() => void handleSignOut()}
             />
           ) : (
             <WorkspaceHeader
