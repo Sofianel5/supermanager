@@ -264,22 +264,23 @@ export class Db {
   async listRoomsForOrganization(
     organizationId: string,
   ): Promise<RoomListEntry[]> {
-    const rows = await this.client<RoomRow[]>`
-      SELECT
-        rooms.room_id,
-        rooms.name,
-        rooms.created_at,
-        rooms.organization_id,
-        organization.slug AS organization_slug,
-        rooms.created_by_user_id
-      FROM rooms
-      INNER JOIN organization ON organization.id = rooms.organization_id
-      WHERE rooms.organization_id = ${organizationId}
-      ORDER BY rooms.created_at DESC, rooms.room_id DESC
-    `;
+    const [rows, roomSummaries] = await Promise.all([
+      this.client<RoomRow[]>`
+        SELECT
+          rooms.room_id,
+          rooms.name,
+          rooms.created_at,
+          rooms.organization_id,
+          organization.slug AS organization_slug,
+          rooms.created_by_user_id
+        FROM rooms
+        INNER JOIN organization ON organization.id = rooms.organization_id
+        WHERE rooms.organization_id = ${organizationId}
+        ORDER BY rooms.created_at DESC, rooms.room_id DESC
+      `,
+      this.listStoredRoomSummariesForOrganization(organizationId),
+    ]);
 
-    const roomSummaries =
-      await this.listStoredRoomSummariesForOrganization(organizationId);
     const roomBlufMap = new Map(
       roomSummaries.map((room) => [room.room_id, room.snapshot.bluf_markdown]),
     );
@@ -505,12 +506,7 @@ export class Db {
   }
 
   async getRoomSummary(roomId: string): Promise<RoomSnapshot> {
-    const room = await this.getRoom(roomId);
-    if (!room) {
-      return emptyRoomSnapshot();
-    }
-
-    return this.getStoredRoomSummary(room.room_id);
+    return this.getStoredRoomSummary(normalizeRoomId(roomId));
   }
 
   async getOrganizationSummaryStatus(

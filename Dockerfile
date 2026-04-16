@@ -1,11 +1,14 @@
 # syntax=docker/dockerfile:1.7
 FROM oven/bun:1.2.17 AS server-deps
-WORKDIR /app/server
-COPY server/package.json server/bun.lock ./
+WORKDIR /app
+COPY packages/common ./packages/common
+COPY packages/server/package.json packages/server/bun.lock ./packages/server/
+WORKDIR /app/packages/server
 RUN bun install --frozen-lockfile
 
 FROM server-deps AS server-build
-COPY server/ ./
+WORKDIR /app/packages/server
+COPY packages/server/ ./
 RUN bun run typecheck \
  && bun run build
 
@@ -47,8 +50,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates libssl3 \
     && rm -rf /var/lib/apt/lists/*
 ENV SUPERMANAGER_SUMMARY_AGENT_BIN=/usr/local/bin/summary-agent
-COPY --from=server-build /app/server/.build/supermanager-server /usr/local/bin/supermanager-server
-COPY --from=server-build /app/server/migrations ./migrations
+COPY --from=server-build /app/packages/server/.build/supermanager-server /usr/local/bin/supermanager-server
+COPY --from=server-build /app/packages/server/migrations ./migrations
 COPY --from=rust-builder /rds-global-bundle.pem /etc/ssl/certs/rds-global-bundle.pem
 COPY --from=rust-builder /summary-agent /usr/local/bin/summary-agent
 EXPOSE 8787

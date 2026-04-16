@@ -9,7 +9,7 @@ import type {
   RoomBlufSnapshot,
   RoomSnapshot,
   SummaryStatus,
-} from "../../server/src/generated/summary-protocol";
+} from "@supermanager/common/summary-protocol";
 
 export type {
   FeedResponse,
@@ -22,7 +22,7 @@ export type {
   RoomBlufSnapshot,
   RoomSnapshot,
   SummaryStatus,
-} from "../../server/src/generated/summary-protocol";
+} from "@supermanager/common/summary-protocol";
 
 export interface ViewerUser {
   email: string;
