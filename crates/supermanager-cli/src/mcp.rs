@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use toml_edit::{DocumentMut, Item, Table, value};
 
 use crate::{
-    auth::{auth_state_path, read_auth_state, require_auth_state, write_auth_state},
+    auth::{auth_state_path, read_auth_state, require_auth_state},
     support::{
         CODEX_CONFIG, ensure_object_field, normalize_url, read_json_object, read_optional_text,
         write_private_text,
@@ -130,6 +130,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::auth::write_auth_state;
 
     #[test]
     fn install_mcp_writes_global_configs_from_login_state() {

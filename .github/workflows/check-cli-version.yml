@@ -7,11 +7,12 @@ on:
       - Cargo.lock
       - crates/reporter-protocol/**
       - crates/supermanager-cli/**
+      - scripts/check-cli-release.py
       - scripts/package-release.sh
 
 jobs:
   check-version:
-    name: Require CLI version bump
+    name: Validate CLI release inputs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,3 +41,9 @@ jobs:
           fi
 
           echo "CLI version changed: ${base_version} -> ${head_version}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate CLI lockfile and locked metadata
+        run: python scripts/check-cli-release.py
