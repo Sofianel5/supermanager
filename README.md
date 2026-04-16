@@ -174,7 +174,6 @@ From there you can create room-scoped workspaces, generate organization invite l
 | `/v1/rooms/{room_id}/connections` | POST | Mint a repo-scoped API key for the room |
 | `/v1/hooks/turn` | POST | Submit a hook-captured turn event using `x-api-key` |
 | `/v1/organizations/{organization_slug}/summary` | GET | Read the current org summary JSON (`bluf_markdown`, `rooms[]`, `employees[]`) plus status |
-| `/v1/organizations/{organization_slug}/summary/regenerate` | POST | Queue a manual org summary regeneration |
 | `/v1/rooms/{room_id}/summary` | GET | Read the current room summary view derived from the org snapshot (`bluf_markdown`, `employees[]`) |
 | `/mcp` | POST | Streamable HTTP MCP endpoint with manager-facing read-only tools |
 
@@ -204,8 +203,8 @@ infra/aws/                # Terraform for the AWS backend
 
 ## Notes
 
-- Summary generation runs on the server after new hook turns arrive, on a periodic timer, and when manually requested.
-- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps per-organization working directories and thread state under `<data-dir>/organizations/<ORG_ID>/`.
+- Summary generation runs on the server after new hook turns arrive and on a periodic timer.
+- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps thread state under `<data-dir>/summary-threads/{organizations|rooms}/<ID>/`.
 - The stored org summary is structured JSON. The model receives the current snapshot plus fresh updates and can return partial section updates instead of rewriting the whole summary each time.
 
 ## Licensing

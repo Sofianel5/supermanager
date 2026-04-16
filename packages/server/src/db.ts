@@ -549,6 +549,16 @@ export class Db {
     `;
   }
 
+  async resetGeneratingOrganizationSummaries(
+    nextStatus: Extract<SummaryStatus, "error" | "ready"> = "error",
+  ): Promise<void> {
+    await this.client`
+      UPDATE organization_summaries
+      SET status = ${nextStatus}
+      WHERE status = 'generating'
+    `;
+  }
+
   async setOrganizationSummary(
     organizationId: string,
     content: OrganizationSnapshot,
@@ -562,8 +572,7 @@ export class Db {
         TO_TIMESTAMP(0)
       )
       ON CONFLICT(organization_id) DO UPDATE SET
-        content_json = EXCLUDED.content_json,
-        status = 'ready'
+        content_json = EXCLUDED.content_json
     `;
   }
 
