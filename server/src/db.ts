@@ -66,8 +66,10 @@ interface SummaryRow {
 }
 
 interface RoomSummaryRow {
-  content_json?: RoomBlufSnapshot;
+  room_id?: unknown;
+  content_json?: RoomSnapshot;
   status: unknown;
+  updated_at?: unknown;
 }
 
 interface SummaryStatusRow {
@@ -125,7 +127,9 @@ export class Db {
     await this.client`SELECT 1`;
   }
 
-  async listOrganizationsForUser(userId: string): Promise<OrganizationMembership[]> {
+  async listOrganizationsForUser(
+    userId: string,
+  ): Promise<OrganizationMembership[]> {
     const rows = await this.client<OrganizationMembershipRow[]>`
       SELECT
         organization.id AS organization_id,
@@ -181,7 +185,11 @@ export class Db {
     userId: string,
     organizationId: string,
   ): Promise<OrganizationMembership | null> {
-    return this.findOrganizationMembership(userId, "organization_id", organizationId);
+    return this.findOrganizationMembership(
+      userId,
+      "organization_id",
+      organizationId,
+    );
   }
 
   async getOrganizationMembershipBySlug(
@@ -243,14 +251,18 @@ export class Db {
         if (isUniqueViolation(error)) {
           continue;
         }
-        throw new Error(`failed to insert room into PostgreSQL: ${formatError(error)}`);
+        throw new Error(
+          `failed to insert room into PostgreSQL: ${formatError(error)}`,
+        );
       }
     }
 
     throw new Error("failed to generate unique room code after 10 attempts");
   }
 
-  async listRoomsForOrganization(organizationId: string): Promise<RoomListEntry[]> {
+  async listRoomsForOrganization(
+    organizationId: string,
+  ): Promise<RoomListEntry[]> {
     const rows = await this.client<RoomRow[]>`
       SELECT
         rooms.room_id,
@@ -265,14 +277,17 @@ export class Db {
       ORDER BY rooms.created_at DESC, rooms.room_id DESC
     `;
 
-    const [roomBlufs, orgSummary] = await Promise.all([
-      this.listRoomBlufsForOrganization(organizationId),
-      this.getStoredOrganizationSummary(organizationId),
-    ]);
+    const roomSummaries =
+      await this.listStoredRoomSummariesForOrganization(organizationId);
     const roomBlufMap = new Map(
-      roomBlufs.map((room) => [normalizeRoomId(room.room_id), room.bluf_markdown]),
+      roomSummaries.map((room) => [room.room_id, room.snapshot.bluf_markdown]),
     );
-    const employeeCounts = countEmployeesByRoom(orgSummary.employees);
+    const employeeCounts = new Map(
+      roomSummaries.map((room) => [
+        room.room_id,
+        room.snapshot.employees.length,
+      ]),
+    );
 
     return rows.map((row) => {
       const room = mapRoom(row);
@@ -284,7 +299,10 @@ export class Db {
     });
   }
 
-  async getRoomWithAccessCheck(roomId: string, userId: string): Promise<RoomRecord | null> {
+  async getRoomWithAccessCheck(
+    roomId: string,
+    userId: string,
+  ): Promise<RoomRecord | null> {
     const [row] = await this.client<RoomRow[]>`
       SELECT
         rooms.room_id,
@@ -319,7 +337,10 @@ export class Db {
     return row ? mapRoom(row) : null;
   }
 
-  async insertHookEvent(roomId: string, report: HookTurnReport): Promise<StoredHookEvent> {
+  async insertHookEvent(
+    roomId: string,
+    report: HookTurnReport,
+  ): Promise<StoredHookEvent> {
     const normalizedRoomId = normalizeRoomId(roomId);
     const eventId = crypto.randomUUID();
     const [row] = await this.client<InsertHookEventRow[]>`
@@ -391,7 +412,9 @@ export class Db {
       ORDER BY organization_id ASC
     `;
 
-    return rows.map((row) => readString(row.organization_id, "organization_id"));
+    return rows.map((row) =>
+      readString(row.organization_id, "organization_id"),
+    );
   }
 
   async listRoomIdsForOrganization(organizationId: string): Promise<string[]> {
@@ -405,7 +428,9 @@ export class Db {
     return rows.map((row) => readString(row.room_id, "room_id"));
   }
 
-  async listRoomsForSummary(organizationId: string): Promise<SummaryRoomRecord[]> {
+  async listRoomsForSummary(
+    organizationId: string,
+  ): Promise<SummaryRoomRecord[]> {
     const rows = await this.client<Pick<RoomRow, "room_id" | "name">[]>`
       SELECT room_id, name
       FROM rooms
@@ -428,7 +453,9 @@ export class Db {
     } = {},
   ): Promise<OrganizationSummaryEvent[]> {
     const limit = options.limit ?? 50;
-    const normalizedRoomId = options.roomId ? normalizeRoomId(options.roomId) : null;
+    const normalizedRoomId = options.roomId
+      ? normalizeRoomId(options.roomId)
+      : null;
     const rows = await this.client<HookEventRow[]>`
       SELECT
         h.seq,
@@ -477,20 +504,12 @@ export class Db {
       return emptyRoomSnapshot();
     }
 
-    const [roomBluf, organizationSummary] = await Promise.all([
-      this.getRoomBlufSnapshot(room.room_id),
-      this.getStoredOrganizationSummary(room.organization_id),
-    ]);
-
-    return {
-      bluf_markdown: roomBluf.bluf_markdown,
-      employees: organizationSummary.employees.filter((employee) =>
-        employee.room_ids.some((entry) => normalizeRoomId(entry) === room.room_id),
-      ),
-    };
+    return this.getStoredRoomSummary(room.room_id);
   }
 
-  async getOrganizationSummaryStatus(organizationId: string): Promise<SummaryStatus> {
+  async getOrganizationSummaryStatus(
+    organizationId: string,
+  ): Promise<SummaryStatus> {
     const [row] = await this.client<SummaryStatusRow[]>`
       SELECT status
       FROM organization_summaries
@@ -499,7 +518,10 @@ export class Db {
     return row ? parseSummaryStatus(row.status) : "ready";
   }
 
-  async setOrganizationSummaryStatus(organizationId: string, status: SummaryStatus): Promise<void> {
+  async setOrganizationSummaryStatus(
+    organizationId: string,
+    status: SummaryStatus,
+  ): Promise<void> {
     await this.client`
       INSERT INTO organization_summaries (organization_id, content_json, status, updated_at)
       VALUES (${organizationId}, ${normalizeStoredOrganizationSummary()}, ${status}, NOW())
@@ -526,32 +548,28 @@ export class Db {
   async listRoomBlufsForOrganization(
     organizationId: string,
   ): Promise<RoomBlufSnapshot[]> {
-    const rows = await this.client<
-      Array<Pick<RoomRow, "room_id"> & { content_json?: RoomBlufSnapshot }>
-    >`
-      SELECT
-        rooms.room_id,
-        room_summaries.content_json
-      FROM rooms
-      LEFT JOIN room_summaries ON room_summaries.room_id = rooms.room_id
-      WHERE rooms.organization_id = ${organizationId}
-      ORDER BY rooms.created_at DESC, rooms.room_id DESC
-    `;
-
+    const rows =
+      await this.listStoredRoomSummariesForOrganization(organizationId);
     return rows.map((row) =>
-      normalizeRoomBlufSnapshot(row.content_json, readString(row.room_id, "room_id")),
+      toRoomBlufSnapshot(row.room_id, row.snapshot, row.updated_at),
     );
   }
 
   async getRoomBlufSnapshot(roomId: string): Promise<RoomBlufSnapshot> {
     const normalizedRoomId = normalizeRoomId(roomId);
-    const [row] = await this.client<Pick<RoomSummaryRow, "content_json">[]>`
-      SELECT content_json
+    const [row] = await this.client<
+      Pick<RoomSummaryRow, "content_json" | "updated_at">[]
+    >`
+      SELECT content_json, updated_at
       FROM room_summaries
       WHERE room_id = ${normalizedRoomId}
     `;
 
-    return normalizeRoomBlufSnapshot(row?.content_json, normalizedRoomId);
+    return toRoomBlufSnapshot(
+      normalizedRoomId,
+      row?.content_json,
+      row?.updated_at,
+    );
   }
 
   async getRoomSummaryStatus(roomId: string): Promise<SummaryStatus> {
@@ -564,13 +582,16 @@ export class Db {
     return row ? parseSummaryStatus(row.status) : "ready";
   }
 
-  async setRoomSummaryStatus(roomId: string, status: SummaryStatus): Promise<void> {
+  async setRoomSummaryStatus(
+    roomId: string,
+    status: SummaryStatus,
+  ): Promise<void> {
     const normalizedRoomId = normalizeRoomId(roomId);
     await this.client`
       INSERT INTO room_summaries (room_id, content_json, status, updated_at)
       VALUES (
         ${normalizedRoomId},
-        ${normalizeRoomBlufSnapshot(undefined, normalizedRoomId)},
+        ${normalizeStoredRoomSummary()},
         ${status},
         NOW()
       )
@@ -580,11 +601,12 @@ export class Db {
     `;
   }
 
-  async setRoomSummary(roomId: string, content: RoomBlufSnapshot): Promise<void> {
-    const normalizedRoom = normalizeRoomBlufSnapshot(content, roomId);
+  async setRoomSummary(roomId: string, content: RoomSnapshot): Promise<void> {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const normalizedSummary = normalizeStoredRoomSummary(content);
     await this.client`
       INSERT INTO room_summaries (room_id, content_json, status, updated_at)
-      VALUES (${normalizedRoom.room_id}, ${normalizedRoom}, 'ready', NOW())
+      VALUES (${normalizedRoomId}, ${normalizedSummary}, 'ready', NOW())
       ON CONFLICT(room_id) DO UPDATE SET
         content_json = EXCLUDED.content_json,
         status = 'ready',
@@ -602,6 +624,39 @@ export class Db {
     `;
     return normalizeStoredOrganizationSummary(row?.content_json);
   }
+
+  private async getStoredRoomSummary(roomId: string): Promise<RoomSnapshot> {
+    const [row] = await this.client<Pick<RoomSummaryRow, "content_json">[]>`
+      SELECT content_json
+      FROM room_summaries
+      WHERE room_id = ${normalizeRoomId(roomId)}
+    `;
+
+    return normalizeStoredRoomSummary(row?.content_json);
+  }
+
+  private async listStoredRoomSummariesForOrganization(
+    organizationId: string,
+  ): Promise<
+    Array<{ room_id: string; snapshot: RoomSnapshot; updated_at: string }>
+  > {
+    const rows = await this.client<RoomSummaryRow[]>`
+      SELECT
+        rooms.room_id,
+        room_summaries.content_json,
+        room_summaries.updated_at
+      FROM rooms
+      LEFT JOIN room_summaries ON room_summaries.room_id = rooms.room_id
+      WHERE rooms.organization_id = ${organizationId}
+      ORDER BY rooms.created_at DESC, rooms.room_id DESC
+    `;
+
+    return rows.map((row) => ({
+      room_id: normalizeRoomId(readString(row.room_id, "room_id")),
+      snapshot: normalizeStoredRoomSummary(row.content_json),
+      updated_at: row.updated_at == null ? "" : toRfc3339(row.updated_at),
+    }));
+  }
 }
 
 export function normalizeRoomId(roomId: string): string {
@@ -615,7 +670,9 @@ function parseSummaryStatus(value: unknown): SummaryStatus {
   throw new Error(`unknown summary status: ${String(value)}`);
 }
 
-function mapOrganizationMembership(row: OrganizationMembershipRow): OrganizationMembership {
+function mapOrganizationMembership(
+  row: OrganizationMembershipRow,
+): OrganizationMembership {
   return {
     organization_id: readString(row.organization_id, "organization_id"),
     organization_name: readString(row.organization_name, "organization_name"),
@@ -632,9 +689,13 @@ function mapRoom(row: RoomRow): RoomRecord {
     created_at: toRfc3339(row.created_at),
     organization_id: readString(row.organization_id, "organization_id"),
     organization_slug: readString(row.organization_slug, "organization_slug"),
-    created_by_user_id: readString(row.created_by_user_id, "created_by_user_id"),
+    created_by_user_id: readString(
+      row.created_by_user_id,
+      "created_by_user_id",
+    ),
     bluf_markdown: row.bluf_markdown == null ? "" : String(row.bluf_markdown),
-    employee_count: row.employee_count == null ? 0 : toNumber(row.employee_count),
+    employee_count:
+      row.employee_count == null ? 0 : toNumber(row.employee_count),
   };
 }
 
@@ -656,9 +717,10 @@ function normalizeOrganizationSnapshot(
 ): OrganizationSnapshot {
   const base = snapshot ?? emptyOrganizationSnapshot();
   return {
-    bluf_markdown: typeof base.bluf_markdown === "string" ? base.bluf_markdown : "",
+    bluf_markdown:
+      typeof base.bluf_markdown === "string" ? base.bluf_markdown : "",
     rooms: Array.isArray(base.rooms)
-      ? base.rooms.map((room) => normalizeRoomBlufSnapshot(room))
+      ? base.rooms.map((room) => normalizeOrganizationRoomBlufSnapshot(room))
       : [],
     employees: Array.isArray(base.employees)
       ? base.employees.map(normalizeEmployeeSnapshot)
@@ -676,24 +738,58 @@ function normalizeStoredOrganizationSummary(
   };
 }
 
-function normalizeRoomBlufSnapshot(
-  snapshot: RoomBlufSnapshot | undefined,
-  fallbackRoomId = "",
-): RoomBlufSnapshot {
+function normalizeRoomSnapshot(
+  snapshot: RoomSnapshot | undefined,
+): RoomSnapshot {
+  const base = snapshot ?? emptyRoomSnapshot();
   return {
-    room_id: normalizeRoomId(
-      typeof snapshot?.room_id === "string" ? snapshot.room_id : fallbackRoomId,
-    ),
     bluf_markdown:
-      typeof snapshot?.bluf_markdown === "string" ? snapshot.bluf_markdown : "",
-    last_update_at:
-      typeof snapshot?.last_update_at === "string" ? snapshot.last_update_at : "",
+      typeof base.bluf_markdown === "string" ? base.bluf_markdown : "",
+    employees: Array.isArray(base.employees)
+      ? base.employees.map(normalizeEmployeeSnapshot)
+      : [],
   };
 }
 
-function normalizeEmployeeSnapshot(snapshot: EmployeeSnapshot): EmployeeSnapshot {
+function normalizeStoredRoomSummary(snapshot?: RoomSnapshot): RoomSnapshot {
+  return normalizeRoomSnapshot(snapshot);
+}
+
+function normalizeOrganizationRoomBlufSnapshot(
+  snapshot: RoomBlufSnapshot,
+): RoomBlufSnapshot {
   return {
-    employee_name: typeof snapshot.employee_name === "string" ? snapshot.employee_name : "",
+    room_id: normalizeRoomId(
+      typeof snapshot.room_id === "string" ? snapshot.room_id : "",
+    ),
+    bluf_markdown:
+      typeof snapshot.bluf_markdown === "string" ? snapshot.bluf_markdown : "",
+    last_update_at:
+      typeof snapshot.last_update_at === "string"
+        ? snapshot.last_update_at
+        : "",
+  };
+}
+
+function toRoomBlufSnapshot(
+  roomId: string,
+  snapshot: RoomSnapshot | undefined,
+  updatedAt?: unknown,
+): RoomBlufSnapshot {
+  const normalized = normalizeStoredRoomSummary(snapshot);
+  return {
+    room_id: normalizeRoomId(roomId),
+    bluf_markdown: normalized.bluf_markdown,
+    last_update_at: updatedAt == null ? "" : toRfc3339(updatedAt),
+  };
+}
+
+function normalizeEmployeeSnapshot(
+  snapshot: EmployeeSnapshot,
+): EmployeeSnapshot {
+  return {
+    employee_name:
+      typeof snapshot.employee_name === "string" ? snapshot.employee_name : "",
     room_ids: Array.isArray(snapshot.room_ids)
       ? Array.from(
           new Set(
@@ -703,28 +799,21 @@ function normalizeEmployeeSnapshot(snapshot: EmployeeSnapshot): EmployeeSnapshot
           ),
         )
       : [],
-    bluf_markdown: typeof snapshot.bluf_markdown === "string" ? snapshot.bluf_markdown : "",
-    last_update_at: typeof snapshot.last_update_at === "string" ? snapshot.last_update_at : "",
+    bluf_markdown:
+      typeof snapshot.bluf_markdown === "string" ? snapshot.bluf_markdown : "",
+    last_update_at:
+      typeof snapshot.last_update_at === "string"
+        ? snapshot.last_update_at
+        : "",
   };
-}
-
-function countEmployeesByRoom(employees: EmployeeSnapshot[]): Map<string, number> {
-  const counts = new Map<string, number>();
-
-  for (const employee of employees) {
-    for (const roomId of employee.room_ids) {
-      const normalizedRoomId = normalizeRoomId(roomId);
-      counts.set(normalizedRoomId, (counts.get(normalizedRoomId) ?? 0) + 1);
-    }
-  }
-
-  return counts;
 }
 
 function generateRoomCode(): string {
   let roomCode = "";
   while (roomCode.length < ROOM_CODE_LENGTH) {
-    const bytes = crypto.getRandomValues(new Uint8Array(ROOM_CODE_LENGTH - roomCode.length));
+    const bytes = crypto.getRandomValues(
+      new Uint8Array(ROOM_CODE_LENGTH - roomCode.length),
+    );
     for (const byte of bytes) {
       if (byte >= 252) {
         continue;

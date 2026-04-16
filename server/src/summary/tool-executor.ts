@@ -1,5 +1,9 @@
 import { normalizeRoomId, type Db } from "../db";
-import type { OrganizationSnapshot } from "../types";
+import type {
+  EmployeeSnapshot,
+  OrganizationSnapshot,
+  RoomSnapshot,
+} from "../types";
 import type { SummaryToolName } from "./protocol";
 
 export interface ToolExecutionResult {
@@ -35,7 +39,7 @@ async function applyRoomSummaryToolCall(
 ): Promise<ToolExecutionResult> {
   switch (tool) {
     case "get_snapshot": {
-      const snapshot = await db.getRoomBlufSnapshot(roomId);
+      const snapshot = await db.getRoomSummary(roomId);
       return {
         success: true,
         message: JSON.stringify(snapshot, null, 2),
@@ -43,16 +47,55 @@ async function applyRoomSummaryToolCall(
     }
     case "set_bluf": {
       const markdown = readRequiredString(argumentsValue, "markdown").trim();
-      const updatedAt = new Date().toISOString();
-      await db.setRoomSummary(roomId, {
-        room_id: normalizeRoomId(roomId),
-        bluf_markdown: markdown,
-        last_update_at: updatedAt,
+      return mutateRoomSummary(db, roomId, (snapshot) => {
+        snapshot.bluf_markdown = markdown;
+        return {
+          changed: true,
+          message: `updated room BLUF for ${normalizeRoomId(roomId)}`,
+        };
       });
-      return {
-        success: true,
-        message: `updated room BLUF for ${normalizeRoomId(roomId)}`,
-      };
+    }
+    case "set_employee_bluf": {
+      const employeeName = readRequiredString(
+        argumentsValue,
+        "employee_name",
+      ).trim();
+      if (!employeeName) {
+        return {
+          success: false,
+          message: "employee_name must not be empty",
+        };
+      }
+
+      const markdown = readRequiredString(argumentsValue, "markdown").trim();
+      const updatedAt = new Date().toISOString();
+
+      return mutateRoomSummary(db, roomId, (snapshot) => {
+        upsertEmployeeBluf(
+          snapshot.employees,
+          employeeName,
+          [normalizeRoomId(roomId)],
+          markdown,
+          updatedAt,
+        );
+        return {
+          changed: true,
+          message: `updated employee BLUF for ${employeeName} in ${normalizeRoomId(roomId)}`,
+        };
+      });
+    }
+    case "remove_employee_bluf": {
+      const employeeName = readRequiredString(
+        argumentsValue,
+        "employee_name",
+      ).trim();
+      return mutateRoomSummary(db, roomId, (snapshot) => {
+        const result = removeEmployeeBluf(snapshot, employeeName);
+        return {
+          changed: result.changed,
+          message: result.message,
+        };
+      });
     }
     default:
       return {
@@ -78,7 +121,7 @@ async function applyOrganizationSummaryToolCall(
     }
     case "set_org_bluf": {
       const markdown = readRequiredString(argumentsValue, "markdown").trim();
-      return mutateSummary(db, organizationId, (snapshot) => {
+      return mutateOrganizationSummary(db, organizationId, (snapshot) => {
         snapshot.bluf_markdown = markdown;
         return {
           changed: true,
@@ -87,7 +130,10 @@ async function applyOrganizationSummaryToolCall(
       });
     }
     case "set_employee_bluf": {
-      const employeeName = readRequiredString(argumentsValue, "employee_name").trim();
+      const employeeName = readRequiredString(
+        argumentsValue,
+        "employee_name",
+      ).trim();
       if (!employeeName) {
         return {
           success: false,
@@ -98,31 +144,21 @@ async function applyOrganizationSummaryToolCall(
       const markdown = readRequiredString(argumentsValue, "markdown").trim();
       const roomIds = Array.from(
         new Set(
-          readRequiredStringArray(argumentsValue, "room_ids").map(normalizeRoomId),
+          readRequiredStringArray(argumentsValue, "room_ids").map(
+            normalizeRoomId,
+          ),
         ),
       );
-      const employeeKey = normalizeEmployeeName(employeeName);
       const updatedAt = new Date().toISOString();
 
-      return mutateSummary(db, organizationId, (snapshot) => {
-        const existing = snapshot.employees.find(
-          (employee) => normalizeEmployeeName(employee.employee_name) === employeeKey,
+      return mutateOrganizationSummary(db, organizationId, (snapshot) => {
+        upsertEmployeeBluf(
+          snapshot.employees,
+          employeeName,
+          roomIds,
+          markdown,
+          updatedAt,
         );
-
-        if (existing) {
-          existing.employee_name = employeeName;
-          existing.room_ids = roomIds;
-          existing.bluf_markdown = markdown;
-          existing.last_update_at = updatedAt;
-        } else {
-          snapshot.employees.push({
-            employee_name: employeeName,
-            room_ids: roomIds,
-            bluf_markdown: markdown,
-            last_update_at: updatedAt,
-          });
-        }
-
         return {
           changed: true,
           message: `updated employee BLUF for ${employeeName}`,
@@ -130,21 +166,16 @@ async function applyOrganizationSummaryToolCall(
       });
     }
     case "remove_employee_bluf": {
-      const employeeName = readRequiredString(argumentsValue, "employee_name").trim();
-      const employeeKey = normalizeEmployeeName(employeeName);
+      const employeeName = readRequiredString(
+        argumentsValue,
+        "employee_name",
+      ).trim();
 
-      return mutateSummary(db, organizationId, (snapshot) => {
-        const before = snapshot.employees.length;
-        snapshot.employees = snapshot.employees.filter(
-          (employee) => normalizeEmployeeName(employee.employee_name) !== employeeKey,
-        );
-
-        const removed = snapshot.employees.length !== before;
+      return mutateOrganizationSummary(db, organizationId, (snapshot) => {
+        const result = removeEmployeeBluf(snapshot, employeeName);
         return {
-          changed: removed,
-          message: removed
-            ? `removed employee BLUF for ${employeeName}`
-            : `employee BLUF already absent for ${employeeName}`,
+          changed: result.changed,
+          message: result.message,
         };
       });
     }
@@ -157,10 +188,30 @@ async function applyOrganizationSummaryToolCall(
   }
 }
 
-async function mutateSummary(
+async function mutateRoomSummary(
+  db: Db,
+  roomId: string,
+  mutate: (snapshot: RoomSnapshot) => { changed: boolean; message: string },
+): Promise<ToolExecutionResult> {
+  const snapshot = await db.getRoomSummary(roomId);
+  const { changed, message } = mutate(snapshot);
+  if (changed) {
+    await db.setRoomSummary(roomId, snapshot);
+  }
+
+  return {
+    success: true,
+    message,
+  };
+}
+
+async function mutateOrganizationSummary(
   db: Db,
   organizationId: string,
-  mutate: (snapshot: OrganizationSnapshot) => { changed: boolean; message: string },
+  mutate: (snapshot: OrganizationSnapshot) => {
+    changed: boolean;
+    message: string;
+  },
 ): Promise<ToolExecutionResult> {
   const snapshot = await db.getOrganizationSummary(organizationId);
   const { changed, message } = mutate(snapshot);
@@ -171,6 +222,53 @@ async function mutateSummary(
   return {
     success: true,
     message,
+  };
+}
+
+function upsertEmployeeBluf(
+  employees: EmployeeSnapshot[],
+  employeeName: string,
+  roomIds: string[],
+  markdown: string,
+  updatedAt: string,
+): void {
+  const employeeKey = normalizeEmployeeName(employeeName);
+  const existing = employees.find(
+    (employee) => normalizeEmployeeName(employee.employee_name) === employeeKey,
+  );
+
+  if (existing) {
+    existing.employee_name = employeeName;
+    existing.room_ids = roomIds;
+    existing.bluf_markdown = markdown;
+    existing.last_update_at = updatedAt;
+    return;
+  }
+
+  employees.push({
+    employee_name: employeeName,
+    room_ids: roomIds,
+    bluf_markdown: markdown,
+    last_update_at: updatedAt,
+  });
+}
+
+function removeEmployeeBluf(
+  snapshot: RoomSnapshot | OrganizationSnapshot,
+  employeeName: string,
+): { changed: boolean; message: string } {
+  const employeeKey = normalizeEmployeeName(employeeName);
+  const before = snapshot.employees.length;
+  snapshot.employees = snapshot.employees.filter(
+    (employee) => normalizeEmployeeName(employee.employee_name) !== employeeKey,
+  );
+
+  const removed = snapshot.employees.length !== before;
+  return {
+    changed: removed,
+    message: removed
+      ? `removed employee BLUF for ${employeeName}`
+      : `employee BLUF already absent for ${employeeName}`,
   };
 }
 

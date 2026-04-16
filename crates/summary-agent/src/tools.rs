@@ -19,6 +19,12 @@ struct SetEmployeeBlufArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct SetRoomEmployeeBlufArgs {
+    employee_name: String,
+    markdown: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RemoveEmployeeBlufArgs {
     employee_name: String,
 }
@@ -54,6 +60,29 @@ impl SummaryTool {
                 "set_bluf",
                 "Replace the room BLUF markdown.",
                 markdown_only_schema(),
+            ),
+            spec(
+                "set_employee_bluf",
+                "Create or update a single employee BLUF scoped to this room.",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["employee_name", "markdown"],
+                    "properties": {
+                        "employee_name": { "type": "string" },
+                        "markdown": { "type": "string" }
+                    }
+                }),
+            ),
+            spec(
+                "remove_employee_bluf",
+                "Remove an employee BLUF that should no longer appear in this room snapshot.",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["employee_name"],
+                    "properties": { "employee_name": { "type": "string" } }
+                }),
             ),
         ]
     }
@@ -110,6 +139,23 @@ impl SummaryTool {
                     markdown: args.markdown,
                 })
             }
+            "set_employee_bluf" => {
+                let args: SetRoomEmployeeBlufArgs =
+                    serde_json::from_value(params.arguments.clone())
+                        .context("invalid set_employee_bluf arguments")?;
+                Ok(Self::SetEmployeeBluf {
+                    employee_name: args.employee_name,
+                    room_ids: Vec::new(),
+                    markdown: args.markdown,
+                })
+            }
+            "remove_employee_bluf" => {
+                let args: RemoveEmployeeBlufArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid remove_employee_bluf arguments")?;
+                Ok(Self::RemoveEmployeeBluf {
+                    employee_name: args.employee_name,
+                })
+            }
             other => anyhow::bail!("unknown room summary tool: {other}"),
         }
     }
@@ -159,14 +205,21 @@ impl SummaryTool {
                 employee_name,
                 room_ids,
                 markdown,
-            } => (
-                "set_employee_bluf".to_owned(),
-                json!({
-                    "employee_name": employee_name,
-                    "room_ids": room_ids,
-                    "markdown": markdown,
-                }),
-            ),
+            } => {
+                let arguments = if room_ids.is_empty() {
+                    json!({
+                        "employee_name": employee_name,
+                        "markdown": markdown,
+                    })
+                } else {
+                    json!({
+                        "employee_name": employee_name,
+                        "room_ids": room_ids,
+                        "markdown": markdown,
+                    })
+                };
+                ("set_employee_bluf".to_owned(), arguments)
+            }
             Self::RemoveEmployeeBluf { employee_name } => (
                 "remove_employee_bluf".to_owned(),
                 json!({ "employee_name": employee_name }),
