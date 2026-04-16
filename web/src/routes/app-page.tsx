@@ -9,6 +9,7 @@ import { DeviceApprovalDialog } from "../components/app-page/device-approval-dia
 import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
 import { InviteJoinGate } from "../components/app-page/invite-join-gate";
 import { InviteTeammatesBanner } from "../components/app-page/invite-teammates-banner";
+import { OrganizationInsightsPanel } from "../components/app-page/organization-insights-panel";
 import { OrganizationOnboarding } from "../components/app-page/organization-onboarding";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
@@ -26,7 +27,11 @@ import {
 import { pageShellClass } from "../ui";
 import { readAuthError, readMessage } from "../utils";
 
-export function AppPage() {
+interface AppPageProps {
+  view?: "rooms" | "insights";
+}
+
+export function AppPage({ view = "rooms" }: AppPageProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -159,7 +164,7 @@ export function AppPage() {
     const params = new URLSearchParams(location.search);
     params.delete("user_code");
     const query = params.toString();
-    navigate(query ? `/app?${query}` : "/app", { replace: true });
+    navigate(query ? `${location.pathname}?${query}` : location.pathname, { replace: true });
   }
 
   const refreshWorkspace = useCallback(async () => {
@@ -224,18 +229,29 @@ export function AppPage() {
             <CliSetupBanner />
           )}
 
-          <WorkspacePanel
-            activeOrganization={activeOrganization}
-            error={workspaceError}
-            isCreatingRoom={isCreatingRoom}
-            isRegeneratingSummary={isRegeneratingSummary}
-            isLoading={isLoading}
-            organizationSummary={summaryQuery.data?.summary ?? null}
-            summaryStatus={summaryQuery.data?.status ?? "ready"}
-            rooms={rooms}
-            onCreateRoom={openCreateRoomDialog}
-            onRegenerateSummary={() => void handleRegenerateSummary()}
-          />
+          {view === "insights" ? (
+            <OrganizationInsightsPanel
+              activeOrganization={activeOrganization}
+              error={workspaceError}
+              isLoading={isLoading}
+              isRegeneratingSummary={isRegeneratingSummary}
+              organizationSummary={summaryQuery.data?.summary ?? null}
+              rooms={rooms}
+              summaryStatus={summaryQuery.data?.status ?? "ready"}
+              onRegenerateSummary={() => void handleRegenerateSummary()}
+            />
+          ) : (
+            <WorkspacePanel
+              activeOrganization={activeOrganization}
+              error={workspaceError}
+              isCreatingRoom={isCreatingRoom}
+              isLoading={isLoading}
+              organizationSummary={summaryQuery.data?.summary ?? null}
+              summaryStatus={summaryQuery.data?.status ?? "ready"}
+              rooms={rooms}
+              onCreateRoom={openCreateRoomDialog}
+            />
+          )}
         </main>
       )}
 
