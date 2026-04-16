@@ -61,22 +61,20 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
 
   const viewer = viewerQuery.data ?? null;
   const isFirstRun = viewer !== null && viewer.organizations.length === 0;
-  const hasWorkspaceData =
-    !activeOrganization ||
-    (roomsQuery.data != null && summaryQuery.data != null);
+  const hasWorkspaceData = !activeOrganization || roomsQuery.data != null;
   const isLoading =
     viewerQuery.isLoading ||
     (Boolean(activeOrganization) &&
       !hasWorkspaceData &&
-      (roomsQuery.isLoading || summaryQuery.isLoading));
+      roomsQuery.isLoading);
   const workspaceError =
     workspaceActionError ||
     readQueryError(viewerQuery.error, viewerQuery.data != null) ||
-    readQueryError(roomsQuery.error, roomsQuery.data != null) ||
-    readQueryError(summaryQuery.error, summaryQuery.data != null);
+    readQueryError(roomsQuery.error, roomsQuery.data != null);
   const deviceError =
     deviceActionError || readQueryError(deviceStatusQuery.error);
   const isCreatingRoom = pendingAction === "create-room";
+  const summaryStatus = readSummaryStatus(summaryQuery.error, summaryQuery.data);
 
   function openDocs() {
     navigate("/docs");
@@ -234,7 +232,7 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
               isLoading={isLoading}
               organizationSummary={summaryQuery.data?.summary ?? null}
               rooms={rooms}
-              summaryStatus={summaryQuery.data?.status ?? "ready"}
+              summaryStatus={summaryStatus}
             />
           ) : (
             <WorkspacePanel
@@ -243,7 +241,7 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
               isCreatingRoom={isCreatingRoom}
               isLoading={isLoading}
               organizationSummary={summaryQuery.data?.summary ?? null}
-              summaryStatus={summaryQuery.data?.status ?? "ready"}
+              summaryStatus={summaryStatus}
               rooms={rooms}
               onCreateRoom={openCreateRoomDialog}
             />
@@ -291,4 +289,19 @@ function readQueryError(error: unknown, hasData: boolean = false) {
   }
 
   return error instanceof Error ? error.message : null;
+}
+
+function readSummaryStatus(
+  error: unknown,
+  data: { status: "generating" | "ready" | "error" } | undefined,
+) {
+  if (data) {
+    return data.status;
+  }
+
+  if (error instanceof Error) {
+    return "error" as const;
+  }
+
+  return "ready" as const;
 }
