@@ -243,4 +243,3 @@ function formatDate(value: string) {
 
   return dateFormatter.format(timestamp);
 }
-

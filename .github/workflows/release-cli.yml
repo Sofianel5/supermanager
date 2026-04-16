@@ -58,7 +58,7 @@ jobs:
             base_ref="$(git rev-parse "${GITHUB_SHA}^")"
           fi
 
-          changed_files="$(git diff --name-only "${base_ref}" "${GITHUB_SHA}" -- Cargo.toml Cargo.lock crates/reporter-protocol crates/supermanager-cli scripts/package-release.sh || true)"
+          changed_files="$(git diff --name-only "${base_ref}" "${GITHUB_SHA}" -- Cargo.toml Cargo.lock crates/reporter-protocol/Cargo.toml crates/reporter-protocol/src/hook.rs crates/reporter-protocol/src/room.rs crates/supermanager-cli scripts/package-release.sh || true)"
           if [ -z "${changed_files}" ]; then
             echo "::notice::No CLI release inputs changed on this push."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
