@@ -1,4 +1,4 @@
-const EMBEDDING_MODEL = "text-embedding-3-small";
+const EMBEDDING_MODEL = "text-embedding-3-large";
 const EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 
 interface EmbeddingsResponse {
