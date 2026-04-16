@@ -3,6 +3,9 @@ name: Check CLI Version
 on:
   pull_request:
     paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/reporter-protocol/**
       - crates/supermanager-cli/**
       - scripts/package-release.sh
 

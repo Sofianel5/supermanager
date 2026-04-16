@@ -43,6 +43,8 @@ jobs:
           EVENT_BEFORE: ${{ github.event.before }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -56,7 +58,7 @@ jobs:
             base_ref="$(git rev-parse "${GITHUB_SHA}^")"
           fi
 
-          changed_files="$(git diff --name-only "${base_ref}" "${GITHUB_SHA}" -- crates/supermanager-cli scripts/package-release.sh || true)"
+          changed_files="$(git diff --name-only "${base_ref}" "${GITHUB_SHA}" -- Cargo.toml Cargo.lock crates/reporter-protocol crates/supermanager-cli scripts/package-release.sh || true)"
           if [ -z "${changed_files}" ]; then
             echo "::notice::No CLI release inputs changed on this push."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
@@ -65,8 +67,12 @@ jobs:
 
           base_version="$(git show "${base_ref}:crates/supermanager-cli/Cargo.toml" | python -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["package"]["version"])')"
           if [ "${base_version}" = "${HEAD_VERSION}" ]; then
-            echo "::error::CLI release inputs changed, but crates/supermanager-cli/Cargo.toml stayed at ${HEAD_VERSION}. Bump the CLI version before merging."
-            exit 1
+            if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+              echo "::error::CLI release inputs changed, but crates/supermanager-cli/Cargo.toml stayed at ${HEAD_VERSION}. Bump the CLI version before merging."
+              exit 1
+            fi
+
+            echo "::notice::CLI release inputs changed without a version bump, but ${RELEASE_TAG} has not been published yet. Retrying the ${HEAD_VERSION} release."
           fi
 
           echo "should_release=true" >> "$GITHUB_OUTPUT"
