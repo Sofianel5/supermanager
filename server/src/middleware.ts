@@ -1,5 +1,6 @@
 import type { SupermanagerAuth } from "./auth";
 import { Db } from "./db";
+import type { OrganizationMembership } from "./types";
 
 export async function requireViewer(auth: SupermanagerAuth, headers: Headers) {
   const session = await auth.api.getSession({ headers });
@@ -23,14 +24,36 @@ export async function resolveOrganizationMembership(
     return membership;
   }
 
-  if (activeOrganizationId) {
-    const membership = await db.getOrganizationMembershipById(userId, activeOrganizationId);
-    if (membership) {
-      return membership;
-    }
+  const memberships = await db.listOrganizationsForUser(userId);
+  const membership = pickActiveOrganizationMembership(
+    memberships,
+    activeOrganizationId,
+  );
+  if (membership) {
+    return membership;
   }
 
   throw httpError(400, "select an organization first");
+}
+
+export function pickActiveOrganizationMembership(
+  memberships: OrganizationMembership[],
+  activeOrganizationId: string | null,
+) {
+  if (activeOrganizationId) {
+    const activeMembership = memberships.find(
+      (membership) => membership.organization_id === activeOrganizationId,
+    );
+    if (activeMembership) {
+      return activeMembership;
+    }
+  }
+
+  if (memberships.length === 1) {
+    return memberships[0];
+  }
+
+  return null;
 }
 
 export async function requireRoomAccess(db: Db, userId: string, roomId: string) {
