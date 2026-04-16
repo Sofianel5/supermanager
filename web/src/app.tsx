@@ -19,7 +19,15 @@ export function App() {
           path="/app"
           element={
             <RequireSession>
-              <AppPage />
+              <AppPage view="rooms" />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/app/insights"
+          element={
+            <RequireSession>
+              <AppPage view="insights" />
             </RequireSession>
           }
         />

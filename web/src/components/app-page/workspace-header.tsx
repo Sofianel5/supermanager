@@ -23,7 +23,7 @@ export function WorkspaceHeader({
   return (
     <section className="flex flex-col gap-7 border-b border-border pb-9 pt-7 md:flex-row md:items-end md:justify-between">
       <div>
-        <div className={sectionLabelClass}>Rooms</div>
+        <div className={sectionLabelClass}>Your organization</div>
         <h1 className="mt-4 max-w-full text-4xl font-semibold leading-none text-ink sm:text-5xl lg:text-6xl">
           {activeOrganizationName || "Workspace"}
         </h1>
@@ -36,10 +36,7 @@ export function WorkspaceHeader({
       </div>
 
       <div className="w-full md:max-w-[19rem]">
-        <DropdownButton
-          label="Menu"
-          panelClassName="grid overflow-hidden p-0"
-        >
+        <DropdownButton label="Menu" panelClassName="grid overflow-hidden p-0">
           {({ closeDropdown }) => (
             <>
               <button
