@@ -14,25 +14,25 @@ interface SummaryAgentHostOptions {
 }
 
 type SummaryAgentProcess = Bun.Subprocess<"pipe", "pipe", "pipe">;
-const REGENERATION_EVENT_LIMIT = 50;
+const ORGANIZATION_HEARTBEAT_EVENT_LIMIT = 50;
 
 export class SummaryAgentHost {
   private child: SummaryAgentProcess | null = null;
-  private regenerationTimer: Timer | null = null;
-  private regenerationSweepInFlight = false;
+  private heartbeatTimer: Timer | null = null;
+  private heartbeatSweepInFlight = false;
   private starting: Promise<void> | null = null;
 
   constructor(private readonly options: SummaryAgentHostOptions) {}
 
   async start(): Promise<void> {
     await this.ensureRunning();
-    this.startRegenerationTimer();
+    this.startHeartbeatTimer();
   }
 
   async stop(): Promise<void> {
-    if (this.regenerationTimer) {
-      clearInterval(this.regenerationTimer);
-      this.regenerationTimer = null;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
 
     const child = this.child;
@@ -62,23 +62,21 @@ export class SummaryAgentHost {
     });
   }
 
-  async regenerateOrganization(
+  private async enqueueOrganizationHeartbeat(
     organizationId: string,
-    reason: "manual" | "heartbeat",
   ): Promise<void> {
     await this.ensureRunning();
     const [events, rooms] = await Promise.all([
       this.options.db.queryOrganizationEventsForSummary(organizationId, {
-        limit: REGENERATION_EVENT_LIMIT,
+        limit: ORGANIZATION_HEARTBEAT_EVENT_LIMIT,
       }),
       this.options.db.listRoomsForSummary(organizationId),
     ]);
     this.send({
-      type: "regenerate_organization",
+      type: "organization_heartbeat",
       events,
       organization_id: organizationId,
       rooms,
-      reason,
     });
   }
 
@@ -110,7 +108,9 @@ export class SummaryAgentHost {
           if (error) {
             console.error(`[summary-agent] exit error: ${error.message}`);
           }
-          console.error(`[summary-agent] exited code=${code ?? "null"} signal=${signal ?? "null"}`);
+          console.error(
+            `[summary-agent] exited code=${code ?? "null"} signal=${signal ?? "null"}`,
+          );
           this.detachChild(child);
         },
       });
@@ -142,8 +142,12 @@ export class SummaryAgentHost {
     if (!this.child?.stdin) {
       throw new Error("summary agent is not running");
     }
-    void Promise.resolve(this.child.stdin.write(`${JSON.stringify(message)}\n`)).catch((error) => {
-      console.error(`[summary-agent] failed to write to stdin: ${formatError(error)}`);
+    void Promise.resolve(
+      this.child.stdin.write(`${JSON.stringify(message)}\n`),
+    ).catch((error) => {
+      console.error(
+        `[summary-agent] failed to write to stdin: ${formatError(error)}`,
+      );
     });
   }
 
@@ -156,7 +160,9 @@ export class SummaryAgentHost {
     try {
       message = JSON.parse(line) as AgentMessage;
     } catch (error) {
-      console.error(`[summary-agent] invalid JSON from child: ${String(error)}`);
+      console.error(
+        `[summary-agent] invalid JSON from child: ${String(error)}`,
+      );
       return;
     }
 
@@ -198,7 +204,9 @@ export class SummaryAgentHost {
       }
       default: {
         const neverMessage: never = message;
-        console.error(`[summary-agent] unhandled child message: ${JSON.stringify(neverMessage)}`);
+        console.error(
+          `[summary-agent] unhandled child message: ${JSON.stringify(neverMessage)}`,
+        );
       }
     }
   }
@@ -211,44 +219,50 @@ export class SummaryAgentHost {
       try {
         await onLine(line);
       } catch (error) {
-        console.error(`[summary-agent] line handler failed: ${formatError(error)}`);
+        console.error(
+          `[summary-agent] line handler failed: ${formatError(error)}`,
+        );
       }
     });
   }
 
-  private startRegenerationTimer(): void {
+  private startHeartbeatTimer(): void {
     const intervalMs = this.options.config.summaryRefreshIntervalMs;
-    if (intervalMs <= 0 || this.regenerationTimer) {
+    if (intervalMs <= 0 || this.heartbeatTimer) {
       return;
     }
 
-    this.regenerationTimer = setInterval(() => {
-      void this.runRegenerationSweep().catch((error) => {
-        console.error(`[summary-agent] regeneration sweep failed: ${formatError(error)}`);
+    this.heartbeatTimer = setInterval(() => {
+      void this.runHeartbeatSweep().catch((error) => {
+        console.error(
+          `[summary-agent] heartbeat sweep failed: ${formatError(error)}`,
+        );
       });
     }, intervalMs);
   }
 
-  private async runRegenerationSweep(): Promise<void> {
-    if (this.regenerationSweepInFlight) {
+  private async runHeartbeatSweep(): Promise<void> {
+    if (this.heartbeatSweepInFlight) {
       return;
     }
 
-    this.regenerationSweepInFlight = true;
+    this.heartbeatSweepInFlight = true;
     try {
-      const organizationIds = await this.options.db.listOrganizationsWithRooms();
+      const organizationIds =
+        await this.options.db.listOrganizationsWithRooms();
       await Promise.all(
         organizationIds.map(async (organizationId) => {
-          const status = await this.options.db.getOrganizationSummaryStatus(organizationId);
+          const status =
+            await this.options.db.getOrganizationSummaryStatus(organizationId);
           if (status === "generating") {
             return;
           }
 
-          await this.regenerateOrganization(organizationId, "heartbeat");
+          await this.enqueueOrganizationHeartbeat(organizationId);
         }),
       );
     } finally {
-      this.regenerationSweepInFlight = false;
+      this.heartbeatSweepInFlight = false;
     }
   }
 }

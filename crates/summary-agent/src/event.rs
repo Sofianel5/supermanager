@@ -3,13 +3,13 @@ use reporter_protocol::StoredHookEvent;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct RegenerationRoom {
+pub(crate) struct OrganizationHeartbeatRoom {
     pub(crate) room_id: String,
     pub(crate) name: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct RegenerationEvent {
+pub(crate) struct OrganizationHeartbeatEvent {
     pub(crate) room_id: String,
     pub(crate) room_name: String,
     #[serde(flatten)]
@@ -49,10 +49,9 @@ payload_json:\n{payload}",
     ))
 }
 
-pub(crate) fn format_organization_regeneration_request(
-    reason: &str,
-    rooms: &[RegenerationRoom],
-    events: &[RegenerationEvent],
+pub(crate) fn format_organization_heartbeat_request(
+    rooms: &[OrganizationHeartbeatRoom],
+    events: &[OrganizationHeartbeatEvent],
 ) -> Result<String> {
     let rooms_text = if rooms.is_empty() {
         "(none)".to_owned()
@@ -68,23 +67,21 @@ pub(crate) fn format_organization_regeneration_request(
         "(none)".to_owned()
     } else {
         let mut rendered = Vec::with_capacity(events.len());
-        for regeneration_event in events {
+        for heartbeat_event in events {
             rendered.push(format_room_event(
-                &regeneration_event.room_id,
-                &regeneration_event.room_name,
-                &regeneration_event.event,
+                &heartbeat_event.room_id,
+                &heartbeat_event.room_name,
+                &heartbeat_event.event,
             )?);
         }
         rendered.join("\n\n---\n\n")
     };
 
     Ok(format!(
-        "Regenerate the organization summary now.\n\
-trigger: {reason}\n\
+        "Organization summary heartbeat fired.\n\
 current_rooms:\n{rooms}\n\
 recent_org_events:\n{events}\n\
 Tighten the organization BLUF and employee BLUFs. Room BLUFs are maintained separately and should be treated as read-only context from get_snapshot.",
-        reason = reason,
         rooms = rooms_text,
         events = events_text,
     ))
@@ -120,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn format_organization_regeneration_request_includes_rooms_and_events() {
+    fn format_organization_heartbeat_request_includes_rooms_and_events() {
         let event = StoredHookEvent {
             seq: 0,
             event_id: Uuid::nil(),
@@ -132,13 +129,12 @@ mod tests {
             payload: json!({ "hook_event_name": "Stop" }),
         };
 
-        let rendered = format_organization_regeneration_request(
-            "heartbeat",
-            &[RegenerationRoom {
+        let rendered = format_organization_heartbeat_request(
+            &[OrganizationHeartbeatRoom {
                 room_id: "ROOM42".to_owned(),
                 name: "Operations".to_owned(),
             }],
-            &[RegenerationEvent {
+            &[OrganizationHeartbeatEvent {
                 room_id: "ROOM42".to_owned(),
                 room_name: "Operations".to_owned(),
                 event,
@@ -146,7 +142,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(rendered.contains("trigger: heartbeat"));
+        assert!(rendered.contains("Organization summary heartbeat fired."));
         assert!(rendered.contains("- ROOM42: Operations"));
         assert!(rendered.contains("room_name: Operations"));
         assert!(rendered.contains("Room BLUFs are maintained separately"));

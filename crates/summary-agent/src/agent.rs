@@ -15,8 +15,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     event::{
-        RegenerationEvent, RegenerationRoom, format_organization_regeneration_request,
-        format_room_event,
+        OrganizationHeartbeatEvent, OrganizationHeartbeatRoom,
+        format_organization_heartbeat_request, format_room_event,
     },
     ipc::{AgentMessage, PendingToolCalls},
     prompt::{ORGANIZATION_SYSTEM_PROMPT, ROOM_SYSTEM_PROMPT},
@@ -31,11 +31,10 @@ pub(crate) enum AgentCommand {
         room_name: String,
         event: StoredHookEvent,
     },
-    RegenerateOrganization {
+    OrganizationHeartbeat {
         organization_id: String,
-        events: Vec<RegenerationEvent>,
-        rooms: Vec<RegenerationRoom>,
-        reason: String,
+        events: Vec<OrganizationHeartbeatEvent>,
+        rooms: Vec<OrganizationHeartbeatRoom>,
     },
     Shutdown,
 }
@@ -170,13 +169,12 @@ impl AgentLoop {
                 })) => {
                     self.send_room_event(&room_id, &room_name, &event).await?;
                 }
-                LoopInput::Command(Some(AgentCommand::RegenerateOrganization {
+                LoopInput::Command(Some(AgentCommand::OrganizationHeartbeat {
                     organization_id,
                     events,
                     rooms,
-                    reason,
                 })) => {
-                    self.regenerate_organization(&organization_id, &reason, &rooms, &events)
+                    self.handle_organization_heartbeat(&organization_id, &rooms, &events)
                         .await?;
                 }
                 LoopInput::Command(Some(AgentCommand::Shutdown)) => break,
@@ -290,17 +288,16 @@ impl AgentLoop {
         self.send_input(&target, thread_id, input).await
     }
 
-    async fn regenerate_organization(
+    async fn handle_organization_heartbeat(
         &mut self,
         organization_id: &str,
-        reason: &str,
-        rooms: &[RegenerationRoom],
-        events: &[RegenerationEvent],
+        rooms: &[OrganizationHeartbeatRoom],
+        events: &[OrganizationHeartbeatEvent],
     ) -> Result<()> {
         let target = SummaryTarget::organization(organization_id.to_owned());
         let thread_id = self.ensure_thread(&target).await?;
         let input = vec![UserInput::Text {
-            text: format_organization_regeneration_request(reason, rooms, events)?,
+            text: format_organization_heartbeat_request(rooms, events)?,
             text_elements: Vec::new(),
         }];
 

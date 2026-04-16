@@ -13,11 +13,11 @@ import {
   errorMessageClass,
   messageClass,
   pillBaseClass,
+  secondaryButtonClass,
   sectionLabelClass,
   subduedSurfaceClass,
   surfaceClass,
 } from "../../ui";
-import { DropdownButton } from "../dropdown-button";
 import { MarkdownBlock } from "../markdown-block";
 import { OrgWideBlufCard } from "./org-wide-bluf-card";
 
@@ -25,22 +25,18 @@ interface OrganizationInsightsPanelProps {
   activeOrganization: ViewerOrganization | null;
   error: string | null;
   isLoading: boolean;
-  isRegeneratingSummary: boolean;
   organizationSummary: OrganizationSnapshot | null;
   rooms: RoomListEntry[];
   summaryStatus: SummaryStatus;
-  onRegenerateSummary(): void;
 }
 
 export function OrganizationInsightsPanel({
   activeOrganization,
   error,
   isLoading,
-  isRegeneratingSummary,
   organizationSummary,
   rooms,
   summaryStatus,
-  onRegenerateSummary,
 }: OrganizationInsightsPanelProps) {
   const employees = organizationSummary?.employees ?? [];
   const roomBlufs = organizationSummary?.rooms ?? [];
@@ -62,40 +58,22 @@ export function OrganizationInsightsPanel({
               <span className={sectionLabelClass}>Org insights</span>
               <div className="flex flex-wrap gap-3">
                 <span className={`${pillBaseClass} border-border text-ink-dim`}>
-                  {employees.length} employee BLUF{employees.length === 1 ? "" : "s"}
+                  {employees.length} employee BLUF
+                  {employees.length === 1 ? "" : "s"}
                 </span>
                 <span className={`${pillBaseClass} border-border text-ink-dim`}>
-                  {roomBlufs.length} room BLUF{roomBlufs.length === 1 ? "" : "s"}
+                  {roomBlufs.length} room BLUF
+                  {roomBlufs.length === 1 ? "" : "s"}
                 </span>
               </div>
             </div>
 
-            <div className="w-full lg:max-w-[14rem]">
-              <DropdownButton label="Menu" panelClassName="grid overflow-hidden p-0">
-                {({ closeDropdown }) => (
-                  <>
-                    <button
-                      className="border-b border-border bg-transparent px-4 py-3 text-left text-ink transition hover:bg-white/5 disabled:cursor-wait disabled:opacity-70"
-                      type="button"
-                      disabled={isRegeneratingSummary}
-                      onClick={() => {
-                        closeDropdown();
-                        onRegenerateSummary();
-                      }}
-                    >
-                      {isRegeneratingSummary ? "Regenerating..." : "Regenerate summary"}
-                    </button>
-                    <Link
-                      className="block bg-transparent px-4 py-3 text-left text-ink no-underline transition hover:bg-white/5"
-                      to={buildOrganizationHref(activeOrganization.organization_slug)}
-                      onClick={closeDropdown}
-                    >
-                      View rooms
-                    </Link>
-                  </>
-                )}
-              </DropdownButton>
-            </div>
+            <Link
+              className={cx(secondaryButtonClass, "w-full lg:w-auto")}
+              to={buildOrganizationHref(activeOrganization.organization_slug)}
+            >
+              View rooms
+            </Link>
           </div>
 
           <OrgWideBlufCard

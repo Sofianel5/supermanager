@@ -35,13 +35,19 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
+  const [workspaceActionError, setWorkspaceActionError] = useState<
+    string | null
+  >(null);
   const [createRoomError, setCreateRoomError] = useState<string | null>(null);
-  const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
-  const [summaryActionError, setSummaryActionError] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<"sign-out" | "create-room" | null>(null);
-  const [pendingDeviceAction, setPendingDeviceAction] = useState<"approve" | "deny" | null>(null);
-  const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false);
+  const [deviceActionError, setDeviceActionError] = useState<string | null>(
+    null,
+  );
+  const [pendingAction, setPendingAction] = useState<
+    "sign-out" | "create-room" | null
+  >(null);
+  const [pendingDeviceAction, setPendingDeviceAction] = useState<
+    "approve" | "deny" | null
+  >(null);
   const [isCreateRoomDialogOpen, setIsCreateRoomDialogOpen] = useState(false);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [createRoomName, setCreateRoomName] = useState("");
@@ -57,10 +63,10 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
   const isFirstRun = viewer !== null && viewer.organizations.length === 0;
   const isLoading =
     viewerQuery.isLoading ||
-    (Boolean(activeOrganization) && (roomsQuery.isLoading || summaryQuery.isLoading));
+    (Boolean(activeOrganization) &&
+      (roomsQuery.isLoading || summaryQuery.isLoading));
   const workspaceError =
     workspaceActionError ||
-    summaryActionError ||
     readQueryError(viewerQuery.error) ||
     readQueryError(roomsQuery.error) ||
     readQueryError(summaryQuery.error);
@@ -164,37 +170,21 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
     const params = new URLSearchParams(location.search);
     params.delete("user_code");
     const query = params.toString();
-    navigate(query ? `${location.pathname}?${query}` : location.pathname, { replace: true });
+    navigate(query ? `${location.pathname}?${query}` : location.pathname, {
+      replace: true,
+    });
   }
 
   const refreshWorkspace = useCallback(async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: organizationSummaryQueryRootKey() }),
+      queryClient.invalidateQueries({
+        queryKey: organizationSummaryQueryRootKey(),
+      }),
       queryClient.invalidateQueries({ queryKey: workspaceQueryKey() }),
       queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() }),
     ]);
     setPendingAction(null);
   }, [queryClient]);
-
-  async function handleRegenerateSummary() {
-    if (!activeOrganization) {
-      return;
-    }
-
-    setSummaryActionError(null);
-    setIsRegeneratingSummary(true);
-    try {
-      await api.regenerateOrganizationSummary(activeOrganization.organization_slug);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: organizationSummaryQueryRootKey() }),
-        queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() }),
-      ]);
-    } catch (error) {
-      setSummaryActionError(readMessage(error));
-    } finally {
-      setIsRegeneratingSummary(false);
-    }
-  }
 
   return (
     <>
@@ -210,8 +200,12 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
       ) : (
         <main className={pageShellClass}>
           <WorkspaceHeader
-            activeOrganizationName={activeOrganization?.organization_name ?? null}
-            activeOrganizationSlug={activeOrganization?.organization_slug ?? null}
+            activeOrganizationName={
+              activeOrganization?.organization_name ?? null
+            }
+            activeOrganizationSlug={
+              activeOrganization?.organization_slug ?? null
+            }
             isSigningOut={pendingAction === "sign-out"}
             userEmail={viewer?.user.email ?? null}
             onInviteTeammate={() => setIsInviteDialogOpen(true)}
@@ -234,11 +228,9 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
               activeOrganization={activeOrganization}
               error={workspaceError}
               isLoading={isLoading}
-              isRegeneratingSummary={isRegeneratingSummary}
               organizationSummary={summaryQuery.data?.summary ?? null}
               rooms={rooms}
               summaryStatus={summaryQuery.data?.status ?? "ready"}
-              onRegenerateSummary={() => void handleRegenerateSummary()}
             />
           ) : (
             <WorkspacePanel

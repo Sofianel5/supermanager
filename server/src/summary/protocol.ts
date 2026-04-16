@@ -32,20 +32,19 @@ export interface HostEnqueueRoomEventMessage {
   event: StoredHookEvent;
 }
 
-export interface HostRegenerateOrganizationMessage {
-  type: "regenerate_organization";
+export interface HostOrganizationHeartbeatMessage {
+  type: "organization_heartbeat";
   organization_id: string;
-  events: HostRegenerationEvent[];
-  rooms: HostRegenerationRoom[];
-  reason: "manual" | "heartbeat";
+  events: HostOrganizationHeartbeatEvent[];
+  rooms: HostOrganizationHeartbeatRoom[];
 }
 
-export interface HostRegenerationRoom {
+export interface HostOrganizationHeartbeatRoom {
   room_id: string;
   name: string;
 }
 
-export interface HostRegenerationEvent extends StoredHookEvent {
+export interface HostOrganizationHeartbeatEvent extends StoredHookEvent {
   room_id: string;
   room_name: string;
 }
@@ -59,5 +58,5 @@ export interface HostToolResultMessage {
 
 export type HostMessage =
   | HostEnqueueRoomEventMessage
-  | HostRegenerateOrganizationMessage
+  | HostOrganizationHeartbeatMessage
   | HostToolResultMessage;

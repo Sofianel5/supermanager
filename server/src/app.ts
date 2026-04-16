@@ -237,28 +237,6 @@ export function createApp(context: AppContext) {
         params: organizationParams,
       },
     )
-    .post(
-      "/v1/organizations/:organizationSlug/summary/regenerate",
-      async ({ params, request }) => {
-        const viewer = await requireViewer(context.auth, request.headers);
-        const membership = await resolveOrganizationMembership(
-          context.db,
-          viewer.user.id,
-          params.organizationSlug,
-          viewer.session.activeOrganizationId ?? null,
-        );
-
-        await context.agent.regenerateOrganization(
-          membership.organization_id,
-          "manual",
-        );
-
-        return status(202, { queued: true });
-      },
-      {
-        params: organizationParams,
-      },
-    )
     .get(
       "/v1/rooms/:roomId",
       async ({ params, request }) => {
@@ -331,7 +309,9 @@ export function createApp(context: AppContext) {
               );
 
         replay.reverse();
-        const initialStatus = await context.db.getRoomSummaryStatus(room.room_id);
+        const initialStatus = await context.db.getRoomSummaryStatus(
+          room.room_id,
+        );
         const client = context.feedHub.register(
           room.room_id,
           request.headers.get("origin"),
