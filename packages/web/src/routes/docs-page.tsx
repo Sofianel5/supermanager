@@ -139,7 +139,7 @@ export function DocsPage() {
           </p>
         </article>
 
-        <article className="border-t border-border pt-6">
+        <article className="border-t border-border pt-6" id="mcp-setup">
           <div className={sectionLabelClass}>
             Querying usage with the Supermanager MCP
           </div>

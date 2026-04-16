@@ -20,6 +20,7 @@ import {
 } from "../../ui";
 import { MarkdownBlock } from "../markdown-block";
 import { OrgWideBlufCard } from "./org-wide-bluf-card";
+import { SecondaryActionLink } from "./secondary-action-link";
 
 interface OrganizationInsightsPanelProps {
   activeOrganization: ViewerOrganization | null;
@@ -91,6 +92,11 @@ export function OrganizationInsightsPanel({
           </div>
 
           <OrgWideBlufCard
+            action={
+              <SecondaryActionLink to="/docs#mcp-setup">
+                Learn more
+              </SecondaryActionLink>
+            }
             organizationSummary={organizationSummary}
             summaryStatus={summaryStatus}
           />
