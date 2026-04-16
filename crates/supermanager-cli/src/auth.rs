@@ -6,15 +6,18 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use indicatif::ProgressBar;
 use reporter_protocol::RoomMetadataResponse;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
+    orgs::configure_organizations_interactive_with_state,
     support::{
         API_TIMEOUT_SECONDS, DEVICE_CLIENT_ID, DEVICE_GRANT_TYPE, DEVICE_SCOPE, HOME_AUTH_STATE,
-        build_http_client, ensure_success, normalize_url, open_url, write_private_text,
+        build_http_client, ensure_interactive_terminal, ensure_success, is_interactive_terminal,
+        normalize_url, open_url, write_private_text,
     },
     types::{AuthState, LoginConfig, LoginOutcome, ViewerOrganization, ViewerResponse},
 };
@@ -64,50 +67,50 @@ pub fn resolve_home_dir() -> Result<PathBuf> {
 }
 
 pub fn login(config: LoginConfig) -> Result<LoginOutcome> {
+    ensure_interactive_terminal("supermanager login")?;
+
     let server_url = normalize_url(&config.server_url);
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let device = request_device_code(&http, &server_url)?;
     let verification_url = device.verification_uri_complete.clone();
     let polling_interval = device.interval.unwrap_or(5).max(1);
+    let browser_opened = open_url(&verification_url).is_ok();
 
-    let _ = open_url(&verification_url);
-    println!();
-    println!("  Open this URL to approve the CLI login:");
-    println!("    {verification_url}");
-    println!("  Code: {}", device.user_code);
-    println!();
-    println!("  Waiting for approval...");
-    println!();
+    print_device_login_instructions(&verification_url, &device.user_code, browser_opened);
+    let spinner = ProgressBar::new_spinner();
+    spinner.enable_steady_tick(Duration::from_millis(120));
+    spinner.set_message("Waiting for approval in your browser...");
 
     let access_token =
-        poll_for_access_token(&http, &server_url, &device.device_code, polling_interval)?;
+        match poll_for_access_token(&http, &server_url, &device.device_code, polling_interval) {
+            Ok(access_token) => {
+                spinner.finish_and_clear();
+                access_token
+            }
+            Err(error) => {
+                spinner.finish_and_clear();
+                return Err(error);
+            }
+        };
     let viewer = get_viewer(&http, &server_url, &access_token)?;
-    let mut active_org_slug = None;
-
-    if let Some(organization) = find_preferred_org(&viewer, None)?.cloned() {
-        if viewer_active_org_slug(&viewer) != Some(organization.organization_slug.as_str()) {
-            set_active_organization(
-                &http,
-                &server_url,
-                &access_token,
-                &organization.organization_slug,
-            )?;
-        }
-        active_org_slug = Some(organization.organization_slug);
-    }
-
-    write_auth_state(
-        &auth_state_path(&config.home_dir),
-        &AuthState {
-            access_token,
-            active_org_slug: active_org_slug.clone(),
-            server_url: server_url.clone(),
-        },
+    let mut auth_state = AuthState {
+        access_token,
+        active_org_slug: None,
+        server_url: server_url.clone(),
+    };
+    let active_org = resolve_active_org_interactive(
+        &http,
+        &server_url,
+        &mut auth_state,
+        &config.home_dir,
+        &viewer,
+        None,
+        &format!("supermanager login --server {server_url}"),
     )?;
 
     Ok(LoginOutcome {
         server_url,
-        active_org_slug,
+        active_org_slug: active_org.organization_slug,
     })
 }
 
@@ -168,6 +171,20 @@ pub(crate) fn write_auth_state(path: &Path, state: &AuthState) -> Result<()> {
     let text = serde_json::to_string_pretty(state)
         .with_context(|| format!("failed to serialize {}", path.display()))?;
     write_private_text(path, &(text + "\n"))
+}
+
+fn print_device_login_instructions(verification_url: &str, user_code: &str, browser_opened: bool) {
+    println!();
+    println!("  Approve this CLI login");
+    println!();
+    println!("    URL       {verification_url}");
+    println!("    Code      {user_code}");
+    if browser_opened {
+        println!("    Browser   opened automatically");
+    } else {
+        println!("    Browser   open the URL manually");
+    }
+    println!();
 }
 
 fn request_device_code(http: &Client, server_url: &str) -> Result<DeviceCodeResponse> {
@@ -366,6 +383,81 @@ pub(crate) fn select_active_org(
     Ok(organization)
 }
 
+pub(crate) fn resolve_active_org_interactive(
+    http: &Client,
+    server_url: &str,
+    auth_state: &mut AuthState,
+    home_dir: &Path,
+    viewer: &ViewerResponse,
+    requested_slug: Option<&str>,
+    rerun_command: &str,
+) -> Result<ViewerOrganization> {
+    if viewer.organizations.is_empty() {
+        if !is_interactive_terminal() {
+            bail!(
+                "no organizations are available to this account; run `supermanager orgs configure` to create one or ask your manager for an invite link"
+            );
+        }
+
+        return match configure_organizations_interactive_with_state(
+            http, server_url, auth_state, home_dir, viewer,
+        )? {
+            crate::types::ConfigureOrganizationsOutcome::Selected {
+                organization_slug, ..
+            } => refreshed_selected_org(
+                http,
+                server_url,
+                &auth_state.access_token,
+                &organization_slug,
+            ),
+            crate::types::ConfigureOrganizationsOutcome::InviteRequested => {
+                bail!(
+                    "no organization selected. Ask your manager for an email-bound invite link, then use that email address to accept it and run `{rerun_command}` again"
+                );
+            }
+        };
+    }
+
+    match select_active_org(viewer, auth_state, requested_slug) {
+        Ok(organization) => {
+            if viewer_active_org_slug(viewer) != Some(organization.organization_slug.as_str()) {
+                set_active_organization(
+                    http,
+                    server_url,
+                    &auth_state.access_token,
+                    &organization.organization_slug,
+                )?;
+            }
+            write_auth_state(&auth_state_path(home_dir), auth_state)?;
+            Ok(organization)
+        }
+        Err(error) if requested_slug.is_some() => Err(error),
+        Err(_) if !is_interactive_terminal() => {
+            bail!(
+                "multiple organizations are available; rerun with `--org <slug>` or set the active organization with `supermanager orgs configure`. Available organizations: {}",
+                format_org_choices(viewer)
+            );
+        }
+        Err(_) => match configure_organizations_interactive_with_state(
+            http, server_url, auth_state, home_dir, viewer,
+        )? {
+            crate::types::ConfigureOrganizationsOutcome::Selected {
+                organization_slug, ..
+            } => refreshed_selected_org(
+                http,
+                server_url,
+                &auth_state.access_token,
+                &organization_slug,
+            ),
+            crate::types::ConfigureOrganizationsOutcome::InviteRequested => {
+                bail!(
+                    "no organization selected. Ask your manager for an email-bound invite link, then use that email address to accept it and run `{rerun_command}` again"
+                );
+            }
+        },
+    }
+}
+
 pub(crate) fn viewer_active_org_slug(viewer: &ViewerResponse) -> Option<&str> {
     viewer
         .active_organization_id
@@ -407,6 +499,18 @@ fn format_org_choices(viewer: &ViewerResponse) -> String {
         .collect::<Vec<_>>();
     organizations.sort();
     organizations.join(", ")
+}
+
+fn refreshed_selected_org(
+    http: &Client,
+    server_url: &str,
+    access_token: &str,
+    organization_slug: &str,
+) -> Result<ViewerOrganization> {
+    let viewer = get_viewer(http, server_url, access_token)?;
+    find_org_by_slug(&viewer, organization_slug)
+        .cloned()
+        .ok_or_else(|| anyhow!("organization {organization_slug} is not available after setup"))
 }
 
 #[cfg(test)]

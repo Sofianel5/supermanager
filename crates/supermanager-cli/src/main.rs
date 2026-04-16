@@ -130,13 +130,7 @@ fn main() -> Result<()> {
             println!("  \x1b[32m✓\x1b[0m \x1b[1mLogged in\x1b[0m");
             println!();
             println!("    \x1b[2mServer\x1b[0m     {}", outcome.server_url);
-            if let Some(active_org_slug) = outcome.active_org_slug {
-                println!("    \x1b[2mOrg\x1b[0m        {}", active_org_slug);
-            } else {
-                println!(
-                    "    \x1b[2mOrg\x1b[0m        choose later with `supermanager orgs configure` or `--org <slug>` on room commands"
-                );
-            }
+            println!("    \x1b[2mOrg\x1b[0m        {}", outcome.active_org_slug);
             println!();
         }
         Commands::Logout => {
@@ -206,17 +200,32 @@ fn main() -> Result<()> {
                     },
                 )?;
 
-                println!();
-                if outcome.created_new {
-                    println!("  \x1b[32m✓\x1b[0m \x1b[1mOrganization created and selected\x1b[0m");
-                } else {
-                    println!("  \x1b[32m✓\x1b[0m \x1b[1mActive organization updated\x1b[0m");
+                match outcome {
+                    supermanager::ConfigureOrganizationsOutcome::Selected {
+                        created_new,
+                        organization_name,
+                        organization_slug,
+                    } => {
+                        println!();
+                        if created_new {
+                            println!(
+                                "  \x1b[32m✓\x1b[0m \x1b[1mOrganization created and selected\x1b[0m"
+                            );
+                        } else {
+                            println!(
+                                "  \x1b[32m✓\x1b[0m \x1b[1mActive organization updated\x1b[0m"
+                            );
+                        }
+                        println!();
+                        println!("    \x1b[2mName\x1b[0m       {}", organization_name);
+                        println!("    \x1b[2mSlug\x1b[0m       {}", organization_slug);
+                        println!("    \x1b[2mActive\x1b[0m     {}", organization_slug);
+                        println!();
+                    }
+                    supermanager::ConfigureOrganizationsOutcome::InviteRequested => {
+                        print_invite_request_guidance("supermanager orgs configure");
+                    }
                 }
-                println!();
-                println!("    \x1b[2mName\x1b[0m       {}", outcome.organization_name);
-                println!("    \x1b[2mSlug\x1b[0m       {}", outcome.organization_slug);
-                println!("    \x1b[2mActive\x1b[0m     {}", outcome.organization_slug);
-                println!();
             }
         },
         Commands::Create { command } => match command {
@@ -241,20 +250,19 @@ fn main() -> Result<()> {
                     home_dir,
                 });
 
-                println!();
-                println!("  \x1b[32m✓\x1b[0m \x1b[1mRoom created\x1b[0m");
-                println!();
-                println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
-                println!("    \x1b[2mName\x1b[0m       {}", outcome.room_name);
-                println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
-                println!(
-                    "    \x1b[2mRepo\x1b[0m       {}",
-                    outcome.repo_dir.display()
-                );
-                println!("    \x1b[2mShare\x1b[0m      {}", outcome.join_command);
-
                 match join_outcome {
                     Ok(join_outcome) => {
+                        println!();
+                        println!("  \x1b[32m✓\x1b[0m \x1b[1mRoom created\x1b[0m");
+                        println!();
+                        println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
+                        println!("    \x1b[2mName\x1b[0m       {}", outcome.room_name);
+                        println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
+                        println!(
+                            "    \x1b[2mRepo\x1b[0m       {}",
+                            outcome.repo_dir.display()
+                        );
+                        println!("    \x1b[2mShare\x1b[0m      {}", outcome.join_command);
                         println!(
                             "    \x1b[2mEmployee\x1b[0m   {}",
                             join_outcome.employee_name
@@ -263,6 +271,19 @@ fn main() -> Result<()> {
                         print_clipboard_status(&outcome.dashboard_url);
                     }
                     Err(error) => {
+                        println!();
+                        println!(
+                            "  \x1b[33m!\x1b[0m \x1b[1mRoom created, repo setup incomplete\x1b[0m"
+                        );
+                        println!();
+                        println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
+                        println!("    \x1b[2mName\x1b[0m       {}", outcome.room_name);
+                        println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
+                        println!(
+                            "    \x1b[2mRepo\x1b[0m       {}",
+                            outcome.repo_dir.display()
+                        );
+                        println!("    \x1b[2mRepair\x1b[0m     {}", outcome.join_command);
                         println!();
                         print_clipboard_status(&outcome.dashboard_url);
                         return Err(error).with_context(|| {
@@ -308,16 +329,25 @@ fn main() -> Result<()> {
             let outcome = supermanager::leave_repo(&cwd, &home_dir)?;
 
             println!();
-            println!("  \x1b[32m✓\x1b[0m \x1b[1mLeft room\x1b[0m");
-            println!();
-            println!(
-                "    \x1b[2mRepo\x1b[0m       {}",
-                outcome.repo_dir.display()
-            );
-            println!(
-                "    \x1b[2mRemoved\x1b[0m    {}",
-                outcome.removed_paths.join(", ")
-            );
+            if outcome.removed_paths.is_empty() {
+                println!("  \x1b[33m!\x1b[0m \x1b[1mNo room config found in this repo\x1b[0m");
+                println!();
+                println!(
+                    "    \x1b[2mRepo\x1b[0m       {}",
+                    outcome.repo_dir.display()
+                );
+            } else {
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mLeft room\x1b[0m");
+                println!();
+                println!(
+                    "    \x1b[2mRepo\x1b[0m       {}",
+                    outcome.repo_dir.display()
+                );
+                println!(
+                    "    \x1b[2mRemoved\x1b[0m    {}",
+                    outcome.removed_paths.join(", ")
+                );
+            }
         }
         Commands::List => {
             let outcome = supermanager::list_rooms(&home_dir)?;
@@ -341,19 +371,8 @@ fn main() -> Result<()> {
             println!();
             println!("    \x1b[2mRooms\x1b[0m      {}", outcome.rooms.len());
             println!("    \x1b[2mRepos\x1b[0m      {}", repo_count);
-
-            for room in outcome.rooms {
-                println!();
-                println!("    \x1b[2mRoom\x1b[0m       {}", room.room_id);
-                println!("    \x1b[2mOrg\x1b[0m        {}", room.organization_slug);
-                println!("    \x1b[2mServer\x1b[0m     {}", room.server_url);
-                if let Some((first_repo, other_repos)) = room.repo_dirs.split_first() {
-                    println!("    \x1b[2mRepos\x1b[0m      {}", first_repo.display());
-                    for repo_dir in other_repos {
-                        println!("               {}", repo_dir.display());
-                    }
-                }
-            }
+            println!();
+            print_joined_rooms(&outcome.rooms);
         }
         Commands::Mcp { command } => match command {
             McpCommands::Install { server } => {
@@ -363,14 +382,25 @@ fn main() -> Result<()> {
                 })?;
 
                 println!();
-                println!("  \x1b[32m✓\x1b[0m \x1b[1mInstalled Supermanager MCP\x1b[0m");
+                if outcome
+                    .file_updates
+                    .iter()
+                    .all(|update| update.status == supermanager::ConfigFileUpdateStatus::Unchanged)
+                {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[1mSupermanager MCP already installed\x1b[0m");
+                } else {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[1mInstalled Supermanager MCP\x1b[0m");
+                }
                 println!();
                 println!("    \x1b[2mServer\x1b[0m     {}", outcome.server_url);
                 println!("    \x1b[2mEndpoint\x1b[0m   {}", outcome.mcp_url);
-                println!(
-                    "    \x1b[2mUpdated\x1b[0m    {}",
-                    outcome.updated_paths.join(", ")
-                );
+                for update in outcome.file_updates {
+                    println!(
+                        "    \x1b[2mFile\x1b[0m       {} ({})",
+                        update.path,
+                        format_config_file_update_status(update.status)
+                    );
+                }
                 println!();
             }
         },
@@ -402,6 +432,73 @@ fn print_clipboard_status(text: &str) {
     match supermanager::copy_to_clipboard(text) {
         Ok(()) => println!("  \x1b[32m✓\x1b[0m Dashboard URL copied to clipboard"),
         Err(error) => eprintln!("  \x1b[33m!\x1b[0m Clipboard: {error}"),
+    }
+}
+
+fn print_invite_request_guidance(rerun_command: &str) {
+    println!();
+    println!("  \x1b[33m!\x1b[0m \x1b[1mAsk your manager for an invite\x1b[0m");
+    println!();
+    println!(
+        "    Ask your manager for an email-bound invite link, then use that email address to accept it."
+    );
+    println!("    Run       {rerun_command}");
+    println!();
+}
+
+fn print_joined_rooms(rooms: &[supermanager::ListRoomEntry]) {
+    let room_width = rooms
+        .iter()
+        .map(|room| room.room_id.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let org_width = rooms
+        .iter()
+        .map(|room| room.organization_slug.len())
+        .max()
+        .unwrap_or(3)
+        .max(3);
+    let repo_width = rooms
+        .iter()
+        .map(|room| room.repo_dirs.len().to_string().len())
+        .max()
+        .unwrap_or(5)
+        .max(5);
+
+    println!(
+        "    {:room_width$}  {:org_width$}  {:>repo_width$}  Server",
+        "Room",
+        "Org",
+        "Repos",
+        room_width = room_width,
+        org_width = org_width,
+        repo_width = repo_width,
+    );
+
+    for room in rooms {
+        println!(
+            "    {:room_width$}  {:org_width$}  {:>repo_width$}  {}",
+            room.room_id,
+            room.organization_slug,
+            room.repo_dirs.len(),
+            room.server_url,
+            room_width = room_width,
+            org_width = org_width,
+            repo_width = repo_width,
+        );
+        for repo_dir in &room.repo_dirs {
+            println!("      {}", repo_dir.display());
+        }
+        println!();
+    }
+}
+
+fn format_config_file_update_status(status: supermanager::ConfigFileUpdateStatus) -> &'static str {
+    match status {
+        supermanager::ConfigFileUpdateStatus::Created => "created",
+        supermanager::ConfigFileUpdateStatus::Updated => "updated",
+        supermanager::ConfigFileUpdateStatus::Unchanged => "unchanged",
     }
 }
 

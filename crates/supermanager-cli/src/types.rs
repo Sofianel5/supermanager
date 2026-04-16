@@ -32,7 +32,7 @@ pub struct LoginConfig {
 
 pub struct LoginOutcome {
     pub server_url: String,
-    pub active_org_slug: Option<String>,
+    pub active_org_slug: String,
 }
 
 pub struct ListOrganizationsConfig {
@@ -65,10 +65,13 @@ pub struct ConfigureOrganizationsConfig {
     pub server_url: String,
 }
 
-pub struct ConfigureOrganizationsOutcome {
-    pub created_new: bool,
-    pub organization_name: String,
-    pub organization_slug: String,
+pub enum ConfigureOrganizationsOutcome {
+    Selected {
+        created_new: bool,
+        organization_name: String,
+        organization_slug: String,
+    },
+    InviteRequested,
 }
 
 pub struct InstallMcpConfig {
@@ -79,7 +82,19 @@ pub struct InstallMcpConfig {
 pub struct InstallMcpOutcome {
     pub server_url: String,
     pub mcp_url: String,
-    pub updated_paths: Vec<String>,
+    pub file_updates: Vec<ConfigFileUpdate>,
+}
+
+pub struct ConfigFileUpdate {
+    pub path: String,
+    pub status: ConfigFileUpdateStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfigFileUpdateStatus {
+    Created,
+    Updated,
+    Unchanged,
 }
 
 pub struct CreateRoomOutcome {

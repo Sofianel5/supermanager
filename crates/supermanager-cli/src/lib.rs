@@ -16,10 +16,10 @@ pub use orgs::{
 pub use rooms::{create_room, join_repo};
 pub use support::DEFAULT_SERVER_URL;
 pub use types::{
-    ConfigureOrganizationsConfig, ConfigureOrganizationsOutcome, CreateOrganizationConfig,
-    CreateOrganizationOutcome, CreateRoomConfig, CreateRoomOutcome, InstallMcpConfig,
-    InstallMcpOutcome, JoinConfig, JoinOutcome, LeaveOutcome, ListOrganizationEntry,
-    ListOrganizationsConfig, ListOrganizationsOutcome, ListRoomEntry, ListRoomsOutcome,
-    LoginConfig, LoginOutcome,
+    ConfigFileUpdate, ConfigFileUpdateStatus, ConfigureOrganizationsConfig,
+    ConfigureOrganizationsOutcome, CreateOrganizationConfig, CreateOrganizationOutcome,
+    CreateRoomConfig, CreateRoomOutcome, InstallMcpConfig, InstallMcpOutcome, JoinConfig,
+    JoinOutcome, LeaveOutcome, ListOrganizationEntry, ListOrganizationsConfig,
+    ListOrganizationsOutcome, ListRoomEntry, ListRoomsOutcome, LoginConfig, LoginOutcome,
 };
 pub use update::{SelfUpdateOutcome, maybe_auto_update, run_self_update};

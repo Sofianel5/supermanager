@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Write,
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
@@ -56,6 +56,18 @@ pub(crate) fn ensure_success(
 
 pub(crate) fn normalize_url(url: &str) -> String {
     url.trim_end_matches('/').to_owned()
+}
+
+pub(crate) fn is_interactive_terminal() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+pub(crate) fn ensure_interactive_terminal(command: &str) -> Result<()> {
+    if is_interactive_terminal() {
+        return Ok(());
+    }
+
+    bail!("{command} requires an interactive terminal");
 }
 
 pub(crate) fn open_url(url: &str) -> Result<()> {
