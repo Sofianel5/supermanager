@@ -10,11 +10,11 @@ import {
   errorMessageClass,
   messageClass,
   primaryButtonClass,
-  secondaryButtonClass,
   sectionLabelClass,
   surfaceClass,
 } from "../../ui";
 import { OrgWideBlufCard } from "./org-wide-bluf-card";
+import { SecondaryActionLink } from "./secondary-action-link";
 
 interface WorkspacePanelProps {
   activeOrganization: ViewerOrganization | null;
@@ -49,15 +49,12 @@ export function WorkspacePanel({
         <div className="grid gap-6">
           <OrgWideBlufCard
             action={
-              <Link
-                className={cx(
-                  secondaryButtonClass,
-                  "min-h-[38px] px-4 text-[0.84rem] text-ink-dim hover:text-ink",
-                )}
+              <SecondaryActionLink
+                className="min-h-[38px] px-4 text-[0.84rem] text-ink-dim hover:text-ink"
                 to={buildOrganizationInsightsHref(activeOrganization.organization_slug)}
               >
                 View org insights
-              </Link>
+              </SecondaryActionLink>
             }
             organizationSummary={organizationSummary}
             summaryStatus={summaryStatus}

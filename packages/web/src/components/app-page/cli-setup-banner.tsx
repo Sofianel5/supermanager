@@ -1,15 +1,7 @@
-import { useNavigate } from "react-router-dom";
-import {
-  accentSurfaceClass,
-  cx,
-  messageClass,
-  secondaryButtonClass,
-  sectionLabelClass,
-} from "../../ui";
+import { accentSurfaceClass, cx, messageClass, sectionLabelClass } from "../../ui";
+import { SecondaryActionLink } from "./secondary-action-link";
 
 export function CliSetupBanner() {
-  const navigate = useNavigate();
-
   return (
     <section
       className={cx(
@@ -28,13 +20,9 @@ export function CliSetupBanner() {
         </p>
       </div>
 
-      <button
-        className={secondaryButtonClass}
-        type="button"
-        onClick={() => navigate("/docs")}
-      >
+      <SecondaryActionLink to="/docs">
         Open setup docs
-      </button>
+      </SecondaryActionLink>
     </section>
   );
 }
