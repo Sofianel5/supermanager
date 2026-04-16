@@ -9,7 +9,6 @@ import {
   cx,
   errorMessageClass,
   messageClass,
-  pillBaseClass,
   primaryButtonClass,
   secondaryButtonClass,
   sectionLabelClass,
@@ -68,9 +67,6 @@ export function WorkspacePanel({
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <span className={sectionLabelClass}>Rooms</span>
               <div className="flex flex-wrap items-center justify-end gap-3">
-                <span className={`${pillBaseClass} border-border text-ink-dim`}>
-                  {rooms.length} room{rooms.length === 1 ? "" : "s"}
-                </span>
                 <button
                   className={primaryButtonClass}
                   type="button"

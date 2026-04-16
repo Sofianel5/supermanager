@@ -61,15 +61,19 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
 
   const viewer = viewerQuery.data ?? null;
   const isFirstRun = viewer !== null && viewer.organizations.length === 0;
+  const hasWorkspaceData =
+    !activeOrganization ||
+    (roomsQuery.data != null && summaryQuery.data != null);
   const isLoading =
     viewerQuery.isLoading ||
     (Boolean(activeOrganization) &&
+      !hasWorkspaceData &&
       (roomsQuery.isLoading || summaryQuery.isLoading));
   const workspaceError =
     workspaceActionError ||
-    readQueryError(viewerQuery.error) ||
-    readQueryError(roomsQuery.error) ||
-    readQueryError(summaryQuery.error);
+    readQueryError(viewerQuery.error, viewerQuery.data != null) ||
+    readQueryError(roomsQuery.error, roomsQuery.data != null) ||
+    readQueryError(summaryQuery.error, summaryQuery.data != null);
   const deviceError =
     deviceActionError || readQueryError(deviceStatusQuery.error);
   const isCreatingRoom = pendingAction === "create-room";
@@ -281,6 +285,10 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
   );
 }
 
-function readQueryError(error: unknown) {
+function readQueryError(error: unknown, hasData: boolean = false) {
+  if (hasData) {
+    return null;
+  }
+
   return error instanceof Error ? error.message : null;
 }
