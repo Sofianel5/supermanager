@@ -708,7 +708,7 @@ export class Db {
     return rows.map((row) => ({
       room_id: normalizeRoomId(readString(row.room_id, "room_id")),
       snapshot: normalizeStoredRoomSummary(row.content_json),
-      updated_at: row.updated_at == null ? "" : toRfc3339(row.updated_at),
+      updated_at: toOptionalRfc3339(row.updated_at),
     }));
   }
 }
@@ -834,7 +834,7 @@ function toRoomBlufSnapshot(
   return {
     room_id: normalizeRoomId(roomId),
     bluf_markdown: normalized.bluf_markdown,
-    last_update_at: updatedAt == null ? "" : toRfc3339(updatedAt),
+    last_update_at: toOptionalRfc3339(updatedAt),
   };
 }
 
@@ -906,9 +906,25 @@ function toRfc3339(value: unknown): string {
     return value.toISOString();
   }
   if (typeof value === "string") {
-    return new Date(value).toISOString();
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) {
+      throw new Error(`failed to decode timestamp: ${value}`);
+    }
+    return new Date(timestamp).toISOString();
   }
   throw new Error(`failed to decode timestamp: ${String(value)}`);
+}
+
+function toOptionalRfc3339(value: unknown): string {
+  if (value == null) {
+    return "";
+  }
+
+  try {
+    return toRfc3339(value);
+  } catch {
+    return "";
+  }
 }
 
 function isUniqueViolation(error: unknown): boolean {

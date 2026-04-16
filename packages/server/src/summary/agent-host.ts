@@ -29,6 +29,11 @@ export class SummaryAgentHost {
     await this.options.db.resetGeneratingOrganizationSummaries("error");
     await this.ensureRunning();
     this.startHeartbeatTimer();
+    void this.runHeartbeatSweep().catch((error) => {
+      console.error(
+        `[summary-agent] initial heartbeat sweep failed: ${formatError(error)}`,
+      );
+    });
   }
 
   async stop(): Promise<void> {
