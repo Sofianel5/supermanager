@@ -63,6 +63,7 @@ interface HookEventRow {
 
 interface SummaryRow {
   content_json?: OrganizationSnapshot;
+  updated_at?: unknown;
 }
 
 interface RoomSummaryRow {
@@ -447,12 +448,15 @@ export class Db {
   async queryOrganizationEventsForSummary(
     organizationId: string,
     options: {
+      afterReceivedAt?: string | null;
+      beforeReceivedAt?: string | null;
       employeeName?: string;
       limit?: number;
       roomId?: string;
     } = {},
   ): Promise<OrganizationSummaryEvent[]> {
-    const limit = options.limit ?? 50;
+    const afterReceivedAt = options.afterReceivedAt ?? null;
+    const beforeReceivedAt = options.beforeReceivedAt ?? null;
     const normalizedRoomId = options.roomId
       ? normalizeRoomId(options.roomId)
       : null;
@@ -471,10 +475,12 @@ export class Db {
       FROM hook_events AS h
       INNER JOIN rooms AS r ON r.room_id = h.room_id
       WHERE r.organization_id = ${organizationId}
+        AND (${afterReceivedAt}::timestamptz IS NULL OR h.received_at > ${afterReceivedAt}::timestamptz)
+        AND (${beforeReceivedAt}::timestamptz IS NULL OR h.received_at <= ${beforeReceivedAt}::timestamptz)
         AND (${normalizedRoomId}::text IS NULL OR h.room_id = ${normalizedRoomId}::text)
         AND (${options.employeeName ?? null}::text IS NULL OR h.employee_name = ${options.employeeName ?? null}::text)
-      ORDER BY h.received_at DESC, h.seq DESC
-      LIMIT ${limit}
+      ORDER BY h.received_at ASC, h.seq ASC
+      ${options.limit == null ? this.client`` : this.client`LIMIT ${options.limit}`}
     `;
 
     return rows.map((row) => ({
@@ -518,16 +524,32 @@ export class Db {
     return row ? parseSummaryStatus(row.status) : "ready";
   }
 
+  async getOrganizationSummaryUpdatedAt(
+    organizationId: string,
+  ): Promise<string | null> {
+    const [row] = await this.client<Pick<SummaryRow, "updated_at">[]>`
+      SELECT updated_at
+      FROM organization_summaries
+      WHERE organization_id = ${organizationId}
+    `;
+
+    return row?.updated_at == null ? null : toRfc3339(row.updated_at);
+  }
+
   async setOrganizationSummaryStatus(
     organizationId: string,
     status: SummaryStatus,
   ): Promise<void> {
     await this.client`
       INSERT INTO organization_summaries (organization_id, content_json, status, updated_at)
-      VALUES (${organizationId}, ${normalizeStoredOrganizationSummary()}, ${status}, NOW())
+      VALUES (
+        ${organizationId},
+        ${normalizeStoredOrganizationSummary()},
+        ${status},
+        TO_TIMESTAMP(0)
+      )
       ON CONFLICT(organization_id) DO UPDATE SET
-        status = EXCLUDED.status,
-        updated_at = EXCLUDED.updated_at
+        status = EXCLUDED.status
     `;
   }
 
@@ -537,11 +559,38 @@ export class Db {
   ): Promise<void> {
     await this.client`
       INSERT INTO organization_summaries (organization_id, content_json, status, updated_at)
-      VALUES (${organizationId}, ${normalizeStoredOrganizationSummary(content)}, 'ready', NOW())
+      VALUES (
+        ${organizationId},
+        ${normalizeStoredOrganizationSummary(content)},
+        'ready',
+        TO_TIMESTAMP(0)
+      )
       ON CONFLICT(organization_id) DO UPDATE SET
         content_json = EXCLUDED.content_json,
-        status = 'ready',
-        updated_at = EXCLUDED.updated_at
+        status = 'ready'
+    `;
+  }
+
+  async setOrganizationSummaryUpdatedAt(
+    organizationId: string,
+    updatedAt: string,
+  ): Promise<void> {
+    await this.client`
+      INSERT INTO organization_summaries (
+        organization_id,
+        content_json,
+        updated_at
+      )
+      VALUES (
+        ${organizationId},
+        ${normalizeStoredOrganizationSummary()},
+        ${updatedAt}::timestamptz
+      )
+      ON CONFLICT(organization_id) DO UPDATE SET
+        updated_at = GREATEST(
+          organization_summaries.updated_at,
+          EXCLUDED.updated_at
+        )
     `;
   }
 

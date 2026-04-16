@@ -80,7 +80,7 @@ pub(crate) fn format_organization_heartbeat_request(
     Ok(format!(
         "Organization summary heartbeat fired.\n\
 current_rooms:\n{rooms}\n\
-recent_org_events:\n{events}\n\
+org_events_since_previous_heartbeat:\n{events}\n\
 Tighten the organization BLUF and employee BLUFs. Room BLUFs are maintained separately and should be treated as read-only context from get_snapshot.",
         rooms = rooms_text,
         events = events_text,

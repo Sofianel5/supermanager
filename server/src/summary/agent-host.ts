@@ -14,12 +14,12 @@ interface SummaryAgentHostOptions {
 }
 
 type SummaryAgentProcess = Bun.Subprocess<"pipe", "pipe", "pipe">;
-const ORGANIZATION_HEARTBEAT_EVENT_LIMIT = 50;
 
 export class SummaryAgentHost {
   private child: SummaryAgentProcess | null = null;
   private heartbeatTimer: Timer | null = null;
   private heartbeatSweepInFlight = false;
+  private pendingOrganizationHeartbeatCutoff = new Map<string, string>();
   private starting: Promise<void> | null = null;
 
   constructor(private readonly options: SummaryAgentHostOptions) {}
@@ -66,12 +66,20 @@ export class SummaryAgentHost {
     organizationId: string,
   ): Promise<void> {
     await this.ensureRunning();
+    const previousSummaryUpdatedAt =
+      await this.options.db.getOrganizationSummaryUpdatedAt(organizationId);
+    const heartbeatCutoff = new Date().toISOString();
     const [events, rooms] = await Promise.all([
       this.options.db.queryOrganizationEventsForSummary(organizationId, {
-        limit: ORGANIZATION_HEARTBEAT_EVENT_LIMIT,
+        afterReceivedAt: previousSummaryUpdatedAt,
+        beforeReceivedAt: heartbeatCutoff,
       }),
       this.options.db.listRoomsForSummary(organizationId),
     ]);
+    this.pendingOrganizationHeartbeatCutoff.set(
+      organizationId,
+      heartbeatCutoff,
+    );
     this.send({
       type: "organization_heartbeat",
       events,
@@ -173,6 +181,20 @@ export class SummaryAgentHost {
             message.target_id,
             message.status,
           );
+          if (message.status === "ready") {
+            const pendingCutoff = this.pendingOrganizationHeartbeatCutoff.get(
+              message.target_id,
+            );
+            if (pendingCutoff != null) {
+              await this.options.db.setOrganizationSummaryUpdatedAt(
+                message.target_id,
+                pendingCutoff,
+              );
+            }
+            this.pendingOrganizationHeartbeatCutoff.delete(message.target_id);
+          } else if (message.status === "error") {
+            this.pendingOrganizationHeartbeatCutoff.delete(message.target_id);
+          }
         } else {
           await this.options.db.setRoomSummaryStatus(
             message.target_id,
