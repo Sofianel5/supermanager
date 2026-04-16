@@ -14,6 +14,7 @@ interface SummaryAgentHostOptions {
 }
 
 type SummaryAgentProcess = Bun.Subprocess<"pipe", "pipe", "pipe">;
+const ORGANIZATION_HEARTBEAT_EVENT_LIMIT = 500;
 
 export class SummaryAgentHost {
   private child: SummaryAgentProcess | null = null;
@@ -25,6 +26,7 @@ export class SummaryAgentHost {
   constructor(private readonly options: SummaryAgentHostOptions) {}
 
   async start(): Promise<void> {
+    await this.options.db.resetGeneratingOrganizationSummaries("error");
     await this.ensureRunning();
     this.startHeartbeatTimer();
   }
@@ -66,6 +68,10 @@ export class SummaryAgentHost {
     organizationId: string,
   ): Promise<void> {
     await this.ensureRunning();
+    if (this.pendingOrganizationHeartbeatCutoff.has(organizationId)) {
+      return;
+    }
+
     const previousSummaryUpdatedAt =
       await this.options.db.getOrganizationSummaryUpdatedAt(organizationId);
     const heartbeatCutoff = new Date().toISOString();
@@ -73,12 +79,17 @@ export class SummaryAgentHost {
       this.options.db.queryOrganizationEventsForSummary(organizationId, {
         afterReceivedAt: previousSummaryUpdatedAt,
         beforeReceivedAt: heartbeatCutoff,
+        limit: ORGANIZATION_HEARTBEAT_EVENT_LIMIT,
       }),
       this.options.db.listRoomsForSummary(organizationId),
     ]);
+    const summaryUpdatedAt =
+      events.length === ORGANIZATION_HEARTBEAT_EVENT_LIMIT
+        ? events.at(-1)?.received_at ?? heartbeatCutoff
+        : heartbeatCutoff;
     this.pendingOrganizationHeartbeatCutoff.set(
       organizationId,
-      heartbeatCutoff,
+      summaryUpdatedAt,
     );
     this.send({
       type: "organization_heartbeat",
@@ -208,14 +219,22 @@ export class SummaryAgentHost {
         return;
       }
       case "tool_call": {
-        const result = await applySummaryToolCall(
-          this.options.db,
-          message.scope === "organization"
-            ? { kind: "organization", organizationId: message.target_id }
-            : { kind: "room", roomId: message.target_id },
-          message.tool,
-          message.arguments,
-        );
+        let result;
+        try {
+          result = await applySummaryToolCall(
+            this.options.db,
+            message.scope === "organization"
+              ? { kind: "organization", organizationId: message.target_id }
+              : { kind: "room", roomId: message.target_id },
+            message.tool,
+            message.arguments,
+          );
+        } catch (error) {
+          result = {
+            success: false,
+            message: formatError(error),
+          };
+        }
         this.send({
           type: "tool_result",
           id: message.id,

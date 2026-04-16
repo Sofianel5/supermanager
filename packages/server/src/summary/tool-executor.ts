@@ -142,13 +142,25 @@ async function applyOrganizationSummaryToolCall(
       }
 
       const markdown = readRequiredString(argumentsValue, "markdown").trim();
-      const roomIds = Array.from(
+      const requestedRoomIds = Array.from(
         new Set(
           readRequiredStringArray(argumentsValue, "room_ids").map(
             normalizeRoomId,
           ),
         ),
       );
+      const knownRoomIds = new Set(
+        await db.listRoomIdsForOrganization(organizationId),
+      );
+      const roomIds = requestedRoomIds.filter((roomId) =>
+        knownRoomIds.has(roomId),
+      );
+      if (roomIds.length === 0) {
+        return {
+          success: false,
+          message: "room_ids must include at least one valid room for the organization",
+        };
+      }
       const updatedAt = new Date().toISOString();
 
       return mutateOrganizationSummary(db, organizationId, (snapshot) => {

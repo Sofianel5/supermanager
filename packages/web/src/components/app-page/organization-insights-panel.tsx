@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { formatRelativeTime } from "../../lib/format-relative-time";
 import type {
   EmployeeSnapshot,
@@ -38,10 +39,21 @@ export function OrganizationInsightsPanel({
   rooms,
   summaryStatus,
 }: OrganizationInsightsPanelProps) {
+  const [clock, setClock] = useState(() => Date.now());
   const employees = organizationSummary?.employees ?? [];
   const roomBlufs = organizationSummary?.rooms ?? [];
   const roomNames = new Map(rooms.map((room) => [room.room_id, room.name]));
   const roomMetadata = new Map(rooms.map((room) => [room.room_id, room]));
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setClock(Date.now());
+    }, 30_000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
   return (
     <section className={cx(surfaceClass, "mt-7 p-[22px]")}>
@@ -94,6 +106,7 @@ export function OrganizationInsightsPanel({
                 <div className="grid gap-4">
                   {employees.map((employee) => (
                     <EmployeeBlufCard
+                      clock={clock}
                       employee={employee}
                       key={employee.employee_name}
                       roomNames={roomNames}
@@ -117,6 +130,7 @@ export function OrganizationInsightsPanel({
                 <div className="grid gap-4">
                   {roomBlufs.map((roomBluf) => (
                     <RoomBlufCard
+                      clock={clock}
                       key={roomBluf.room_id}
                       roomBluf={roomBluf}
                       roomMetadata={roomMetadata.get(roomBluf.room_id)}
@@ -135,9 +149,11 @@ export function OrganizationInsightsPanel({
 }
 
 function EmployeeBlufCard({
+  clock,
   employee,
   roomNames,
 }: {
+  clock: number;
   employee: EmployeeSnapshot;
   roomNames: Map<string, string>;
 }) {
@@ -152,7 +168,7 @@ function EmployeeBlufCard({
             className="font-mono text-[0.72rem] text-ink-muted"
             dateTime={employee.last_update_at}
           >
-            {formatRelativeTime(employee.last_update_at)}
+            {formatRelativeTime(employee.last_update_at, clock)}
           </time>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -173,9 +189,11 @@ function EmployeeBlufCard({
 }
 
 function RoomBlufCard({
+  clock,
   roomBluf,
   roomMetadata,
 }: {
+  clock: number;
   roomBluf: RoomBlufSnapshot;
   roomMetadata?: RoomListEntry;
 }) {
@@ -200,7 +218,7 @@ function RoomBlufCard({
             className="font-mono text-[0.72rem] text-ink-muted"
             dateTime={roomBluf.last_update_at}
           >
-            {formatRelativeTime(roomBluf.last_update_at)}
+            {formatRelativeTime(roomBluf.last_update_at, clock)}
           </time>
         </div>
 
