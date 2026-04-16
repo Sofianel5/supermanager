@@ -14,17 +14,19 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    event::{RegenerationEvent, RegenerationRoom, format_event, format_regeneration_request},
+    event::{
+        RegenerationEvent, RegenerationRoom, format_organization_regeneration_request,
+        format_room_event,
+    },
     ipc::{AgentMessage, PendingToolCalls},
-    prompt::SYSTEM_PROMPT,
+    prompt::{ORGANIZATION_SYSTEM_PROMPT, ROOM_SYSTEM_PROMPT},
     tools::{SummaryTool, tool_failure},
 };
 
 const SUMMARY_MODEL: &str = "gpt-5.4-mini";
 
 pub(crate) enum AgentCommand {
-    EnqueueEvent {
-        organization_id: String,
+    EnqueueRoomEvent {
         room_id: String,
         room_name: String,
         event: StoredHookEvent,
@@ -60,21 +62,72 @@ impl SummaryStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum SummaryScope {
+    Organization,
+    Room,
+}
+
+impl SummaryScope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Organization => "organization",
+            Self::Room => "room",
+        }
+    }
+
+    fn directory_name(self) -> &'static str {
+        match self {
+            Self::Organization => "organizations",
+            Self::Room => "rooms",
+        }
+    }
+
+    fn system_prompt(self) -> &'static str {
+        match self {
+            Self::Organization => ORGANIZATION_SYSTEM_PROMPT,
+            Self::Room => ROOM_SYSTEM_PROMPT,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct SummaryTarget {
+    scope: SummaryScope,
+    id: String,
+}
+
+impl SummaryTarget {
+    fn organization(organization_id: impl Into<String>) -> Self {
+        Self {
+            scope: SummaryScope::Organization,
+            id: organization_id.into(),
+        }
+    }
+
+    fn room(room_id: impl Into<String>) -> Self {
+        Self {
+            scope: SummaryScope::Room,
+            id: room_id.into(),
+        }
+    }
+}
+
+struct SummaryTargetState {
+    thread_id: Option<String>,
+    active_turn: Option<String>,
+}
+
 pub(crate) struct AgentLoop {
     client: InProcessAppServerClient,
     command_rx: mpsc::Receiver<AgentCommand>,
     output_tx: mpsc::Sender<AgentMessage>,
-    organizations_dir: PathBuf,
+    summary_threads_dir: PathBuf,
     next_request_id: i64,
     next_tool_call_id: u64,
-    organizations: HashMap<String, OrganizationState>,
-    thread_to_organization: HashMap<String, String>,
+    targets: HashMap<SummaryTarget, SummaryTargetState>,
+    thread_to_target: HashMap<String, SummaryTarget>,
     pending_tool_calls: PendingToolCalls,
-}
-
-struct OrganizationState {
-    thread_id: Option<String>,
-    active_turn: Option<String>,
 }
 
 impl AgentLoop {
@@ -82,18 +135,18 @@ impl AgentLoop {
         client: InProcessAppServerClient,
         command_rx: mpsc::Receiver<AgentCommand>,
         output_tx: mpsc::Sender<AgentMessage>,
-        organizations_dir: PathBuf,
+        summary_threads_dir: PathBuf,
         pending_tool_calls: PendingToolCalls,
     ) -> Self {
         Self {
             client,
             command_rx,
             output_tx,
-            organizations_dir,
+            summary_threads_dir,
             next_request_id: 1,
             next_tool_call_id: 1,
-            organizations: HashMap::new(),
-            thread_to_organization: HashMap::new(),
+            targets: HashMap::new(),
+            thread_to_target: HashMap::new(),
             pending_tool_calls,
         }
     }
@@ -110,14 +163,12 @@ impl AgentLoop {
             };
 
             match input {
-                LoopInput::Command(Some(AgentCommand::EnqueueEvent {
-                    organization_id,
+                LoopInput::Command(Some(AgentCommand::EnqueueRoomEvent {
                     room_id,
                     room_name,
                     event,
                 })) => {
-                    self.send_event(&organization_id, &room_id, &room_name, &event)
-                        .await?;
+                    self.send_room_event(&room_id, &room_name, &event).await?;
                 }
                 LoopInput::Command(Some(AgentCommand::RegenerateOrganization {
                     organization_id,
@@ -171,12 +222,11 @@ impl AgentLoop {
                         JSONRPCErrorError {
                             code: -32000,
                             message: format!(
-                                "unsupported Codex server request during organization summarization: {:?}",
+                                "unsupported Codex server request during summary generation: {:?}",
                                 other
                             ),
                             data: Some(Value::String(
-                                "organization summarization only supports dynamic tool calls"
-                                    .to_owned(),
+                                "summary workflows only support dynamic tool calls".to_owned(),
                             )),
                         },
                     )
@@ -191,29 +241,32 @@ impl AgentLoop {
     async fn handle_notification(&mut self, notification: ServerNotification) -> Result<()> {
         match notification {
             ServerNotification::Error(payload) => {
+                let label = self
+                    .thread_to_target
+                    .get(&payload.thread_id)
+                    .map(|target| format!("{} {}", target.scope.as_str(), target.id))
+                    .unwrap_or_else(|| format!("thread {}", payload.thread_id));
                 eprintln!(
-                    "[summary-agent] turn error for organization thread {} turn {}: {}",
-                    payload.thread_id, payload.turn_id, payload.error
+                    "[summary-agent] turn error for {label} turn {}: {}",
+                    payload.turn_id, payload.error
                 );
             }
             ServerNotification::TurnCompleted(payload) => {
-                let Some(organization_id) =
-                    self.thread_to_organization.get(&payload.thread_id).cloned()
-                else {
+                let Some(target) = self.thread_to_target.get(&payload.thread_id).cloned() else {
                     return Ok(());
                 };
-                let Some(organization) = self.organizations.get_mut(&organization_id) else {
+                let Some(state) = self.targets.get_mut(&target) else {
                     return Ok(());
                 };
-                if organization.active_turn.as_deref() != Some(payload.turn.id.as_str()) {
+                if state.active_turn.as_deref() != Some(payload.turn.id.as_str()) {
                     return Ok(());
                 }
-                organization.active_turn = None;
+                state.active_turn = None;
                 let status = match payload.turn.status {
                     TurnStatus::Completed => SummaryStatus::Ready,
                     _ => SummaryStatus::Error,
                 };
-                self.emit_summary_status(&organization_id, status).await;
+                self.emit_summary_status(&target, status).await;
             }
             _ => {}
         }
@@ -221,20 +274,20 @@ impl AgentLoop {
         Ok(())
     }
 
-    async fn send_event(
+    async fn send_room_event(
         &mut self,
-        organization_id: &str,
         room_id: &str,
         room_name: &str,
         event: &StoredHookEvent,
     ) -> Result<()> {
-        let thread_id = self.ensure_thread(organization_id).await?;
+        let target = SummaryTarget::room(room_id.to_owned());
+        let thread_id = self.ensure_thread(&target).await?;
         let input = vec![UserInput::Text {
-            text: format_event(room_id, room_name, event)?,
+            text: format_room_event(room_id, room_name, event)?,
             text_elements: Vec::new(),
         }];
 
-        self.send_input(organization_id, thread_id, input).await
+        self.send_input(&target, thread_id, input).await
     }
 
     async fn regenerate_organization(
@@ -244,25 +297,26 @@ impl AgentLoop {
         rooms: &[RegenerationRoom],
         events: &[RegenerationEvent],
     ) -> Result<()> {
-        let thread_id = self.ensure_thread(organization_id).await?;
+        let target = SummaryTarget::organization(organization_id.to_owned());
+        let thread_id = self.ensure_thread(&target).await?;
         let input = vec![UserInput::Text {
-            text: format_regeneration_request(reason, rooms, events)?,
+            text: format_organization_regeneration_request(reason, rooms, events)?,
             text_elements: Vec::new(),
         }];
 
-        self.send_input(organization_id, thread_id, input).await
+        self.send_input(&target, thread_id, input).await
     }
 
     async fn send_input(
         &mut self,
-        organization_id: &str,
+        target: &SummaryTarget,
         thread_id: String,
         input: Vec<UserInput>,
     ) -> Result<()> {
         let active_turn = self
-            .organizations
-            .get(organization_id)
-            .and_then(|organization| organization.active_turn.clone());
+            .targets
+            .get(target)
+            .and_then(|state| state.active_turn.clone());
 
         if let Some(turn_id) = active_turn {
             let request_id = self.next_request_id();
@@ -279,18 +333,20 @@ impl AgentLoop {
                 .await
             {
                 Ok(response) => {
-                    if let Some(organization) = self.organizations.get_mut(organization_id) {
-                        organization.active_turn = Some(response.turn_id);
+                    if let Some(state) = self.targets.get_mut(target) {
+                        state.active_turn = Some(response.turn_id);
                     }
                 }
                 Err(error) => {
                     eprintln!(
-                        "[summary-agent] steer failed for organization {organization_id}: {error}"
+                        "[summary-agent] steer failed for {} {}: {error}",
+                        target.scope.as_str(),
+                        target.id
                     );
                 }
             }
         } else {
-            self.emit_summary_status(organization_id, SummaryStatus::Generating)
+            self.emit_summary_status(target, SummaryStatus::Generating)
                 .await;
             let request_id = self.next_request_id();
             match self
@@ -306,16 +362,17 @@ impl AgentLoop {
                 .await
             {
                 Ok(response) => {
-                    if let Some(organization) = self.organizations.get_mut(organization_id) {
-                        organization.active_turn = Some(response.turn.id);
+                    if let Some(state) = self.targets.get_mut(target) {
+                        state.active_turn = Some(response.turn.id);
                     }
                 }
                 Err(error) => {
                     eprintln!(
-                        "[summary-agent] turn start failed for organization {organization_id}: {error}"
+                        "[summary-agent] turn start failed for {} {}: {error}",
+                        target.scope.as_str(),
+                        target.id
                     );
-                    self.emit_summary_status(organization_id, SummaryStatus::Error)
-                        .await;
+                    self.emit_summary_status(target, SummaryStatus::Error).await;
                 }
             }
         }
@@ -323,70 +380,74 @@ impl AgentLoop {
         Ok(())
     }
 
-    async fn ensure_thread(&mut self, organization_id: &str) -> Result<String> {
+    async fn ensure_thread(&mut self, target: &SummaryTarget) -> Result<String> {
         if let Some(thread_id) = self
-            .organizations
-            .get(organization_id)
-            .and_then(|organization| organization.thread_id.clone())
+            .targets
+            .get(target)
+            .and_then(|state| state.thread_id.clone())
         {
             return Ok(thread_id);
         }
 
-        let cwd = self.organization_cwd(organization_id)?;
+        let cwd = self.target_cwd(target)?;
         let cwd_str = cwd.display().to_string();
 
-        let stored_thread_id = self.read_thread_id(organization_id)?;
+        let stored_thread_id = self.read_thread_id(target)?;
         let thread_id = if let Some(thread_id) = stored_thread_id {
             match self.resume_thread(&thread_id, &cwd_str).await {
                 Ok(thread_id) => thread_id,
                 Err(error) => {
                     eprintln!(
-                        "[summary-agent] failed to resume thread {thread_id} for organization {organization_id}: {error}. Creating new thread."
+                        "[summary-agent] failed to resume {} thread {} for {}: {error}. Creating new thread.",
+                        target.scope.as_str(),
+                        thread_id,
+                        target.id,
                     );
-                    self.create_thread(&cwd_str).await?
+                    self.create_thread(target.scope, &cwd_str).await?
                 }
             }
         } else {
-            self.create_thread(&cwd_str).await?
+            self.create_thread(target.scope, &cwd_str).await?
         };
 
-        self.write_thread_id(organization_id, &thread_id)?;
+        self.write_thread_id(target, &thread_id)?;
 
-        let organization = self
-            .organizations
-            .entry(organization_id.to_owned())
-            .or_insert_with(|| OrganizationState {
+        let state = self
+            .targets
+            .entry(target.clone())
+            .or_insert_with(|| SummaryTargetState {
                 thread_id: None,
                 active_turn: None,
             });
-        organization.thread_id = Some(thread_id.clone());
-        self.thread_to_organization
-            .insert(thread_id.clone(), organization_id.to_owned());
+        state.thread_id = Some(thread_id.clone());
+        self.thread_to_target
+            .insert(thread_id.clone(), target.clone());
 
         Ok(thread_id)
     }
 
-    fn organization_dir(&self, organization_id: &str) -> PathBuf {
-        self.organizations_dir.join(organization_id)
+    fn target_dir(&self, target: &SummaryTarget) -> PathBuf {
+        self.summary_threads_dir
+            .join(target.scope.directory_name())
+            .join(&target.id)
     }
 
-    fn organization_cwd(&self, organization_id: &str) -> Result<PathBuf> {
-        let dir = self.organization_dir(organization_id).join("cwd");
+    fn target_cwd(&self, target: &SummaryTarget) -> Result<PathBuf> {
+        let dir = self.target_dir(target).join("cwd");
         fs::create_dir_all(&dir)
-            .with_context(|| format!("failed to create organization dir: {}", dir.display()))?;
+            .with_context(|| format!("failed to create target dir: {}", dir.display()))?;
         Ok(dir)
     }
 
-    fn thread_id_path(&self, organization_id: &str) -> Result<PathBuf> {
-        let dir = self.organization_dir(organization_id);
-        fs::create_dir_all(&dir).with_context(|| {
-            format!("failed to create organization state dir: {}", dir.display())
-        })?;
+    fn thread_id_path(&self, target: &SummaryTarget) -> Result<PathBuf> {
+        let dir = self.target_dir(target);
+        fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create target state dir: {}", dir.display()))?;
         Ok(dir.join("thread-id"))
     }
 
-    fn read_thread_id(&self, organization_id: &str) -> Result<Option<String>> {
-        let path = self.thread_id_path(organization_id)?;
+    fn read_thread_id(&self, target: &SummaryTarget) -> Result<Option<String>> {
+        let path = self.thread_id_path(target)?;
         if !path.is_file() {
             return Ok(None);
         }
@@ -399,15 +460,20 @@ impl AgentLoop {
         Ok(Some(value))
     }
 
-    fn write_thread_id(&self, organization_id: &str, thread_id: &str) -> Result<()> {
-        let path = self.thread_id_path(organization_id)?;
+    fn write_thread_id(&self, target: &SummaryTarget, thread_id: &str) -> Result<()> {
+        let path = self.thread_id_path(target)?;
         fs::write(&path, thread_id)
             .with_context(|| format!("failed to write thread id to {}", path.display()))?;
         Ok(())
     }
 
-    async fn create_thread(&mut self, cwd: &str) -> Result<String> {
+    async fn create_thread(&mut self, scope: SummaryScope, cwd: &str) -> Result<String> {
         let request_id = self.next_request_id();
+        let dynamic_tools = match scope {
+            SummaryScope::Organization => SummaryTool::organization_specs(),
+            SummaryScope::Room => SummaryTool::room_specs(),
+        };
+
         let response = self
             .client
             .request_typed::<ThreadStartResponse>(ClientRequest::ThreadStart {
@@ -418,9 +484,9 @@ impl AgentLoop {
                     approval_policy: Some(AskForApproval::OnRequest),
                     sandbox: Some(SandboxMode::ReadOnly),
                     service_name: Some("supermanager".to_owned()),
-                    base_instructions: Some(SYSTEM_PROMPT.to_owned()),
+                    base_instructions: Some(scope.system_prompt().to_owned()),
                     ephemeral: Some(false),
-                    dynamic_tools: Some(SummaryTool::specs()),
+                    dynamic_tools: Some(dynamic_tools),
                     ..Default::default()
                 },
             })
@@ -453,15 +519,18 @@ impl AgentLoop {
         &mut self,
         params: &DynamicToolCallParams,
     ) -> Result<DynamicToolCallResponse> {
-        let Some(organization_id) = self.thread_to_organization.get(&params.thread_id).cloned()
-        else {
+        let Some(target) = self.thread_to_target.get(&params.thread_id).cloned() else {
             return Ok(tool_failure(format!(
-                "unknown organization thread: {}",
+                "unknown summary thread: {}",
                 params.thread_id
             )));
         };
 
-        let tool = match SummaryTool::parse(params) {
+        let tool = match target.scope {
+            SummaryScope::Organization => SummaryTool::parse_organization(params),
+            SummaryScope::Room => SummaryTool::parse_room(params),
+        };
+        let tool = match tool {
             Ok(tool) => tool,
             Err(error) => return Ok(tool_failure(error.to_string())),
         };
@@ -478,7 +547,8 @@ impl AgentLoop {
             .output_tx
             .send(AgentMessage::ToolCall {
                 id: tool_call_id.clone(),
-                organization_id,
+                scope: target.scope.as_str().to_owned(),
+                target_id: target.id.clone(),
                 tool: tool_name,
                 arguments,
             })
@@ -500,11 +570,12 @@ impl AgentLoop {
         }
     }
 
-    async fn emit_summary_status(&self, organization_id: &str, status: SummaryStatus) {
+    async fn emit_summary_status(&self, target: &SummaryTarget, status: SummaryStatus) {
         let _ = self
             .output_tx
             .send(AgentMessage::SummaryStatus {
-                organization_id: organization_id.to_owned(),
+                scope: target.scope.as_str().to_owned(),
+                target_id: target.id.clone(),
                 status: status.as_str().to_owned(),
             })
             .await;

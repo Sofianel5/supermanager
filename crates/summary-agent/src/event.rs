@@ -16,7 +16,7 @@ pub(crate) struct RegenerationEvent {
     pub(crate) event: StoredHookEvent,
 }
 
-pub(crate) fn format_event(
+pub(crate) fn format_room_event(
     room_id: &str,
     room_name: &str,
     event: &StoredHookEvent,
@@ -29,7 +29,7 @@ pub(crate) fn format_event(
         .unwrap_or("(none)");
 
     Ok(format!(
-        "A new organization hook event arrived.\n\
+        "A new room hook event arrived.\n\
 room_id: {room_id}\n\
 room_name: {room_name}\n\
 employee_name: {employee_name}\n\
@@ -49,7 +49,7 @@ payload_json:\n{payload}",
     ))
 }
 
-pub(crate) fn format_regeneration_request(
+pub(crate) fn format_organization_regeneration_request(
     reason: &str,
     rooms: &[RegenerationRoom],
     events: &[RegenerationEvent],
@@ -69,7 +69,7 @@ pub(crate) fn format_regeneration_request(
     } else {
         let mut rendered = Vec::with_capacity(events.len());
         for regeneration_event in events {
-            rendered.push(format_event(
+            rendered.push(format_room_event(
                 &regeneration_event.room_id,
                 &regeneration_event.room_name,
                 &regeneration_event.event,
@@ -83,7 +83,7 @@ pub(crate) fn format_regeneration_request(
 trigger: {reason}\n\
 current_rooms:\n{rooms}\n\
 recent_org_events:\n{events}\n\
-Tighten the organization BLUF, room BLUFs, and employee BLUFs so they reflect the latest state.",
+Tighten the organization BLUF and employee BLUFs. Room BLUFs are maintained separately and should be treated as read-only context from get_snapshot.",
         reason = reason,
         rooms = rooms_text,
         events = events_text,
@@ -98,7 +98,7 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn format_event_includes_snapshot_fields() {
+    fn format_room_event_includes_snapshot_fields() {
         let event = StoredHookEvent {
             seq: 0,
             event_id: Uuid::nil(),
@@ -110,7 +110,7 @@ mod tests {
             payload: json!({ "hook_event_name": "Stop" }),
         };
 
-        let rendered = format_event("ROOM42", "Operations", &event).unwrap();
+        let rendered = format_room_event("ROOM42", "Operations", &event).unwrap();
 
         assert!(rendered.contains("room_id: ROOM42"));
         assert!(rendered.contains("room_name: Operations"));
@@ -120,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn format_regeneration_request_includes_rooms_and_events() {
+    fn format_organization_regeneration_request_includes_rooms_and_events() {
         let event = StoredHookEvent {
             seq: 0,
             event_id: Uuid::nil(),
@@ -132,8 +132,8 @@ mod tests {
             payload: json!({ "hook_event_name": "Stop" }),
         };
 
-        let rendered = format_regeneration_request(
-            "timer",
+        let rendered = format_organization_regeneration_request(
+            "heartbeat",
             &[RegenerationRoom {
                 room_id: "ROOM42".to_owned(),
                 name: "Operations".to_owned(),
@@ -146,8 +146,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(rendered.contains("trigger: timer"));
+        assert!(rendered.contains("trigger: heartbeat"));
         assert!(rendered.contains("- ROOM42: Operations"));
         assert!(rendered.contains("room_name: Operations"));
+        assert!(rendered.contains("Room BLUFs are maintained separately"));
     }
 }

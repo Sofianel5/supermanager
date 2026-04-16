@@ -12,12 +12,6 @@ struct SetMarkdownArgs {
 }
 
 #[derive(Debug, Deserialize)]
-struct SetRoomBlufArgs {
-    room_id: String,
-    markdown: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct SetEmployeeBlufArgs {
     employee_name: String,
     room_ids: Vec<String>,
@@ -29,22 +23,14 @@ struct RemoveEmployeeBlufArgs {
     employee_name: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct RemoveRoomBlufArgs {
-    room_id: String,
-}
-
 pub(crate) enum SummaryTool {
-    GetSnapshot,
+    RoomGetSnapshot,
+    SetRoomBluf {
+        markdown: String,
+    },
+    OrganizationGetSnapshot,
     SetOrgBluf {
         markdown: String,
-    },
-    SetRoomBluf {
-        room_id: String,
-        markdown: String,
-    },
-    RemoveRoomBluf {
-        room_id: String,
     },
     SetEmployeeBluf {
         employee_name: String,
@@ -57,56 +43,32 @@ pub(crate) enum SummaryTool {
 }
 
 impl SummaryTool {
-    pub(crate) fn specs() -> Vec<DynamicToolSpec> {
-        let spec = |name: &str, description: &str, schema: Value| DynamicToolSpec {
-            name: name.to_owned(),
-            description: description.to_owned(),
-            input_schema: schema,
-            defer_loading: false,
-        };
-        let empty = || json!({ "type": "object", "additionalProperties": false, "properties": {} });
-        let markdown_only = || {
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["markdown"],
-                "properties": { "markdown": { "type": "string" } }
-            })
-        };
+    pub(crate) fn room_specs() -> Vec<DynamicToolSpec> {
+        vec![
+            spec(
+                "get_snapshot",
+                "Read the current room snapshot before deciding what to edit.",
+                empty_schema(),
+            ),
+            spec(
+                "set_bluf",
+                "Replace the room BLUF markdown.",
+                markdown_only_schema(),
+            ),
+        ]
+    }
 
+    pub(crate) fn organization_specs() -> Vec<DynamicToolSpec> {
         vec![
             spec(
                 "get_snapshot",
                 "Read the current organization snapshot before deciding what to edit.",
-                empty(),
+                empty_schema(),
             ),
             spec(
                 "set_org_bluf",
                 "Replace the organization BLUF markdown.",
-                markdown_only(),
-            ),
-            spec(
-                "set_room_bluf",
-                "Create or update a room BLUF using concise markdown body content.",
-                json!({
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["room_id", "markdown"],
-                    "properties": {
-                        "room_id": { "type": "string" },
-                        "markdown": { "type": "string" }
-                    }
-                }),
-            ),
-            spec(
-                "remove_room_bluf",
-                "Remove a room BLUF that should no longer appear in the organization snapshot.",
-                json!({
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["room_id"],
-                    "properties": { "room_id": { "type": "string" } }
-                }),
+                markdown_only_schema(),
             ),
             spec(
                 "set_employee_bluf",
@@ -138,29 +100,28 @@ impl SummaryTool {
         ]
     }
 
-    pub(crate) fn parse(params: &DynamicToolCallParams) -> Result<Self> {
+    pub(crate) fn parse_room(params: &DynamicToolCallParams) -> Result<Self> {
         match params.tool.as_str() {
-            "get_snapshot" => Ok(Self::GetSnapshot),
+            "get_snapshot" => Ok(Self::RoomGetSnapshot),
+            "set_bluf" => {
+                let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_bluf arguments")?;
+                Ok(Self::SetRoomBluf {
+                    markdown: args.markdown,
+                })
+            }
+            other => anyhow::bail!("unknown room summary tool: {other}"),
+        }
+    }
+
+    pub(crate) fn parse_organization(params: &DynamicToolCallParams) -> Result<Self> {
+        match params.tool.as_str() {
+            "get_snapshot" => Ok(Self::OrganizationGetSnapshot),
             "set_org_bluf" => {
                 let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid set_org_bluf arguments")?;
                 Ok(Self::SetOrgBluf {
                     markdown: args.markdown,
-                })
-            }
-            "set_room_bluf" => {
-                let args: SetRoomBlufArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid set_room_bluf arguments")?;
-                Ok(Self::SetRoomBluf {
-                    room_id: args.room_id,
-                    markdown: args.markdown,
-                })
-            }
-            "remove_room_bluf" => {
-                let args: RemoveRoomBlufArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid remove_room_bluf arguments")?;
-                Ok(Self::RemoveRoomBluf {
-                    room_id: args.room_id,
                 })
             }
             "set_employee_bluf" => {
@@ -179,25 +140,20 @@ impl SummaryTool {
                     employee_name: args.employee_name,
                 })
             }
-            other => anyhow::bail!("unknown tool: {other}"),
+            other => anyhow::bail!("unknown organization summary tool: {other}"),
         }
     }
 
     pub(crate) fn into_wire(self) -> (String, Value) {
         match self {
-            Self::GetSnapshot => ("get_snapshot".to_owned(), json!({})),
+            Self::RoomGetSnapshot | Self::OrganizationGetSnapshot => {
+                ("get_snapshot".to_owned(), json!({}))
+            }
+            Self::SetRoomBluf { markdown } => {
+                ("set_bluf".to_owned(), json!({ "markdown": markdown }))
+            }
             Self::SetOrgBluf { markdown } => {
                 ("set_org_bluf".to_owned(), json!({ "markdown": markdown }))
-            }
-            Self::SetRoomBluf { room_id, markdown } => (
-                "set_room_bluf".to_owned(),
-                json!({
-                    "room_id": room_id,
-                    "markdown": markdown,
-                }),
-            ),
-            Self::RemoveRoomBluf { room_id } => {
-                ("remove_room_bluf".to_owned(), json!({ "room_id": room_id }))
             }
             Self::SetEmployeeBluf {
                 employee_name,
@@ -226,4 +182,26 @@ pub(crate) fn tool_failure(message: impl Into<String>) -> DynamicToolCallRespons
         }],
         success: false,
     }
+}
+
+fn spec(name: &str, description: &str, schema: Value) -> DynamicToolSpec {
+    DynamicToolSpec {
+        name: name.to_owned(),
+        description: description.to_owned(),
+        input_schema: schema,
+        defer_loading: false,
+    }
+}
+
+fn empty_schema() -> Value {
+    json!({ "type": "object", "additionalProperties": false, "properties": {} })
+}
+
+fn markdown_only_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["markdown"],
+        "properties": { "markdown": { "type": "string" } }
+    })
 }

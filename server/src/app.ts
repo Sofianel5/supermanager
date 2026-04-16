@@ -331,9 +331,7 @@ export function createApp(context: AppContext) {
               );
 
         replay.reverse();
-        const initialStatus = await context.db.getOrganizationSummaryStatus(
-          room.organization_id,
-        );
+        const initialStatus = await context.db.getRoomSummaryStatus(room.room_id);
         const client = context.feedHub.register(
           room.room_id,
           request.headers.get("origin"),
