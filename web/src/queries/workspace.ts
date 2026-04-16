@@ -1,7 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, type ViewerOrganization, type ViewerResponse } from "../api";
+import {
+  api,
+  type OrganizationSummaryResponse,
+  type ViewerOrganization,
+  type ViewerResponse,
+} from "../api";
 
 const VIEWER_QUERY_KEY = ["viewer"] as const;
+const ORGANIZATION_SUMMARY_QUERY_KEY = "organization-summary";
 const ROOM_LIST_QUERY_KEY = "room-list";
 const WORKSPACE_STALE_TIME_MS = 30_000;
 
@@ -17,13 +23,31 @@ export function useWorkspaceData(preferredOrganizationSlug: string | null) {
     enabled: Boolean(activeOrganization?.organization_slug),
     queryFn: () => api.listRooms(activeOrganization!.organization_slug),
     queryKey: roomListQueryKey(activeOrganization?.organization_slug ?? ""),
+    refetchInterval: WORKSPACE_STALE_TIME_MS,
     staleTime: WORKSPACE_STALE_TIME_MS,
+  });
+
+  const summaryQuery = useQuery<
+    OrganizationSummaryResponse,
+    Error,
+    OrganizationSummaryResponse,
+    ReturnType<typeof organizationSummaryQueryKey>
+  >({
+    enabled: Boolean(activeOrganization?.organization_slug),
+    queryFn: () =>
+      api.getOrganizationSummary(activeOrganization!.organization_slug),
+    queryKey: organizationSummaryQueryKey(
+      activeOrganization?.organization_slug ?? "",
+    ),
+    refetchInterval: 15_000,
+    staleTime: 15_000,
   });
 
   return {
     activeOrganization,
     rooms: roomsQuery.data?.rooms ?? [],
     roomsQuery,
+    summaryQuery,
     viewerQuery,
   };
 }
@@ -53,6 +77,14 @@ export function roomListQueryKey(organizationSlug: string) {
 
 export function roomListQueryRootKey() {
   return [ROOM_LIST_QUERY_KEY] as const;
+}
+
+export function organizationSummaryQueryKey(organizationSlug: string) {
+  return [ORGANIZATION_SUMMARY_QUERY_KEY, organizationSlug] as const;
+}
+
+export function organizationSummaryQueryRootKey() {
+  return [ORGANIZATION_SUMMARY_QUERY_KEY] as const;
 }
 
 export function workspaceQueryKey() {

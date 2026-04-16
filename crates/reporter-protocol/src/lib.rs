@@ -55,8 +55,6 @@ pub struct RoomSnapshot {
     #[serde(default)]
     pub bluf_markdown: String,
     #[serde(default)]
-    pub overview_markdown: String,
-    #[serde(default)]
     pub employees: Vec<EmployeeSnapshot>,
 }
 
@@ -65,9 +63,32 @@ pub struct RoomSnapshot {
 pub struct EmployeeSnapshot {
     pub employee_name: String,
     #[serde(default)]
-    pub content_markdown: String,
+    pub room_ids: Vec<String>,
+    #[serde(default)]
+    pub bluf_markdown: String,
     #[serde(default)]
     pub last_update_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
+pub struct RoomBlufSnapshot {
+    pub room_id: String,
+    #[serde(default)]
+    pub bluf_markdown: String,
+    #[serde(default)]
+    pub last_update_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
+pub struct OrganizationSnapshot {
+    #[serde(default)]
+    pub bluf_markdown: String,
+    #[serde(default)]
+    pub rooms: Vec<RoomBlufSnapshot>,
+    #[serde(default)]
+    pub employees: Vec<EmployeeSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

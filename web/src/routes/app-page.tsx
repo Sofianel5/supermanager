@@ -18,6 +18,7 @@ import {
   useDeviceStatus,
 } from "../queries/device-status";
 import {
+  organizationSummaryQueryRootKey,
   roomListQueryRootKey,
   useWorkspaceData,
   workspaceQueryKey,
@@ -32,8 +33,10 @@ export function AppPage() {
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [createRoomError, setCreateRoomError] = useState<string | null>(null);
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
+  const [summaryActionError, setSummaryActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<"sign-out" | "create-room" | null>(null);
   const [pendingDeviceAction, setPendingDeviceAction] = useState<"approve" | "deny" | null>(null);
+  const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false);
   const [isCreateRoomDialogOpen, setIsCreateRoomDialogOpen] = useState(false);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [createRoomName, setCreateRoomName] = useState("");
@@ -41,7 +44,7 @@ export function AppPage() {
   const searchParams = new URLSearchParams(location.search);
   const userCode = normalizeUserCode(searchParams.get("user_code"));
   const preferredOrganizationSlug = searchParams.get("organization");
-  const { activeOrganization, rooms, roomsQuery, viewerQuery } =
+  const { activeOrganization, rooms, roomsQuery, summaryQuery, viewerQuery } =
     useWorkspaceData(preferredOrganizationSlug);
   const deviceStatusQuery = useDeviceStatus(userCode);
 
@@ -49,11 +52,13 @@ export function AppPage() {
   const isFirstRun = viewer !== null && viewer.organizations.length === 0;
   const isLoading =
     viewerQuery.isLoading ||
-    (Boolean(activeOrganization) && roomsQuery.isLoading);
+    (Boolean(activeOrganization) && (roomsQuery.isLoading || summaryQuery.isLoading));
   const workspaceError =
     workspaceActionError ||
+    summaryActionError ||
     readQueryError(viewerQuery.error) ||
-    readQueryError(roomsQuery.error);
+    readQueryError(roomsQuery.error) ||
+    readQueryError(summaryQuery.error);
   const deviceError =
     deviceActionError || readQueryError(deviceStatusQuery.error);
   const isCreatingRoom = pendingAction === "create-room";
@@ -159,11 +164,32 @@ export function AppPage() {
 
   const refreshWorkspace = useCallback(async () => {
     await Promise.all([
+      queryClient.invalidateQueries({ queryKey: organizationSummaryQueryRootKey() }),
       queryClient.invalidateQueries({ queryKey: workspaceQueryKey() }),
       queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() }),
     ]);
     setPendingAction(null);
   }, [queryClient]);
+
+  async function handleRegenerateSummary() {
+    if (!activeOrganization) {
+      return;
+    }
+
+    setSummaryActionError(null);
+    setIsRegeneratingSummary(true);
+    try {
+      await api.regenerateOrganizationSummary(activeOrganization.organization_slug);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: organizationSummaryQueryRootKey() }),
+        queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() }),
+      ]);
+    } catch (error) {
+      setSummaryActionError(readMessage(error));
+    } finally {
+      setIsRegeneratingSummary(false);
+    }
+  }
 
   return (
     <>
@@ -202,9 +228,13 @@ export function AppPage() {
             activeOrganization={activeOrganization}
             error={workspaceError}
             isCreatingRoom={isCreatingRoom}
+            isRegeneratingSummary={isRegeneratingSummary}
             isLoading={isLoading}
+            organizationSummary={summaryQuery.data?.summary ?? null}
+            summaryStatus={summaryQuery.data?.status ?? "ready"}
             rooms={rooms}
             onCreateRoom={openCreateRoomDialog}
+            onRegenerateSummary={() => void handleRegenerateSummary()}
           />
         </main>
       )}

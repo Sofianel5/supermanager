@@ -1,8 +1,8 @@
-import type { Db } from "../db";
+import type { Db, RoomRecord } from "../db";
 import type { FeedStreamHub } from "../sse";
 import type { StoragePaths } from "../storage";
-import type { StoredHookEvent } from "../types";
 import type { ServerConfig } from "../config";
+import type { StoredHookEvent } from "../types";
 import type { AgentMessage, HostMessage } from "./protocol";
 import { applySummaryToolCall } from "./tool-executor";
 
@@ -14,18 +14,27 @@ interface SummaryAgentHostOptions {
 }
 
 type SummaryAgentProcess = Bun.Subprocess<"pipe", "pipe", "pipe">;
+const REGENERATION_EVENT_LIMIT = 50;
 
 export class SummaryAgentHost {
   private child: SummaryAgentProcess | null = null;
+  private regenerationTimer: Timer | null = null;
+  private regenerationSweepInFlight = false;
   private starting: Promise<void> | null = null;
 
   constructor(private readonly options: SummaryAgentHostOptions) {}
 
   async start(): Promise<void> {
     await this.ensureRunning();
+    this.startRegenerationTimer();
   }
 
   async stop(): Promise<void> {
+    if (this.regenerationTimer) {
+      clearInterval(this.regenerationTimer);
+      this.regenerationTimer = null;
+    }
+
     const child = this.child;
     if (!child) {
       return;
@@ -40,12 +49,37 @@ export class SummaryAgentHost {
     await this.ensureRunning();
   }
 
-  async enqueue(roomId: string, event: StoredHookEvent): Promise<void> {
+  async enqueue(
+    room: Pick<RoomRecord, "name" | "organization_id" | "room_id">,
+    event: StoredHookEvent,
+  ): Promise<void> {
     await this.ensureRunning();
     this.send({
       type: "enqueue_event",
-      room_id: roomId,
+      organization_id: room.organization_id,
+      room_id: room.room_id,
+      room_name: room.name,
       event,
+    });
+  }
+
+  async regenerateOrganization(
+    organizationId: string,
+    reason: "manual" | "timer",
+  ): Promise<void> {
+    await this.ensureRunning();
+    const [events, rooms] = await Promise.all([
+      this.options.db.queryOrganizationEventsForSummary(organizationId, {
+        limit: REGENERATION_EVENT_LIMIT,
+      }),
+      this.options.db.listRoomsForSummary(organizationId),
+    ]);
+    this.send({
+      type: "regenerate_organization",
+      events,
+      organization_id: organizationId,
+      rooms,
+      reason,
     });
   }
 
@@ -65,8 +99,8 @@ export class SummaryAgentHost {
           ...summaryAgent.args,
           "--codex-home",
           this.options.storage.codexHome,
-          "--rooms-dir",
-          this.options.storage.roomsDir,
+          "--organizations-dir",
+          this.options.storage.organizationsDir,
         ],
         cwd: summaryAgent.cwd,
         env: Bun.env,
@@ -129,14 +163,22 @@ export class SummaryAgentHost {
 
     switch (message.type) {
       case "summary_status": {
-        await this.options.db.setSummaryStatus(message.room_id, message.status);
-        this.options.feedHub.publishSummaryStatus(message.room_id, message.status);
+        await this.options.db.setOrganizationSummaryStatus(
+          message.organization_id,
+          message.status,
+        );
+        const roomIds = await this.options.db.listRoomIdsForOrganization(
+          message.organization_id,
+        );
+        for (const roomId of roomIds) {
+          this.options.feedHub.publishSummaryStatus(roomId, message.status);
+        }
         return;
       }
       case "tool_call": {
         const result = await applySummaryToolCall(
           this.options.db,
-          message.room_id,
+          message.organization_id,
           message.tool,
           message.arguments,
         );
@@ -166,6 +208,42 @@ export class SummaryAgentHost {
         console.error(`[summary-agent] line handler failed: ${formatError(error)}`);
       }
     });
+  }
+
+  private startRegenerationTimer(): void {
+    const intervalMs = this.options.config.summaryRefreshIntervalMs;
+    if (intervalMs <= 0 || this.regenerationTimer) {
+      return;
+    }
+
+    this.regenerationTimer = setInterval(() => {
+      void this.runRegenerationSweep().catch((error) => {
+        console.error(`[summary-agent] regeneration sweep failed: ${formatError(error)}`);
+      });
+    }, intervalMs);
+  }
+
+  private async runRegenerationSweep(): Promise<void> {
+    if (this.regenerationSweepInFlight) {
+      return;
+    }
+
+    this.regenerationSweepInFlight = true;
+    try {
+      const organizationIds = await this.options.db.listOrganizationsWithRooms();
+      await Promise.all(
+        organizationIds.map(async (organizationId) => {
+          const status = await this.options.db.getOrganizationSummaryStatus(organizationId);
+          if (status === "generating") {
+            return;
+          }
+
+          await this.regenerateOrganization(organizationId, "timer");
+        }),
+      );
+    } finally {
+      this.regenerationSweepInFlight = false;
+    }
   }
 }
 

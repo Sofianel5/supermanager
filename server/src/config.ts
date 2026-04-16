@@ -31,6 +31,7 @@ export interface ServerConfig {
   publicAppUrl: string;
   auth: AuthConfig;
   summaryAgent: SummaryAgentCommand;
+  summaryRefreshIntervalMs: number;
 }
 
 export async function loadConfig(argv: string[], cwd: string): Promise<ServerConfig> {
@@ -41,12 +42,18 @@ export async function loadConfig(argv: string[], cwd: string): Promise<ServerCon
       "database-url": { type: "string" },
       "data-dir": { type: "string" },
       "summary-agent-bin": { type: "string" },
+      "summary-refresh-interval-seconds": { type: "string" },
     },
     allowPositionals: false,
   });
 
   const databaseUrl = parsed.values["database-url"] ?? Bun.env.DATABASE_URL;
   const dataDir = parsed.values["data-dir"] ?? Bun.env.SUPERMANAGER_DATA_DIR;
+  const summaryRefreshIntervalMs = parseRefreshIntervalMs(
+    parsed.values["summary-refresh-interval-seconds"] ??
+      Bun.env.SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS ??
+      "300",
+  );
 
   if (!databaseUrl) {
     throw new Error("missing required DATABASE_URL / --database-url");
@@ -76,6 +83,7 @@ export async function loadConfig(argv: string[], cwd: string): Promise<ServerCon
       parsed.values["summary-agent-bin"] ?? Bun.env.SUPERMANAGER_SUMMARY_AGENT_BIN ?? null,
       cwd,
     ),
+    summaryRefreshIntervalMs,
   };
 }
 
@@ -145,4 +153,13 @@ async function findCargoWorkspace(cwd: string): Promise<string | null> {
     }
   }
   return null;
+}
+
+function parseRefreshIntervalMs(raw: string): number {
+  const seconds = Number.parseInt(raw, 10);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    throw new Error(`invalid summary refresh interval: ${raw}`);
+  }
+
+  return seconds * 1000;
 }

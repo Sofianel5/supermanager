@@ -10,13 +10,22 @@ use tokio::{
 };
 
 use crate::agent::AgentCommand;
+use crate::event::{RegenerationEvent, RegenerationRoom};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum HostMessage {
     EnqueueEvent {
+        organization_id: String,
         room_id: String,
+        room_name: String,
         event: StoredHookEvent,
+    },
+    RegenerateOrganization {
+        organization_id: String,
+        events: Vec<RegenerationEvent>,
+        rooms: Vec<RegenerationRoom>,
+        reason: String,
     },
     ToolResult {
         id: String,
@@ -30,12 +39,12 @@ enum HostMessage {
 pub(crate) enum AgentMessage {
     ToolCall {
         id: String,
-        room_id: String,
+        organization_id: String,
         tool: String,
         arguments: Value,
     },
     SummaryStatus {
-        room_id: String,
+        organization_id: String,
         status: String,
     },
 }
@@ -74,9 +83,38 @@ pub(crate) async fn read_host_messages(
         };
 
         match message {
-            HostMessage::EnqueueEvent { room_id, event } => {
+            HostMessage::EnqueueEvent {
+                organization_id,
+                room_id,
+                room_name,
+                event,
+            } => {
                 if command_tx
-                    .send(AgentCommand::EnqueueEvent { room_id, event })
+                    .send(AgentCommand::EnqueueEvent {
+                        organization_id,
+                        room_id,
+                        room_name,
+                        event,
+                    })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            HostMessage::RegenerateOrganization {
+                organization_id,
+                events,
+                rooms,
+                reason,
+            } => {
+                if command_tx
+                    .send(AgentCommand::RegenerateOrganization {
+                        organization_id,
+                        events,
+                        rooms,
+                        reason,
+                    })
                     .await
                     .is_err()
                 {
