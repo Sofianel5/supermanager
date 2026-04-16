@@ -1,10 +1,6 @@
-use std::{
-    fmt,
-    io::{self, IsTerminal},
-    path::Path,
-};
+use std::{fmt, path::Path};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use inquire::{InquireError, Select, Text, validator::Validation};
 use reqwest::blocking::Client;
 
@@ -13,11 +9,11 @@ use crate::{
         auth_state_path, create_organization, get_viewer, require_auth_state,
         set_active_organization, viewer_active_org_slug, write_auth_state,
     },
-    support::{API_TIMEOUT_SECONDS, build_http_client, normalize_url},
+    support::{API_TIMEOUT_SECONDS, build_http_client, ensure_interactive_terminal, normalize_url},
     types::{
         AuthState, ConfigureOrganizationsConfig, ConfigureOrganizationsOutcome,
         CreateOrganizationConfig, CreateOrganizationOutcome, ListOrganizationEntry,
-        ListOrganizationsConfig, ListOrganizationsOutcome, ViewerOrganization,
+        ListOrganizationsConfig, ListOrganizationsOutcome, ViewerOrganization, ViewerResponse,
     },
 };
 
@@ -27,6 +23,12 @@ enum OrganizationMenuChoice {
     CreateNew,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OrganizationOnboardingChoice {
+    CreateOrganization,
+    RequestInvite,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OrganizationMenuOption {
     choice: OrganizationMenuChoice,
@@ -34,6 +36,18 @@ struct OrganizationMenuOption {
 }
 
 impl fmt::Display for OrganizationMenuOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OrganizationOnboardingOption {
+    choice: OrganizationOnboardingChoice,
+    label: String,
+}
+
+impl fmt::Display for OrganizationOnboardingOption {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.label)
     }
@@ -84,8 +98,40 @@ pub fn configure_organizations_interactive(
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
     let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
-    let active_org_slug = viewer_active_org_slug(&viewer);
+    configure_organizations_interactive_with_state(
+        &http,
+        &server_url,
+        &mut auth_state,
+        &config.home_dir,
+        &viewer,
+    )
+}
 
+pub(crate) fn configure_organizations_interactive_with_state(
+    http: &Client,
+    server_url: &str,
+    auth_state: &mut AuthState,
+    home_dir: &Path,
+    viewer: &ViewerResponse,
+) -> Result<ConfigureOrganizationsOutcome> {
+    if viewer.organizations.is_empty() {
+        return match prompt_for_empty_organization_state()? {
+            OrganizationOnboardingChoice::CreateOrganization => {
+                let (organization_name, organization_slug) =
+                    create_and_activate_organization(http, server_url, auth_state, home_dir)?;
+                Ok(ConfigureOrganizationsOutcome::Selected {
+                    created_new: true,
+                    organization_name,
+                    organization_slug,
+                })
+            }
+            OrganizationOnboardingChoice::RequestInvite => {
+                Ok(ConfigureOrganizationsOutcome::InviteRequested)
+            }
+        };
+    }
+
+    let active_org_slug = viewer_active_org_slug(viewer);
     match prompt_for_organization_choice(&viewer.organizations, active_org_slug)? {
         OrganizationMenuChoice::Existing(index) => {
             let organization = viewer
@@ -94,32 +140,28 @@ pub fn configure_organizations_interactive(
                 .ok_or_else(|| anyhow!("organization selection is out of bounds"))?;
 
             set_active_organization(
-                &http,
-                &server_url,
+                http,
+                server_url,
                 &auth_state.access_token,
                 &organization.organization_slug,
             )?;
             auth_state.active_org_slug = Some(organization.organization_slug.clone());
-            write_auth_state(&auth_state_path(&config.home_dir), &auth_state)?;
+            write_auth_state(&auth_state_path(home_dir), auth_state)?;
 
-            Ok(ConfigureOrganizationsOutcome {
+            Ok(ConfigureOrganizationsOutcome::Selected {
                 created_new: false,
                 organization_name: organization.organization_name.clone(),
                 organization_slug: organization.organization_slug.clone(),
             })
         }
         OrganizationMenuChoice::CreateNew => {
-            let (name, slug) = create_and_activate_organization(
-                &http,
-                &server_url,
-                &mut auth_state,
-                &config.home_dir,
-            )?;
+            let (organization_name, organization_slug) =
+                create_and_activate_organization(http, server_url, auth_state, home_dir)?;
 
-            Ok(ConfigureOrganizationsOutcome {
+            Ok(ConfigureOrganizationsOutcome::Selected {
                 created_new: true,
-                organization_name: name,
-                organization_slug: slug,
+                organization_name,
+                organization_slug,
             })
         }
     }
@@ -141,14 +183,6 @@ fn create_and_activate_organization(
     Ok((name, slug))
 }
 
-fn ensure_interactive_terminal(command: &str) -> Result<()> {
-    if io::stdin().is_terminal() && io::stdout().is_terminal() {
-        return Ok(());
-    }
-
-    bail!("{command} requires an interactive terminal");
-}
-
 fn prompt_for_organization_name() -> Result<(String, String)> {
     let name = Text::new("Organization name")
         .with_placeholder("Acme Labs")
@@ -160,6 +194,20 @@ fn prompt_for_organization_name() -> Result<(String, String)> {
     let slug = slugify_organization_name(name);
 
     Ok((name.to_owned(), slug))
+}
+
+fn prompt_for_empty_organization_state() -> Result<OrganizationOnboardingChoice> {
+    let selection = Select::new(
+        "Choose how you want to start",
+        organization_onboarding_options(),
+    )
+    .with_help_message("Use Up/Down to move, Enter to select, Esc to cancel")
+    .with_page_size(2)
+    .without_filtering()
+    .prompt()
+    .map_err(|error| prompt_error(error, "organization setup cancelled"))?;
+
+    Ok(selection.choice)
 }
 
 fn prompt_for_organization_choice(
@@ -224,6 +272,19 @@ fn organization_menu_options(
         label: "Create organization".to_owned(),
     });
     options
+}
+
+fn organization_onboarding_options() -> Vec<OrganizationOnboardingOption> {
+    vec![
+        OrganizationOnboardingOption {
+            choice: OrganizationOnboardingChoice::CreateOrganization,
+            label: "Create organization".to_owned(),
+        },
+        OrganizationOnboardingOption {
+            choice: OrganizationOnboardingChoice::RequestInvite,
+            label: "Ask manager for invite".to_owned(),
+        },
+    ]
 }
 
 fn validate_organization_name(
@@ -342,5 +403,22 @@ mod tests {
             validate_organization_name("Acme Labs").unwrap(),
             Validation::Valid
         );
+    }
+
+    #[test]
+    fn organization_onboarding_options_include_create_and_invite() {
+        let options = organization_onboarding_options();
+
+        assert_eq!(options.len(), 2);
+        assert_eq!(
+            options[0].choice,
+            OrganizationOnboardingChoice::CreateOrganization
+        );
+        assert_eq!(options[0].label, "Create organization");
+        assert_eq!(
+            options[1].choice,
+            OrganizationOnboardingChoice::RequestInvite
+        );
+        assert_eq!(options[1].label, "Ask manager for invite");
     }
 }

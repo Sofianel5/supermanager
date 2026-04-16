@@ -4,10 +4,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
-    auth::{
-        auth_state_path, authed, fetch_room, get_viewer, require_auth_state, select_active_org,
-        set_active_organization, viewer_active_org_slug, write_auth_state,
-    },
+    auth::{authed, fetch_room, get_viewer, require_auth_state, resolve_active_org_interactive},
     local::{
         default_room_name, detect_employee_name, install_repo_hooks, resolve_repo_root,
         upsert_repo_room_config,
@@ -37,20 +34,15 @@ pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
     let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
-    let active_org = select_active_org(
-        &viewer,
+    let active_org = resolve_active_org_interactive(
+        &http,
+        &server_url,
         &mut auth_state,
+        &config.home_dir,
+        &viewer,
         config.organization_slug.as_deref(),
+        &format!("supermanager create room --server {server_url}"),
     )?;
-    if viewer_active_org_slug(&viewer) != Some(active_org.organization_slug.as_str()) {
-        set_active_organization(
-            &http,
-            &server_url,
-            &auth_state.access_token,
-            &active_org.organization_slug,
-        )?;
-    }
-    write_auth_state(&auth_state_path(&config.home_dir), &auth_state)?;
     let response = authed(&http, &auth_state.access_token)
         .post(format!("{server_url}/v1/rooms"))
         .json(&CreateRoomRequest {
@@ -80,20 +72,15 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
     let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
-    let active_org = select_active_org(
-        &viewer,
+    let active_org = resolve_active_org_interactive(
+        &http,
+        &server_url,
         &mut auth_state,
+        &config.home_dir,
+        &viewer,
         config.organization_slug.as_deref(),
+        &format!("supermanager join {} --server {server_url}", config.room_id),
     )?;
-    if viewer_active_org_slug(&viewer) != Some(active_org.organization_slug.as_str()) {
-        set_active_organization(
-            &http,
-            &server_url,
-            &auth_state.access_token,
-            &active_org.organization_slug,
-        )?;
-    }
-    write_auth_state(&auth_state_path(&config.home_dir), &auth_state)?;
     let room = fetch_room(
         &http,
         &server_url,

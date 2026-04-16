@@ -10,7 +10,9 @@ use crate::{
         CODEX_CONFIG, ensure_object_field, normalize_url, read_json_object, read_optional_text,
         write_private_text,
     },
-    types::{AuthState, InstallMcpConfig, InstallMcpOutcome},
+    types::{
+        AuthState, ConfigFileUpdate, ConfigFileUpdateStatus, InstallMcpConfig, InstallMcpOutcome,
+    },
 };
 
 const CLAUDE_GLOBAL_CONFIG: &str = ".claude.json";
@@ -23,13 +25,24 @@ pub fn install_mcp(config: InstallMcpConfig) -> Result<InstallMcpOutcome> {
     let claude_config_path = config.home_dir.join(CLAUDE_GLOBAL_CONFIG);
     let codex_config_path = config.home_dir.join(CODEX_CONFIG);
 
-    upsert_claude_mcp_config(&claude_config_path, &mcp_url, &auth_state.access_token)?;
-    upsert_global_codex_mcp_config(&codex_config_path, &mcp_url, &auth_state.access_token)?;
+    let claude_status =
+        upsert_claude_mcp_config(&claude_config_path, &mcp_url, &auth_state.access_token)?;
+    let codex_status =
+        upsert_global_codex_mcp_config(&codex_config_path, &mcp_url, &auth_state.access_token)?;
 
     Ok(InstallMcpOutcome {
         server_url,
         mcp_url,
-        updated_paths: vec![CLAUDE_GLOBAL_CONFIG.to_owned(), CODEX_CONFIG.to_owned()],
+        file_updates: vec![
+            ConfigFileUpdate {
+                path: CLAUDE_GLOBAL_CONFIG.to_owned(),
+                status: claude_status,
+            },
+            ConfigFileUpdate {
+                path: CODEX_CONFIG.to_owned(),
+                status: codex_status,
+            },
+        ],
     })
 }
 
@@ -42,7 +55,13 @@ fn resolve_mcp_install_auth_state(home_dir: &Path, server_url: Option<&str>) -> 
         .ok_or_else(|| anyhow!("not logged in; run `supermanager login` first"))
 }
 
-fn upsert_claude_mcp_config(path: &Path, mcp_url: &str, access_token: &str) -> Result<()> {
+fn upsert_claude_mcp_config(
+    path: &Path,
+    mcp_url: &str,
+    access_token: &str,
+) -> Result<ConfigFileUpdateStatus> {
+    let existed = path.exists();
+    let existing = read_optional_text(path)?;
     let mut root = read_json_object(path)?;
     let mcp_servers = ensure_object_field(&mut root, "mcpServers")?;
     mcp_servers.insert(
@@ -55,10 +74,21 @@ fn upsert_claude_mcp_config(path: &Path, mcp_url: &str, access_token: &str) -> R
             }
         }),
     );
-    write_private_json_object(path, &root)
+    let next = render_private_json_object(path, &root)?;
+    let status = classify_file_update(existed, &existing, &next);
+    if status != ConfigFileUpdateStatus::Unchanged {
+        write_private_text(path, &next)?;
+    }
+
+    Ok(status)
 }
 
-fn upsert_global_codex_mcp_config(path: &Path, mcp_url: &str, access_token: &str) -> Result<()> {
+fn upsert_global_codex_mcp_config(
+    path: &Path,
+    mcp_url: &str,
+    access_token: &str,
+) -> Result<ConfigFileUpdateStatus> {
+    let existed = path.exists();
     let existing = read_optional_text(path)?;
     let mut doc = parse_toml_document(&existing, path)?;
     let existing_mcp_servers = doc.as_table_mut().remove("mcp_servers");
@@ -75,11 +105,12 @@ fn upsert_global_codex_mcp_config(path: &Path, mcp_url: &str, access_token: &str
     doc["mcp_servers"] = Item::Table(mcp_servers);
 
     let next = normalize_toml_text(doc.to_string());
-    if next != existing {
+    let status = classify_file_update(existed, &existing, &next);
+    if status != ConfigFileUpdateStatus::Unchanged {
         write_private_text(path, &next)?;
     }
 
-    Ok(())
+    Ok(status)
 }
 
 fn build_supermanager_codex_mcp_table(mcp_url: &str, access_token: &str) -> Table {
@@ -114,11 +145,21 @@ fn normalize_toml_text(mut text: String) -> String {
     text
 }
 
-fn write_private_json_object(path: &Path, root: &Map<String, Value>) -> Result<()> {
+fn render_private_json_object(path: &Path, root: &Map<String, Value>) -> Result<String> {
     let value = Value::Object(root.clone());
-    let text = serde_json::to_string_pretty(&value)
-        .with_context(|| format!("failed to serialize JSON for {}", path.display()))?;
-    write_private_text(path, &(text + "\n"))
+    serde_json::to_string_pretty(&value)
+        .map(|text| text + "\n")
+        .with_context(|| format!("failed to serialize JSON for {}", path.display()))
+}
+
+fn classify_file_update(existed: bool, existing: &str, next: &str) -> ConfigFileUpdateStatus {
+    if existing == next {
+        ConfigFileUpdateStatus::Unchanged
+    } else if existed && !existing.trim().is_empty() {
+        ConfigFileUpdateStatus::Updated
+    } else {
+        ConfigFileUpdateStatus::Created
+    }
 }
 
 #[cfg(test)]
@@ -157,8 +198,15 @@ mod tests {
         assert_eq!(outcome.server_url, "http://127.0.0.1:8787");
         assert_eq!(outcome.mcp_url, "http://127.0.0.1:8787/mcp");
         assert_eq!(
-            outcome.updated_paths,
-            vec![CLAUDE_GLOBAL_CONFIG.to_owned(), CODEX_CONFIG.to_owned()]
+            outcome
+                .file_updates
+                .iter()
+                .map(|update| (update.path.as_str(), update.status))
+                .collect::<Vec<_>>(),
+            vec![
+                (CLAUDE_GLOBAL_CONFIG, ConfigFileUpdateStatus::Created),
+                (CODEX_CONFIG, ConfigFileUpdateStatus::Created),
+            ]
         );
 
         let claude_config: Value =
@@ -197,8 +245,10 @@ mod tests {
         )
         .unwrap();
 
-        upsert_claude_mcp_config(&config_path, "http://supermanager.test/mcp", "token-123")
-            .unwrap();
+        let status =
+            upsert_claude_mcp_config(&config_path, "http://supermanager.test/mcp", "token-123")
+                .unwrap();
+        assert_eq!(status, ConfigFileUpdateStatus::Updated);
 
         let config: Value =
             serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
@@ -230,8 +280,13 @@ mod tests {
         )
         .unwrap();
 
-        upsert_global_codex_mcp_config(&config_path, "http://supermanager.test/mcp", "token-123")
-            .unwrap();
+        let status = upsert_global_codex_mcp_config(
+            &config_path,
+            "http://supermanager.test/mcp",
+            "token-123",
+        )
+        .unwrap();
+        assert_eq!(status, ConfigFileUpdateStatus::Updated);
 
         let codex_config = fs::read_to_string(&config_path).unwrap();
         assert!(codex_config.contains("[mcp_servers.paper]"));
@@ -240,6 +295,48 @@ mod tests {
         assert!(codex_config.contains("url = \"http://supermanager.test/mcp\""));
         assert!(codex_config.contains("[mcp_servers.supermanager.http_headers]"));
         assert!(codex_config.contains("Authorization = \"Bearer token-123\""));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn install_mcp_reports_unchanged_when_configs_are_current() {
+        let root = test_dir("install-mcp-unchanged");
+        let home_dir = root.join("home");
+        fs::create_dir_all(&home_dir).unwrap();
+
+        write_auth_state(
+            &auth_state_path(&home_dir),
+            &AuthState {
+                access_token: "token-123".to_owned(),
+                active_org_slug: Some("acme".to_owned()),
+                server_url: "http://127.0.0.1:8787/".to_owned(),
+            },
+        )
+        .unwrap();
+
+        install_mcp(InstallMcpConfig {
+            home_dir: home_dir.clone(),
+            server_url: None,
+        })
+        .unwrap();
+        let outcome = install_mcp(InstallMcpConfig {
+            home_dir: home_dir.clone(),
+            server_url: None,
+        })
+        .unwrap();
+
+        assert_eq!(
+            outcome
+                .file_updates
+                .iter()
+                .map(|update| (update.path.as_str(), update.status))
+                .collect::<Vec<_>>(),
+            vec![
+                (CLAUDE_GLOBAL_CONFIG, ConfigFileUpdateStatus::Unchanged),
+                (CODEX_CONFIG, ConfigFileUpdateStatus::Unchanged),
+            ]
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

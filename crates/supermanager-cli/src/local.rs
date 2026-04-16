@@ -64,10 +64,6 @@ pub fn leave_repo(repo_dir: &Path, home_dir: &Path) -> Result<LeaveOutcome> {
         removed_paths.push("$HOME/.supermanager/repos.json".to_owned());
     }
 
-    if removed_paths.is_empty() {
-        removed_paths.push("nothing to remove".to_owned());
-    }
-
     Ok(LeaveOutcome {
         repo_dir,
         removed_paths,

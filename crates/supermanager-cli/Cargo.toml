@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 flate2.workspace = true
+indicatif.workspace = true
 inquire.workspace = true
 reporter-protocol = { path = "../reporter-protocol" }
 reqwest = { workspace = true, features = ["blocking"] }
