@@ -29,7 +29,7 @@ export function DocsPage() {
           shared rooms, and add the Supermanager MCP to your coding assistant.
         </p>
         <button
-          className={cx(copySheetClass, "mt-2 w-full max-w-[880px]")}
+          className={cx(copySheetClass, "mt-2 w-full")}
           type="button"
           onClick={() => void copy("install", INSTALL_COMMAND)}
         >
