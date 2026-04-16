@@ -50,6 +50,11 @@ enum Commands {
     },
     /// List the rooms currently joined on this machine.
     List,
+    /// Install the authenticated Supermanager MCP into global Claude and Codex config.
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommands,
+    },
     /// Check for and install the latest published CLI release.
     Update {
         #[arg(long)]
@@ -92,6 +97,15 @@ enum OrgCommands {
     Configure {
         #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
         server: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpCommands {
+    /// Install the Supermanager MCP into global Claude and Codex config.
+    Install {
+        #[arg(long, env = "SUPERMANAGER_SERVER_URL")]
+        server: Option<String>,
     },
 }
 
@@ -337,6 +351,25 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Mcp { command } => match command {
+            McpCommands::Install { server } => {
+                let outcome = supermanager::install_mcp(supermanager::InstallMcpConfig {
+                    home_dir,
+                    server_url: server,
+                })?;
+
+                println!();
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mInstalled Supermanager MCP\x1b[0m");
+                println!();
+                println!("    \x1b[2mServer\x1b[0m     {}", outcome.server_url);
+                println!("    \x1b[2mEndpoint\x1b[0m   {}", outcome.mcp_url);
+                println!(
+                    "    \x1b[2mUpdated\x1b[0m    {}",
+                    outcome.updated_paths.join(", ")
+                );
+                println!();
+            }
+        },
         Commands::Update { check } => {
             let outcome = supermanager::run_self_update(check)?;
             print_self_update_status(&outcome);
@@ -356,6 +389,7 @@ fn should_auto_update(command: &Commands) -> bool {
             | Commands::Leave { .. }
             | Commands::List
             | Commands::Login { .. }
+            | Commands::Mcp { .. }
             | Commands::Orgs { .. }
     )
 }

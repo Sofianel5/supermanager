@@ -97,6 +97,13 @@ the active organization after logging in:
 supermanager orgs configure --server "http://127.0.0.1:8787"
 ```
 
+To install the authenticated Supermanager MCP into your global Claude and
+Codex configs:
+
+```sh
+supermanager mcp install
+```
+
 ### 5. Create a room from the CLI
 
 Create the room from inside a git repo:

@@ -14,7 +14,10 @@ use crate::agent::AgentCommand;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum HostMessage {
-    EnqueueEvent { room_id: String, event: StoredHookEvent },
+    EnqueueEvent {
+        room_id: String,
+        event: StoredHookEvent,
+    },
     ToolResult {
         id: String,
         success: bool,
@@ -52,7 +55,11 @@ pub(crate) async fn read_host_messages(
     let stdin = tokio::io::stdin();
     let mut lines = BufReader::new(stdin).lines();
 
-    while let Some(line) = lines.next_line().await.context("failed to read stdin line")? {
+    while let Some(line) = lines
+        .next_line()
+        .await
+        .context("failed to read stdin line")?
+    {
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -95,7 +102,9 @@ pub(crate) async fn read_host_messages(
     Ok(())
 }
 
-pub(crate) async fn write_agent_messages(mut output_rx: mpsc::Receiver<AgentMessage>) -> Result<()> {
+pub(crate) async fn write_agent_messages(
+    mut output_rx: mpsc::Receiver<AgentMessage>,
+) -> Result<()> {
     let stdout = tokio::io::stdout();
     let mut stdout = tokio::io::BufWriter::new(stdout);
 
@@ -109,7 +118,10 @@ pub(crate) async fn write_agent_messages(mut output_rx: mpsc::Receiver<AgentMess
             .write_all(b"\n")
             .await
             .context("failed to write agent newline")?;
-        stdout.flush().await.context("failed to flush agent stdout")?;
+        stdout
+            .flush()
+            .await
+            .context("failed to flush agent stdout")?;
     }
 
     Ok(())
