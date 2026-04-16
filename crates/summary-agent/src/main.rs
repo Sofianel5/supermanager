@@ -33,7 +33,7 @@ struct Cli {
     #[arg(long)]
     codex_home: PathBuf,
     #[arg(long)]
-    rooms_dir: PathBuf,
+    organizations_dir: PathBuf,
 }
 
 #[tokio::main]
@@ -41,8 +41,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     fs::create_dir_all(&cli.codex_home)
         .with_context(|| format!("failed to create codex home {}", cli.codex_home.display()))?;
-    fs::create_dir_all(&cli.rooms_dir)
-        .with_context(|| format!("failed to create rooms dir {}", cli.rooms_dir.display()))?;
+    fs::create_dir_all(&cli.organizations_dir).with_context(|| {
+        format!(
+            "failed to create organizations dir {}",
+            cli.organizations_dir.display()
+        )
+    })?;
 
     let config = Config::load_default_with_cli_overrides_for_codex_home(cli.codex_home, Vec::new())
         .context("failed to load default Codex config")?;
@@ -79,7 +83,7 @@ async fn main() -> Result<()> {
         client,
         command_rx,
         output_tx.clone(),
-        cli.rooms_dir,
+        cli.organizations_dir,
         pending_tool_calls,
     );
 

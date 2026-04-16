@@ -2,22 +2,23 @@ import type { StoredHookEvent, SummaryStatus } from "../types";
 
 export type SummaryToolName =
   | "get_snapshot"
-  | "set_bluf"
-  | "set_overview"
-  | "set_employee_card"
-  | "remove_employee_card";
+  | "set_org_bluf"
+  | "set_room_bluf"
+  | "remove_room_bluf"
+  | "set_employee_bluf"
+  | "remove_employee_bluf";
 
 export interface AgentToolCallMessage {
   type: "tool_call";
   id: string;
-  room_id: string;
+  organization_id: string;
   tool: SummaryToolName;
   arguments: unknown;
 }
 
 export interface AgentSummaryStatusMessage {
   type: "summary_status";
-  room_id: string;
+  organization_id: string;
   status: SummaryStatus;
 }
 
@@ -25,8 +26,28 @@ export type AgentMessage = AgentToolCallMessage | AgentSummaryStatusMessage;
 
 export interface HostEnqueueEventMessage {
   type: "enqueue_event";
+  organization_id: string;
   room_id: string;
+  room_name: string;
   event: StoredHookEvent;
+}
+
+export interface HostRegenerateOrganizationMessage {
+  type: "regenerate_organization";
+  organization_id: string;
+  events: HostRegenerationEvent[];
+  rooms: HostRegenerationRoom[];
+  reason: "manual" | "timer";
+}
+
+export interface HostRegenerationRoom {
+  room_id: string;
+  name: string;
+}
+
+export interface HostRegenerationEvent extends StoredHookEvent {
+  room_id: string;
+  room_name: string;
 }
 
 export interface HostToolResultMessage {
@@ -36,4 +57,7 @@ export interface HostToolResultMessage {
   message: string;
 }
 
-export type HostMessage = HostEnqueueEventMessage | HostToolResultMessage;
+export type HostMessage =
+  | HostEnqueueEventMessage
+  | HostRegenerateOrganizationMessage
+  | HostToolResultMessage;

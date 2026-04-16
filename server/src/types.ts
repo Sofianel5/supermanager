@@ -65,13 +65,25 @@ export interface ViewerResponse {
 
 export interface EmployeeSnapshot {
   employee_name: string;
-  content_markdown: string;
+  room_ids: string[];
+  bluf_markdown: string;
+  last_update_at: string;
+}
+
+export interface RoomBlufSnapshot {
+  room_id: string;
+  bluf_markdown: string;
   last_update_at: string;
 }
 
 export interface RoomSnapshot {
   bluf_markdown: string;
-  overview_markdown: string;
+  employees: EmployeeSnapshot[];
+}
+
+export interface OrganizationSnapshot {
+  bluf_markdown: string;
+  rooms: RoomBlufSnapshot[];
   employees: EmployeeSnapshot[];
 }
 
@@ -99,7 +111,14 @@ export type SummaryStatus = "generating" | "ready" | "error";
 export function emptyRoomSnapshot(): RoomSnapshot {
   return {
     bluf_markdown: "",
-    overview_markdown: "",
+    employees: [],
+  };
+}
+
+export function emptyOrganizationSnapshot(): OrganizationSnapshot {
+  return {
+    bluf_markdown: "",
+    rooms: [],
     employees: [],
   };
 }

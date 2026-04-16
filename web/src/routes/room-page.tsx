@@ -1,8 +1,8 @@
 import { type InfiniteData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ComponentPropsWithoutRef, useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { MarkdownBlock } from "../components/markdown-block";
+import { formatRelativeTime } from "../lib/format-relative-time";
 import {
   api,
   type FeedResponse,
@@ -320,7 +320,7 @@ function SummaryContent({
   if (summaryStatus === "generating" && !hasContent) {
     return (
       <p className="m-0 border border-dashed border-border p-[18px] leading-7 text-ink-dim">
-        Generating room summary...
+        Generating updated summary...
       </p>
     );
   }
@@ -328,7 +328,7 @@ function SummaryContent({
   if (!hasContent) {
     return (
       <p className="m-0 border border-dashed border-border p-[18px] leading-7 text-ink-dim">
-        No updates yet. New hook activity will build the room summary here.
+        No updates yet. New hook activity will build the summary here.
       </p>
     );
   }
@@ -345,22 +345,6 @@ function SummaryContent({
           <p className={messageClass}>No BLUF yet.</p>
         )}
       </section>
-
-      <details className={subduedSurfaceClass}>
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-[18px] font-semibold text-ink [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
-          <span>Detailed overview</span>
-          <span className="font-mono text-[11px] uppercase text-ink-muted">
-            hidden by default
-          </span>
-        </summary>
-        <div className="border-t border-border px-[18px] pb-[18px] pt-4">
-          {snapshot.overview_markdown.trim() ? (
-            <MarkdownBlock markdown={snapshot.overview_markdown} />
-          ) : (
-            <p className={messageClass}>No detailed overview yet.</p>
-          )}
-        </div>
-      </details>
 
       <section className={cx(subduedSurfaceClass, "p-[18px]")}>
         <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -390,7 +374,7 @@ function SummaryContent({
                     {formatRelativeTime(employee.last_update_at, clock)}
                   </time>
                 </div>
-                <MarkdownBlock markdown={employee.content_markdown} />
+                <MarkdownBlock markdown={employee.bluf_markdown} />
               </article>
             ))}
           </div>
@@ -402,20 +386,9 @@ function SummaryContent({
   );
 }
 
-function MarkdownBlock({ markdown }: { markdown: string }) {
-  return (
-    <div className="text-[0.98rem] leading-8 text-ink-dim">
-      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
-        {markdown}
-      </ReactMarkdown>
-    </div>
-  );
-}
-
 function emptyRoomSnapshot(): RoomSnapshot {
   return {
     bluf_markdown: "",
-    overview_markdown: "",
     employees: [],
   };
 }
@@ -423,8 +396,7 @@ function emptyRoomSnapshot(): RoomSnapshot {
 function hasSnapshotContent(snapshot: RoomSnapshot) {
   return Boolean(
     snapshot.bluf_markdown.trim() ||
-      snapshot.overview_markdown.trim() ||
-      snapshot.employees.some((employee) => employee.content_markdown.trim()),
+      snapshot.employees.some((employee) => employee.bluf_markdown.trim()),
   );
 }
 
@@ -436,27 +408,6 @@ function formatPayload(payload: unknown) {
   }
 }
 
-function formatRelativeTime(isoTimestamp: string, now: number) {
-  const timestamp = Date.parse(isoTimestamp);
-  if (Number.isNaN(timestamp)) {
-    return isoTimestamp;
-  }
-
-  const seconds = Math.max(0, Math.floor((now - timestamp) / 1000));
-  if (seconds < 5) {
-    return "just now";
-  }
-  if (seconds < 60) {
-    return `${seconds}s ago`;
-  }
-  if (seconds < 3600) {
-    return `${Math.floor(seconds / 60)}m ago`;
-  }
-  if (seconds < 86400) {
-    return `${Math.floor(seconds / 3600)}h ago`;
-  }
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
 
 function flattenFeedEvents(
   pages: FeedResponse[] | undefined,
@@ -554,96 +505,3 @@ function formatOrganizationLabel(
     .join(" ");
 }
 
-const markdownComponents = {
-  a(props: ComponentPropsWithoutRef<"a">) {
-    return (
-      <a
-        {...props}
-        className="text-[#f4bf63] underline decoration-1 underline-offset-[0.18em]"
-      />
-    );
-  },
-  blockquote(props: ComponentPropsWithoutRef<"blockquote">) {
-    return (
-      <blockquote
-        {...props}
-        className="mb-4 border-l-2 border-accent pl-3.5 text-ink last:mb-0"
-      />
-    );
-  },
-  code({
-    className,
-    inline,
-    ...props
-  }: ComponentPropsWithoutRef<"code"> & { inline?: boolean }) {
-    if (inline) {
-      return (
-        <code
-          {...props}
-          className="border border-border bg-panel px-1.5 py-0.5 font-mono text-[0.9em] text-[#f4bf63]"
-        />
-      );
-    }
-
-    return <code {...props} className={cx("font-mono text-[0.9em]", className)} />;
-  },
-  h1(props: ComponentPropsWithoutRef<"h1">) {
-    return <h1 {...props} className="mb-3.5 text-2xl font-semibold leading-tight text-ink" />;
-  },
-  h2(props: ComponentPropsWithoutRef<"h2">) {
-    return <h2 {...props} className="mb-3.5 text-xl font-semibold leading-tight text-ink" />;
-  },
-  h3(props: ComponentPropsWithoutRef<"h3">) {
-    return <h3 {...props} className="mb-3.5 text-lg font-semibold leading-tight text-ink" />;
-  },
-  h4(props: ComponentPropsWithoutRef<"h4">) {
-    return <h4 {...props} className="mb-3.5 text-lg font-semibold leading-tight text-ink" />;
-  },
-  hr(props: ComponentPropsWithoutRef<"hr">) {
-    return <hr {...props} className="mb-4 border-border last:mb-0" />;
-  },
-  li(props: ComponentPropsWithoutRef<"li">) {
-    return <li {...props} className="mt-1 first:mt-0" />;
-  },
-  ol(props: ComponentPropsWithoutRef<"ol">) {
-    return <ol {...props} className="mb-4 list-decimal pl-[1.35rem] text-ink last:mb-0" />;
-  },
-  p(props: ComponentPropsWithoutRef<"p">) {
-    return <p {...props} className="mb-4 last:mb-0" />;
-  },
-  pre(props: ComponentPropsWithoutRef<"pre">) {
-    return (
-      <pre
-        {...props}
-        className="mb-4 overflow-x-auto border border-border bg-panel px-4 py-3 text-[0.95rem] text-[#dbe7ff] last:mb-0"
-      />
-    );
-  },
-  strong(props: ComponentPropsWithoutRef<"strong">) {
-    return <strong {...props} className="font-semibold text-ink" />;
-  },
-  table(props: ComponentPropsWithoutRef<"table">) {
-    return (
-      <div className="mb-4 overflow-x-auto last:mb-0">
-        <table
-          {...props}
-          className="w-full border-collapse text-left text-sm text-ink-dim"
-        />
-      </div>
-    );
-  },
-  td(props: ComponentPropsWithoutRef<"td">) {
-    return <td {...props} className="border border-border px-3 py-2.5 align-top" />;
-  },
-  th(props: ComponentPropsWithoutRef<"th">) {
-    return (
-      <th
-        {...props}
-        className="border border-border bg-white/4 px-3 py-2.5 font-semibold text-ink"
-      />
-    );
-  },
-  ul(props: ComponentPropsWithoutRef<"ul">) {
-    return <ul {...props} className="mb-4 list-disc pl-[1.35rem] text-ink last:mb-0" />;
-  },
-};

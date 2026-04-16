@@ -29,6 +29,10 @@ const roomParams = t.Object({
   roomId: t.String(),
 });
 
+const organizationParams = t.Object({
+  organizationSlug: t.String(),
+});
+
 const createRoomBody = t.Object({
   name: t.String(),
   organization_slug: t.Optional(t.Nullable(t.String())),
@@ -210,6 +214,52 @@ export function createApp(context: AppContext) {
       },
     )
     .get(
+      "/v1/organizations/:organizationSlug/summary",
+      async ({ params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          params.organizationSlug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+
+        return {
+          status: await context.db.getOrganizationSummaryStatus(
+            membership.organization_id,
+          ),
+          summary: await context.db.getOrganizationSummary(
+            membership.organization_id,
+          ),
+        };
+      },
+      {
+        params: organizationParams,
+      },
+    )
+    .post(
+      "/v1/organizations/:organizationSlug/summary/regenerate",
+      async ({ params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          params.organizationSlug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+
+        await context.agent.regenerateOrganization(
+          membership.organization_id,
+          "manual",
+        );
+
+        return status(202, { queued: true });
+      },
+      {
+        params: organizationParams,
+      },
+    )
+    .get(
       "/v1/rooms/:roomId",
       async ({ params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
@@ -281,7 +331,9 @@ export function createApp(context: AppContext) {
               );
 
         replay.reverse();
-        const initialStatus = await context.db.getSummaryStatus(room.room_id);
+        const initialStatus = await context.db.getOrganizationSummaryStatus(
+          room.organization_id,
+        );
         const client = context.feedHub.register(
           room.room_id,
           request.headers.get("origin"),
@@ -389,7 +441,7 @@ export function createApp(context: AppContext) {
         });
 
         context.feedHub.publishHookEvent(room.room_id, stored);
-        await context.agent.enqueue(room.room_id, stored);
+        await context.agent.enqueue(room, stored);
         void indexEventById(context.db, stored.event_id).catch((error) => {
           console.error(
             `[search] failed to index hook event ${stored.event_id}: ${formatError(error)}`,
@@ -415,7 +467,7 @@ export function createApp(context: AppContext) {
           params.roomId,
         );
 
-        return context.db.getSummary(room.room_id);
+        return context.db.getRoomSummary(room.room_id);
       },
       {
         params: roomParams,

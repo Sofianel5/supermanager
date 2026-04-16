@@ -12,29 +12,46 @@ struct SetMarkdownArgs {
 }
 
 #[derive(Debug, Deserialize)]
-struct SetEmployeeCardArgs {
-    employee_name: String,
+struct SetRoomBlufArgs {
+    room_id: String,
     markdown: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct RemoveEmployeeCardArgs {
+struct SetEmployeeBlufArgs {
     employee_name: String,
+    room_ids: Vec<String>,
+    markdown: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoveEmployeeBlufArgs {
+    employee_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoveRoomBlufArgs {
+    room_id: String,
 }
 
 pub(crate) enum SummaryTool {
     GetSnapshot,
-    SetBluf {
+    SetOrgBluf {
         markdown: String,
     },
-    SetOverview {
+    SetRoomBluf {
+        room_id: String,
         markdown: String,
     },
-    SetEmployeeCard {
+    RemoveRoomBluf {
+        room_id: String,
+    },
+    SetEmployeeBluf {
         employee_name: String,
+        room_ids: Vec<String>,
         markdown: String,
     },
-    RemoveEmployeeCard {
+    RemoveEmployeeBluf {
         employee_name: String,
     },
 }
@@ -60,35 +77,57 @@ impl SummaryTool {
         vec![
             spec(
                 "get_snapshot",
-                "Read the current room snapshot before deciding what to edit.",
+                "Read the current organization snapshot before deciding what to edit.",
                 empty(),
             ),
             spec(
-                "set_bluf",
-                "Replace the BLUF markdown for the room snapshot.",
+                "set_org_bluf",
+                "Replace the organization BLUF markdown.",
                 markdown_only(),
             ),
             spec(
-                "set_overview",
-                "Replace the detailed overview markdown for the room snapshot.",
-                markdown_only(),
-            ),
-            spec(
-                "set_employee_card",
-                "Create or update a single employee card using concise markdown body content.",
+                "set_room_bluf",
+                "Create or update a room BLUF using concise markdown body content.",
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_name", "markdown"],
+                    "required": ["room_id", "markdown"],
                     "properties": {
-                        "employee_name": { "type": "string" },
+                        "room_id": { "type": "string" },
                         "markdown": { "type": "string" }
                     }
                 }),
             ),
             spec(
-                "remove_employee_card",
-                "Remove an employee card that should no longer appear in the room snapshot.",
+                "remove_room_bluf",
+                "Remove a room BLUF that should no longer appear in the organization snapshot.",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["room_id"],
+                    "properties": { "room_id": { "type": "string" } }
+                }),
+            ),
+            spec(
+                "set_employee_bluf",
+                "Create or update a single employee BLUF using concise markdown body content.",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["employee_name", "room_ids", "markdown"],
+                    "properties": {
+                        "employee_name": { "type": "string" },
+                        "room_ids": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        },
+                        "markdown": { "type": "string" }
+                    }
+                }),
+            ),
+            spec(
+                "remove_employee_bluf",
+                "Remove an employee BLUF that should no longer appear in the organization snapshot.",
                 json!({
                     "type": "object",
                     "additionalProperties": false,
@@ -102,32 +141,41 @@ impl SummaryTool {
     pub(crate) fn parse(params: &DynamicToolCallParams) -> Result<Self> {
         match params.tool.as_str() {
             "get_snapshot" => Ok(Self::GetSnapshot),
-            "set_bluf" => {
+            "set_org_bluf" => {
                 let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid set_bluf arguments")?;
-                Ok(Self::SetBluf {
+                    .context("invalid set_org_bluf arguments")?;
+                Ok(Self::SetOrgBluf {
                     markdown: args.markdown,
                 })
             }
-            "set_overview" => {
-                let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid set_overview arguments")?;
-                Ok(Self::SetOverview {
+            "set_room_bluf" => {
+                let args: SetRoomBlufArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_room_bluf arguments")?;
+                Ok(Self::SetRoomBluf {
+                    room_id: args.room_id,
                     markdown: args.markdown,
                 })
             }
-            "set_employee_card" => {
-                let args: SetEmployeeCardArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid set_employee_card arguments")?;
-                Ok(Self::SetEmployeeCard {
+            "remove_room_bluf" => {
+                let args: RemoveRoomBlufArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid remove_room_bluf arguments")?;
+                Ok(Self::RemoveRoomBluf {
+                    room_id: args.room_id,
+                })
+            }
+            "set_employee_bluf" => {
+                let args: SetEmployeeBlufArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_employee_bluf arguments")?;
+                Ok(Self::SetEmployeeBluf {
                     employee_name: args.employee_name,
+                    room_ids: args.room_ids,
                     markdown: args.markdown,
                 })
             }
-            "remove_employee_card" => {
-                let args: RemoveEmployeeCardArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid remove_employee_card arguments")?;
-                Ok(Self::RemoveEmployeeCard {
+            "remove_employee_bluf" => {
+                let args: RemoveEmployeeBlufArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid remove_employee_bluf arguments")?;
+                Ok(Self::RemoveEmployeeBluf {
                     employee_name: args.employee_name,
                 })
             }
@@ -138,22 +186,33 @@ impl SummaryTool {
     pub(crate) fn into_wire(self) -> (String, Value) {
         match self {
             Self::GetSnapshot => ("get_snapshot".to_owned(), json!({})),
-            Self::SetBluf { markdown } => ("set_bluf".to_owned(), json!({ "markdown": markdown })),
-            Self::SetOverview { markdown } => {
-                ("set_overview".to_owned(), json!({ "markdown": markdown }))
+            Self::SetOrgBluf { markdown } => {
+                ("set_org_bluf".to_owned(), json!({ "markdown": markdown }))
             }
-            Self::SetEmployeeCard {
-                employee_name,
-                markdown,
-            } => (
-                "set_employee_card".to_owned(),
+            Self::SetRoomBluf { room_id, markdown } => (
+                "set_room_bluf".to_owned(),
                 json!({
-                    "employee_name": employee_name,
+                    "room_id": room_id,
                     "markdown": markdown,
                 }),
             ),
-            Self::RemoveEmployeeCard { employee_name } => (
-                "remove_employee_card".to_owned(),
+            Self::RemoveRoomBluf { room_id } => {
+                ("remove_room_bluf".to_owned(), json!({ "room_id": room_id }))
+            }
+            Self::SetEmployeeBluf {
+                employee_name,
+                room_ids,
+                markdown,
+            } => (
+                "set_employee_bluf".to_owned(),
+                json!({
+                    "employee_name": employee_name,
+                    "room_ids": room_ids,
+                    "markdown": markdown,
+                }),
+            ),
+            Self::RemoveEmployeeBluf { employee_name } => (
+                "remove_employee_bluf".to_owned(),
                 json!({ "employee_name": employee_name }),
             ),
         }

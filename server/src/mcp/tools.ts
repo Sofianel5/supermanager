@@ -22,7 +22,7 @@ const SERVER_INFO = {
 } as const;
 
 const SERVER_INSTRUCTIONS =
-  "Use list_rooms to discover rooms, get_room_summary for the current snapshot, and query_events or search_events for raw historical evidence.";
+  "Use get_organization_summary for the org-level snapshot, get_room_summary for a single room view, and query_events or search_events for raw historical evidence.";
 
 const DEFAULT_FEED_LIMIT = 25;
 const DEFAULT_QUERY_LIMIT = 25;
@@ -46,6 +46,12 @@ const listRoomsSchema = z.object({
 
 const getRoomSummarySchema = z.object({
   room_id: requiredString("The room identifier."),
+});
+
+const getOrganizationSummarySchema = z.object({
+  organization_slug: optionalString(
+    "Optional organization slug. Defaults to the active organization.",
+  ),
 });
 
 const getRoomFeedSchema = z.object({
@@ -138,10 +144,37 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
   );
 
   server.registerTool(
+    "get_organization_summary",
+    {
+      title: "Get Organization Summary",
+      description: "Read the current organization-level summary snapshot.",
+      inputSchema: getOrganizationSummarySchema,
+      annotations: READ_ONLY_TOOL,
+    },
+    async ({ organization_slug }) => {
+      const membership = await loadOrganizationMembership(
+        options,
+        headers,
+        organization_slug,
+      );
+
+      return jsonToolResult({
+        organization_slug: membership.organization_slug,
+        status: await options.db.getOrganizationSummaryStatus(
+          membership.organization_id,
+        ),
+        summary: await options.db.getOrganizationSummary(
+          membership.organization_id,
+        ),
+      });
+    },
+  );
+
+  server.registerTool(
     "get_room_summary",
     {
       title: "Get Room Summary",
-      description: "Read the current summary snapshot for a room.",
+      description: "Read the current room-level view derived from the organization summary.",
       inputSchema: getRoomSummarySchema,
       annotations: READ_ONLY_TOOL,
     },
@@ -150,7 +183,7 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
 
       return jsonToolResult({
         room: roomMetadata(room),
-        summary: await options.db.getSummary(room.room_id),
+        summary: await options.db.getRoomSummary(room.room_id),
       });
     },
   );

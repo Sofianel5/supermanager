@@ -1,11 +1,22 @@
 import type {
+  EmployeeSnapshot,
   FeedResponse,
+  OrganizationSnapshot,
   RoomMetadataResponse,
+  RoomBlufSnapshot,
   RoomSnapshot,
   StoredHookEvent,
 } from "./generated";
 
-export type { FeedResponse, RoomMetadataResponse, RoomSnapshot, StoredHookEvent } from "./generated";
+export type {
+  EmployeeSnapshot,
+  FeedResponse,
+  OrganizationSnapshot,
+  RoomBlufSnapshot,
+  RoomMetadataResponse,
+  RoomSnapshot,
+  StoredHookEvent,
+} from "./generated";
 
 export interface ViewerUser {
   email: string;
@@ -29,6 +40,8 @@ export interface ViewerResponse {
   user: ViewerUser;
 }
 
+export type SummaryStatus = "generating" | "ready" | "error";
+
 export interface RoomListEntry {
   created_at: string;
   name: string;
@@ -41,6 +54,11 @@ export interface RoomListEntry {
 export interface RoomListResponse {
   organization_slug: string;
   rooms: RoomListEntry[];
+}
+
+export interface OrganizationSummaryResponse {
+  status: SummaryStatus;
+  summary: OrganizationSnapshot;
 }
 
 export interface CreateRoomResponse {
@@ -118,6 +136,11 @@ export const api = {
       `/v1/rooms/${encodeURIComponent(roomId)}/summary`,
     );
   },
+  getOrganizationSummary(organizationSlug: string) {
+    return requestJson<OrganizationSummaryResponse>(
+      `/v1/organizations/${encodeURIComponent(organizationSlug)}/summary`,
+    );
+  },
   listRooms(organizationSlug?: string) {
     const params = new URLSearchParams();
     if (organizationSlug) {
@@ -125,6 +148,14 @@ export const api = {
     }
     const qs = params.toString();
     return requestJson<RoomListResponse>(`/v1/rooms${qs ? `?${qs}` : ""}`);
+  },
+  regenerateOrganizationSummary(organizationSlug: string) {
+    return requestJson<{ queued: boolean }>(
+      `/v1/organizations/${encodeURIComponent(organizationSlug)}/summary/regenerate`,
+      {
+        method: "POST",
+      },
+    );
   },
   openRoomStream(roomId: string) {
     return new EventSource(

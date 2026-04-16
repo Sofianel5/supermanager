@@ -1,6 +1,6 @@
 # Supermanager
 
-Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, room storage, hook ingest, PostgreSQL state, SSE, and agent orchestration. A separate Rust `summary-agent` process owns the in-process Codex runtime. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live room dashboard.
+Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, room storage, hook ingest, PostgreSQL state, SSE, and agent orchestration. A separate Rust `summary-agent` process owns the in-process Codex runtime for org-level BLUF generation. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live room dashboard.
 
 ## Setup
 
@@ -33,6 +33,7 @@ The server reads runtime config from environment variables:
 - `SUPERMANAGER_PUBLIC_API_URL`
 - `SUPERMANAGER_PUBLIC_APP_URL`
 - `SUPERMANAGER_SUMMARY_AGENT_BIN`
+- `SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS`
 - `CODEX_API_KEY`
 
 In local development the Bun server automatically starts the Rust summary agent through `cargo run -p summary-agent`. For packaged environments, point `SUPERMANAGER_SUMMARY_AGENT_BIN` at a compiled `summary-agent` binary.
@@ -172,12 +173,15 @@ From there you can create room-scoped workspaces, generate organization invite l
 | `/v1/rooms/{room_id}/feed/stream` | GET | SSE stream of hook-event and summary-status events |
 | `/v1/rooms/{room_id}/connections` | POST | Mint a repo-scoped API key for the room |
 | `/v1/hooks/turn` | POST | Submit a hook-captured turn event using `x-api-key` |
-| `/v1/rooms/{room_id}/summary` | GET | Read the current room summary JSON (`bluf_markdown`, `overview_markdown`, `employees[]`) |
+| `/v1/organizations/{organization_slug}/summary` | GET | Read the current org summary JSON (`bluf_markdown`, `rooms[]`, `employees[]`) plus status |
+| `/v1/organizations/{organization_slug}/summary/regenerate` | POST | Queue a manual org summary regeneration |
+| `/v1/rooms/{room_id}/summary` | GET | Read the current room summary view derived from the org snapshot (`bluf_markdown`, `employees[]`) |
 | `/mcp` | POST | Streamable HTTP MCP endpoint with manager-facing read-only tools |
 
 The MCP endpoint currently exposes these tools:
 
 - `list_rooms`
+- `get_organization_summary`
 - `get_room_summary`
 - `get_room_feed`
 - `query_events`
@@ -188,7 +192,7 @@ The MCP endpoint currently exposes these tools:
 ```text
 crates/
   reporter-protocol/      # Shared room and hook-event types
-  summary-agent/          # Rust Codex room summarizer
+  summary-agent/          # Rust Codex org summarizer
   supermanager-cli/       # Global CLI for joining/leaving repos
 server/                   # Bun + TypeScript coordination server
 web/                      # React + Vite frontend
@@ -198,9 +202,9 @@ infra/aws/                # Terraform for the AWS backend
 
 ## Notes
 
-- Summary generation runs on the server after new hook turns arrive.
-- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps per-room working directories and thread state under `<data-dir>/rooms/<ROOM_ID>/`.
-- The stored room summary is structured JSON. The model receives the current summary plus fresh updates and can return partial section updates instead of rewriting the whole room summary each time.
+- Summary generation runs on the server after new hook turns arrive, on a periodic timer, and when manually requested.
+- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps per-organization working directories and thread state under `<data-dir>/organizations/<ORG_ID>/`.
+- The stored org summary is structured JSON. The model receives the current snapshot plus fresh updates and can return partial section updates instead of rewriting the whole summary each time.
 
 ## Licensing
 
