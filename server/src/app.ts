@@ -10,7 +10,6 @@ import { trimUrl, type ServerConfig } from "./config";
 import { Db } from "./db";
 import {
   httpError,
-  pickActiveOrganizationMembership,
   readRequiredHeader,
   requireRoomAccess,
   requireViewer,
@@ -136,13 +135,9 @@ export function createApp(context: AppContext) {
         context.db.listOrganizationsForUser(viewer.user.id),
         context.db.hasCliAuth(viewer.user.id),
       ]);
-      const activeOrganization = pickActiveOrganizationMembership(
-        organizations,
-        viewer.session.activeOrganizationId ?? null,
-      );
 
       return {
-        active_organization_id: activeOrganization?.organization_id ?? null,
+        active_organization_id: viewer.session.activeOrganizationId ?? null,
         has_cli_auth: hasCliAuth,
         organizations,
         user: {

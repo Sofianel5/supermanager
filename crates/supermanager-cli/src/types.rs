@@ -32,6 +32,7 @@ pub struct LoginConfig {
 
 pub struct LoginOutcome {
     pub server_url: String,
+    pub active_org_slug: Option<String>,
 }
 
 pub struct ListOrganizationsConfig {

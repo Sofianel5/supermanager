@@ -81,18 +81,34 @@ pub fn login(config: LoginConfig) -> Result<LoginOutcome> {
 
     let access_token =
         poll_for_access_token(&http, &server_url, &device.device_code, polling_interval)?;
-    get_viewer(&http, &server_url, &access_token)?;
+    let viewer = get_viewer(&http, &server_url, &access_token)?;
+    let mut active_org_slug = None;
+
+    if let Some(organization) = find_preferred_org(&viewer, None)?.cloned() {
+        if viewer_active_org_slug(&viewer) != Some(organization.organization_slug.as_str()) {
+            set_active_organization(
+                &http,
+                &server_url,
+                &access_token,
+                &organization.organization_slug,
+            )?;
+        }
+        active_org_slug = Some(organization.organization_slug);
+    }
 
     write_auth_state(
         &auth_state_path(&config.home_dir),
         &AuthState {
             access_token,
-            active_org_slug: None,
+            active_org_slug: active_org_slug.clone(),
             server_url: server_url.clone(),
         },
     )?;
 
-    Ok(LoginOutcome { server_url })
+    Ok(LoginOutcome {
+        server_url,
+        active_org_slug,
+    })
 }
 
 pub fn logout(home_dir: &Path) -> Result<bool> {

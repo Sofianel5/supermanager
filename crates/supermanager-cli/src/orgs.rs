@@ -160,6 +160,7 @@ fn create_and_activate_organization(
     let (name, slug) = prompt_for_organization_name()?;
 
     create_organization(http, server_url, &auth_state.access_token, &name, &slug)?;
+    set_active_organization(http, server_url, &auth_state.access_token, &slug)?;
     auth_state.active_org_slug = Some(slug.clone());
     write_auth_state(&auth_state_path(home_dir), auth_state)?;
 

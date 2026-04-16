@@ -130,9 +130,13 @@ fn main() -> Result<()> {
             println!("  \x1b[32m✓\x1b[0m \x1b[1mLogged in\x1b[0m");
             println!();
             println!("    \x1b[2mServer\x1b[0m     {}", outcome.server_url);
-            println!(
-                "    \x1b[2mOrg\x1b[0m        choose later with `supermanager orgs configure` or `--org <slug>` on room commands"
-            );
+            if let Some(active_org_slug) = outcome.active_org_slug {
+                println!("    \x1b[2mOrg\x1b[0m        {}", active_org_slug);
+            } else {
+                println!(
+                    "    \x1b[2mOrg\x1b[0m        choose later with `supermanager orgs configure` or `--org <slug>` on room commands"
+                );
+            }
             println!();
         }
         Commands::Logout => {

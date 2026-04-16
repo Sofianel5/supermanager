@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::{
     auth::{
         auth_state_path, authed, fetch_room, get_viewer, require_auth_state, select_active_org,
-        write_auth_state,
+        set_active_organization, viewer_active_org_slug, write_auth_state,
     },
     local::{
         default_room_name, detect_employee_name, install_repo_hooks, resolve_repo_root,
@@ -42,6 +42,14 @@ pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
         &mut auth_state,
         config.organization_slug.as_deref(),
     )?;
+    if viewer_active_org_slug(&viewer) != Some(active_org.organization_slug.as_str()) {
+        set_active_organization(
+            &http,
+            &server_url,
+            &auth_state.access_token,
+            &active_org.organization_slug,
+        )?;
+    }
     write_auth_state(&auth_state_path(&config.home_dir), &auth_state)?;
     let response = authed(&http, &auth_state.access_token)
         .post(format!("{server_url}/v1/rooms"))
@@ -77,6 +85,14 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
         &mut auth_state,
         config.organization_slug.as_deref(),
     )?;
+    if viewer_active_org_slug(&viewer) != Some(active_org.organization_slug.as_str()) {
+        set_active_organization(
+            &http,
+            &server_url,
+            &auth_state.access_token,
+            &active_org.organization_slug,
+        )?;
+    }
     write_auth_state(&auth_state_path(&config.home_dir), &auth_state)?;
     let room = fetch_room(
         &http,
