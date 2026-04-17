@@ -51,7 +51,7 @@ pub(crate) enum SummaryScope {
 }
 
 impl SummaryScope {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Organization => "organization",
             Self::Room => "room",

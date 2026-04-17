@@ -14,12 +14,6 @@ use crate::{
     db::{OrganizationSummaryQueryOptions, RoomSummaryQueryOptions, SummaryDb},
 };
 
-#[derive(Clone, Copy)]
-enum ErrorScope {
-    Organization,
-    Room,
-}
-
 const ORGANIZATION_HEARTBEAT_EVENT_LIMIT: i64 = 500;
 const ROOM_SUMMARY_EVENT_LIMIT: i64 = 200;
 const ROOM_SUMMARY_SWEEP_LIMIT: i64 = 50;
@@ -170,7 +164,7 @@ impl SummaryCoordinator {
                 Ok(Some(claim)) => claim,
                 Ok(None) => continue,
                 Err(error) => {
-                    self.mark_error(ErrorScope::Organization, &organization_id, "claim", &error)
+                    self.mark_error(SummaryScope::Organization, &organization_id, "claim", &error)
                         .await;
                     continue;
                 }
@@ -181,7 +175,7 @@ impl SummaryCoordinator {
                 .await
             {
                 self.mark_error(
-                    ErrorScope::Organization,
+                    SummaryScope::Organization,
                     &organization_id,
                     "enqueue heartbeat",
                     &error,
@@ -197,25 +191,22 @@ impl SummaryCoordinator {
 
     async fn mark_error(
         &self,
-        scope: ErrorScope,
+        scope: SummaryScope,
         target_id: &str,
         action: &str,
         error: &anyhow::Error,
     ) {
-        let scope_label = match scope {
-            ErrorScope::Organization => "organization",
-            ErrorScope::Room => "room",
-        };
+        let scope_label = scope.as_str();
         eprintln!(
             "[summary-agent] failed to {action} {scope_label} summary for {target_id}: {error:#}"
         );
         let result = match scope {
-            ErrorScope::Organization => {
+            SummaryScope::Organization => {
                 self.db
                     .set_organization_summary_status(target_id, SummaryStatus::Error)
                     .await
             }
-            ErrorScope::Room => {
+            SummaryScope::Room => {
                 self.db
                     .set_room_summary_status(target_id, SummaryStatus::Error)
                     .await
@@ -288,7 +279,7 @@ impl SummaryCoordinator {
                 Ok(Some(claim)) => claim,
                 Ok(None) => continue,
                 Err(error) => {
-                    self.mark_error(ErrorScope::Room, &room.room_id, "claim", &error)
+                    self.mark_error(SummaryScope::Room, &room.room_id, "claim", &error)
                         .await;
                     continue;
                 }
@@ -298,7 +289,7 @@ impl SummaryCoordinator {
                 .enqueue_room_summary(&room.room_id, &room.name, claim.last_processed_seq)
                 .await
             {
-                self.mark_error(ErrorScope::Room, &room.room_id, "enqueue summary", &error)
+                self.mark_error(SummaryScope::Room, &room.room_id, "enqueue summary", &error)
                     .await;
                 self.pending_room_summary_seq.remove(&room.room_id);
             }
@@ -324,20 +315,15 @@ impl SummaryCoordinator {
             )
             .await?;
 
-        if events.is_empty() {
+        let Some(last_seq) = events.last().map(|event| event.seq) else {
             self.db
                 .set_room_summary_status(room_id, SummaryStatus::Ready)
                 .await?;
             return Ok(());
-        }
+        };
 
-        self.pending_room_summary_seq.insert(
-            room_id.to_owned(),
-            events
-                .last()
-                .map(|event| event.seq)
-                .unwrap_or(last_processed_seq),
-        );
+        self.pending_room_summary_seq
+            .insert(room_id.to_owned(), last_seq);
 
         for event in events {
             self.command_tx
