@@ -34,10 +34,11 @@ import { readMessage, useCopyHandler } from "../utils";
 
 type SummaryStatus = "idle" | "ready" | "generating" | "error";
 type ConnectionStatus = "connecting" | "live" | "reconnecting";
+type FeedMessageKind = "model" | "update" | "user";
 
 const FEED_MESSAGE_PREVIEW_LENGTH = 320;
 const FEED_FILE_PREVIEW_LIMIT = 4;
-const FEED_FIELD_PREVIEW_LIMIT = 4;
+const FEED_METADATA_PREVIEW_LIMIT = 3;
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
@@ -289,17 +290,16 @@ function RawFeedEvent({
   clock: number;
   event: StoredHookEvent;
 }) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>(
+    {},
+  );
   const details = describeFeedEvent(event);
-  const shouldTruncate =
-    details.message != null &&
-    details.message.length > FEED_MESSAGE_PREVIEW_LENGTH;
-  const visibleMessage =
-    shouldTruncate && !isExpanded
-      ? truncateFeedMessage(details.message!, FEED_MESSAGE_PREVIEW_LENGTH)
-      : details.message;
   const visibleFiles = details.files.slice(0, FEED_FILE_PREVIEW_LIMIT);
   const hiddenFileCount = details.files.length - visibleFiles.length;
+  const metadataPreview = details.metadata
+    .slice(0, FEED_METADATA_PREVIEW_LIMIT)
+    .map((field) => field.label.toLowerCase())
+    .join(", ");
 
   return (
     <article className="relative border-t border-border pt-4 pl-[18px] animate-[rise-in_380ms_ease-out_both] before:absolute before:left-0 before:top-[21px] before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent before:shadow-[0_0_16px_rgba(245,158,11,0.45)] first:border-t-0 first:pt-0 first:before:top-1">
@@ -333,22 +333,50 @@ function RawFeedEvent({
           </p>
         )}
 
-        {visibleMessage && (
-          <div className="grid gap-2">
-            <p className="m-0 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-[#dbe7ff]">
-              {visibleMessage}
-            </p>
-            {shouldTruncate && (
-              <button
-                className="inline-flex w-fit border-none bg-transparent p-0 font-mono text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-accent"
-                type="button"
-                onClick={() => setIsExpanded((current) => !current)}
-              >
-                {isExpanded ? "Show less" : "Show full message"}
-              </button>
-            )}
-          </div>
-        )}
+        {details.messages.map((message) => {
+          const isExpanded = Boolean(expandedMessages[message.id]);
+          const shouldTruncate = message.text.length > FEED_MESSAGE_PREVIEW_LENGTH;
+          const visibleMessage =
+            shouldTruncate && !isExpanded
+              ? truncateFeedMessage(message.text, FEED_MESSAGE_PREVIEW_LENGTH)
+              : message.text;
+
+          return (
+            <div
+              className="grid gap-2 border-l-2 border-border pl-3"
+              key={message.id}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={cx(
+                    pillBaseClass,
+                    "min-h-[24px] border-border px-2.5",
+                    feedMessageToneClass(message.kind),
+                  )}
+                >
+                  {feedMessageLabel(message.kind)}
+                </span>
+              </div>
+              <p className="m-0 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-[#dbe7ff]">
+                {visibleMessage}
+              </p>
+              {shouldTruncate && (
+                <button
+                  className="inline-flex w-fit border-none bg-transparent p-0 font-mono text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-accent"
+                  type="button"
+                  onClick={() =>
+                    setExpandedMessages((current) => ({
+                      ...current,
+                      [message.id]: !current[message.id],
+                    }))
+                  }
+                >
+                  {isExpanded ? "Show less" : "Show full message"}
+                </button>
+              )}
+            </div>
+          );
+        })}
 
         {details.files.length > 0 && (
           <div className="grid gap-2">
@@ -373,28 +401,41 @@ function RawFeedEvent({
           </div>
         )}
 
-        {details.fields.length > 0 && (
-          <dl className="grid gap-2 sm:grid-cols-2">
-            {details.fields.map((field) => (
-              <div
-                className="grid gap-1 border border-border bg-[rgba(10,14,21,0.44)] p-3"
-                key={`${field.label}:${field.value}`}
-              >
-                <dt className="font-mono text-[0.68rem] uppercase tracking-[0.08em] text-ink-muted">
-                  {field.label}
-                </dt>
-                <dd className="m-0 break-words text-[0.9rem] leading-6 text-ink-dim">
-                  {field.value}
-                </dd>
-              </div>
-            ))}
-          </dl>
+        {details.metadata.length > 0 && (
+          <details className="grid gap-3">
+            <summary className="flex cursor-pointer list-none items-center gap-3 font-mono text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-ink-muted [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
+              <span>See more</span>
+              {metadataPreview && (
+                <span className="truncate lowercase tracking-normal text-ink-dim">
+                  {metadataPreview}
+                  {details.metadata.length > FEED_METADATA_PREVIEW_LIMIT
+                    ? ` +${details.metadata.length - FEED_METADATA_PREVIEW_LIMIT}`
+                    : ""}
+                </span>
+              )}
+            </summary>
+            <dl className="grid gap-2 sm:grid-cols-2">
+              {details.metadata.map((field) => (
+                <div
+                  className="grid gap-1 border border-border bg-[rgba(10,14,21,0.44)] p-3"
+                  key={`${field.label}:${field.value}`}
+                >
+                  <dt className="font-mono text-[0.68rem] uppercase tracking-[0.08em] text-ink-muted">
+                    {field.label}
+                  </dt>
+                  <dd className="m-0 break-words text-[0.9rem] leading-6 text-ink-dim">
+                    {field.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </details>
         )}
 
         {!details.title &&
-          !visibleMessage &&
+          details.messages.length === 0 &&
           details.files.length === 0 &&
-          details.fields.length === 0 && (
+          details.metadata.length === 0 && (
             <p className={messageClass}>No readable update details were included.</p>
           )}
       </div>
@@ -512,24 +553,79 @@ function describeFeedEvent(event: StoredHookEvent) {
   const title = firstNonEmptyText([
     readStringValue(payload, ["task", "title", "headline"]),
   ]);
-  const message = firstNonEmptyText([
-    readStringValue(payload, ["summary", "last_assistant_message", "message"]),
-    readStringValue(payload, ["prompt", "last_user_message", "description"]),
-    payload == null ? stringifyPrimitive(event.payload) : null,
-  ]);
   const files = readStringArray(payload?.files);
-  const fields = buildReadablePayloadFields(payload);
+  const messages = buildFeedMessages(payload, event.payload).filter(
+    (message) => message.text !== title,
+  );
+  const metadata = buildFeedMetadata(payload);
 
   return {
     eventName,
-    fields,
     files,
-    message: message === title ? null : message,
+    messages,
+    metadata,
     title,
   };
 }
 
-function buildReadablePayloadFields(
+function buildFeedMessages(
+  payload: Record<string, unknown> | null,
+  rawPayload: unknown,
+) {
+  const messages: Array<{ id: string; kind: FeedMessageKind; text: string }> = [];
+
+  pushFeedMessage(
+    messages,
+    payload,
+    ["summary", "message", "description"],
+    "update",
+  );
+  pushFeedMessage(
+    messages,
+    payload,
+    ["prompt", "last_user_message", "user_message"],
+    "user",
+  );
+  pushFeedMessage(
+    messages,
+    payload,
+    ["last_assistant_message", "assistant_message", "response"],
+    "model",
+  );
+
+  if (messages.length === 0) {
+    const fallbackMessage = normalizeFeedText(stringifyPrimitive(rawPayload));
+    if (fallbackMessage) {
+      messages.push({
+        id: "update:fallback",
+        kind: "update",
+        text: fallbackMessage,
+      });
+    }
+  }
+
+  return messages;
+}
+
+function pushFeedMessage(
+  messages: Array<{ id: string; kind: FeedMessageKind; text: string }>,
+  payload: Record<string, unknown> | null,
+  keys: string[],
+  kind: FeedMessageKind,
+) {
+  const text = readStringValue(payload, keys);
+  if (!text || messages.some((message) => message.text === text)) {
+    return;
+  }
+
+  messages.push({
+    id: `${kind}:${keys[0]}`,
+    kind,
+    text,
+  });
+}
+
+function buildFeedMetadata(
   payload: Record<string, unknown> | null,
 ): Array<{ label: string; value: string }> {
   if (!payload) {
@@ -549,13 +645,9 @@ function buildReadablePayloadFields(
     }
 
     fields.push({
-      label: humanizeFieldName(key),
+      label: formatFeedMetadataLabel(key),
       value: text,
     });
-
-    if (fields.length >= FEED_FIELD_PREVIEW_LIMIT) {
-      break;
-    }
   }
 
   return fields;
@@ -688,6 +780,48 @@ function humanizeFieldName(value: string) {
     .trim()
     .replace(/\s+/g, " ")
     .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function formatFeedMetadataLabel(key: string) {
+  const normalized = key.trim().toLowerCase();
+
+  if (normalized === "approval_policy" || normalized === "permission_mode") {
+    return "Permission mode";
+  }
+
+  if (normalized === "sandbox_mode") {
+    return "Sandbox mode";
+  }
+
+  if (normalized === "transcript_path") {
+    return "Transcript path";
+  }
+
+  return humanizeFieldName(key);
+}
+
+function feedMessageLabel(kind: FeedMessageKind) {
+  if (kind === "user") {
+    return "User";
+  }
+
+  if (kind === "model") {
+    return "Model";
+  }
+
+  return "Update";
+}
+
+function feedMessageToneClass(kind: FeedMessageKind) {
+  if (kind === "user") {
+    return "text-accent";
+  }
+
+  if (kind === "model") {
+    return "text-success";
+  }
+
+  return "text-ink-dim";
 }
 
 function shouldHidePayloadField(key: string) {
