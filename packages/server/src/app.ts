@@ -18,6 +18,7 @@ import {
 import { createMcpRoutes } from "./mcp/routes";
 import { indexEventById } from "./search/store";
 import type { FeedStreamHub } from "./sse";
+import { formatError } from "./types";
 
 const DEFAULT_PUBLIC_API_URL = "https://api.supermanager.dev";
 const FEED_PAGE_DEFAULT = 10;
@@ -513,11 +514,4 @@ function normalizeDisplayName(name: string | null | undefined, email: string) {
 
 function shellQuote(value: string): string {
   return `"${value.replaceAll('"', '\\"')}"`;
-}
-
-function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
 }

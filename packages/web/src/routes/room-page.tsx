@@ -9,6 +9,7 @@ import {
   type RoomSnapshot,
   type RoomSummaryResponse,
   type StoredHookEvent,
+  type SummaryStatus,
 } from "../api";
 import { CopyPanel } from "../components/copy-panel";
 import { DropdownButton } from "../components/dropdown-button";
@@ -33,7 +34,7 @@ import {
 } from "../ui";
 import { readMessage, useCopyHandler } from "../utils";
 
-type SummaryStatus = "idle" | "ready" | "generating" | "error";
+type UiSummaryStatus = SummaryStatus | "idle";
 type ConnectionStatus = "connecting" | "live" | "reconnecting";
 type FeedMessageKind = "model" | "update" | "user";
 
@@ -456,7 +457,7 @@ function SummaryContent({
 }: {
   clock: number;
   snapshot: RoomSnapshot;
-  summaryStatus: SummaryStatus;
+  summaryStatus: UiSummaryStatus;
 }) {
   const hasContent = hasSnapshotContent(snapshot);
 
@@ -580,8 +581,8 @@ function hasSnapshotContent(snapshot: RoomSnapshot) {
 function getSummaryStatus(
   summary: RoomSummaryResponse,
   latestEventSeq: number,
-): SummaryStatus {
-  if (summary.status === "error" && summary.last_processed_seq < latestEventSeq) {
+): UiSummaryStatus {
+  if (summary.status === "error") {
     return "error";
   }
   if (
@@ -987,7 +988,7 @@ function connectionToneClass(status: ConnectionStatus) {
   return "border-red-400/30 text-danger";
 }
 
-function summaryToneClass(status: SummaryStatus) {
+function summaryToneClass(status: UiSummaryStatus) {
   if (status === "ready") {
     return "border-emerald-400/30 text-success";
   }

@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
+  type OrganizationMembership,
   type OrganizationSummaryResponse,
-  type ViewerOrganization,
   type ViewerResponse,
 } from "../api";
 
@@ -100,7 +100,7 @@ export function viewerQueryOptions() {
 }
 
 export function findOrganizationBySlug(
-  organizations: ViewerOrganization[],
+  organizations: OrganizationMembership[],
   organizationSlug?: string | null,
 ) {
   if (!organizationSlug) {

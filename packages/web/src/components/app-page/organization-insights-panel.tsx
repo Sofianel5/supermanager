@@ -7,7 +7,7 @@ import type {
   RoomBlufSnapshot,
   RoomListEntry,
   SummaryStatus,
-  ViewerOrganization,
+  OrganizationMembership,
 } from "../../api";
 import {
   cx,
@@ -23,7 +23,7 @@ import { OrgWideBlufCard } from "./org-wide-bluf-card";
 import { SecondaryActionLink } from "./secondary-action-link";
 
 interface OrganizationInsightsPanelProps {
-  activeOrganization: ViewerOrganization | null;
+  activeOrganization: OrganizationMembership | null;
   error: string | null;
   isLoading: boolean;
   organizationSummary: OrganizationSnapshot | null;
