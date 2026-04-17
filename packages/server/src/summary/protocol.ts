@@ -3,6 +3,7 @@ import type { StoredHookEvent, SummaryStatus } from "../types";
 export type SummaryToolName =
   | "get_snapshot"
   | "set_bluf"
+  | "set_overview"
   | "set_org_bluf"
   | "set_employee_bluf"
   | "remove_employee_bluf";

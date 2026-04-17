@@ -55,6 +55,16 @@ async function applyRoomSummaryToolCall(
         };
       });
     }
+    case "set_overview": {
+      const markdown = readRequiredString(argumentsValue, "markdown").trim();
+      return mutateRoomSummary(db, roomId, (snapshot) => {
+        snapshot.overview_markdown = markdown;
+        return {
+          changed: true,
+          message: `updated room overview for ${normalizeRoomId(roomId)}`,
+        };
+      });
+    }
     case "set_employee_bluf": {
       const employeeName = readRequiredString(
         argumentsValue,
