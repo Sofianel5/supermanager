@@ -492,6 +492,22 @@ function SummaryContent({
         )}
       </section>
 
+      <details className={subduedSurfaceClass}>
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-[18px] font-semibold text-ink [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
+          <span>Detailed summary</span>
+          <span className="font-mono text-[11px] uppercase text-ink-muted">
+            hidden by default
+          </span>
+        </summary>
+        <div className="border-t border-border px-[18px] pb-[18px] pt-4">
+          {snapshot.overview_markdown.trim() ? (
+            <MarkdownBlock markdown={snapshot.overview_markdown} />
+          ) : (
+            <p className={messageClass}>No detailed summary yet.</p>
+          )}
+        </div>
+      </details>
+
       <section className={cx(subduedSurfaceClass, "p-[18px]")}>
         <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex font-mono text-[11px] font-semibold uppercase text-accent">
@@ -535,6 +551,7 @@ function SummaryContent({
 function emptyRoomSnapshot(): RoomSnapshot {
   return {
     bluf_markdown: "",
+    overview_markdown: "",
     employees: [],
   };
 }
@@ -542,6 +559,7 @@ function emptyRoomSnapshot(): RoomSnapshot {
 function hasSnapshotContent(snapshot: RoomSnapshot) {
   return Boolean(
     snapshot.bluf_markdown.trim() ||
+      snapshot.overview_markdown.trim() ||
       snapshot.employees.some((employee) => employee.bluf_markdown.trim()),
   );
 }

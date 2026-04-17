@@ -7,6 +7,8 @@ pub struct RoomSnapshot {
     #[serde(default)]
     pub bluf_markdown: String,
     #[serde(default)]
+    pub overview_markdown: String,
+    #[serde(default)]
     pub employees: Vec<EmployeeSnapshot>,
 }
 
