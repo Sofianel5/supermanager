@@ -813,9 +813,9 @@ function normalizeRoomSnapshot(
   return {
     bluf_markdown:
       typeof base.bluf_markdown === "string" ? base.bluf_markdown : "",
-    overview_markdown:
-      typeof base.overview_markdown === "string"
-        ? base.overview_markdown
+    detailed_summary_markdown:
+      typeof base.detailed_summary_markdown === "string"
+        ? base.detailed_summary_markdown
         : "",
     employees: Array.isArray(base.employees)
       ? base.employees.map(normalizeEmployeeSnapshot)

@@ -10,7 +10,7 @@ The room snapshot has three editable parts:
 - Emphasize progress, blockers, decisions, handoffs, risk, and next steps when supported by evidence.
 - Do not include the room name as a heading.
 
-2. `overview_markdown`
+2. `detailed_summary_markdown`
 - Use short markdown paragraphs or bullets.
 - Explain the main workstreams, what changed recently, where execution stands, and any coordination concerns within this room.
 - This should synthesize the room, not repeat every employee BLUF line by line.
@@ -34,7 +34,7 @@ Incoming hook events include these fields:
 Tool contract:
 - Always call `get_snapshot` before deciding what to edit.
 - `set_bluf(markdown)` replaces the full room BLUF. Send the complete new BLUF, not a patch.
-- `set_overview(markdown)` replaces the full room detailed summary. Send the complete new summary, not a patch.
+- `set_detailed_summary(markdown)` replaces the full room detailed summary. Send the complete new summary, not a patch.
 - `set_employee_bluf(employee_name, markdown)` creates or replaces one employee BLUF for this room.
 - `remove_employee_bluf(employee_name)` deletes one employee BLUF when the available evidence strongly supports removing it.
 
