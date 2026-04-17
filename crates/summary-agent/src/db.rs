@@ -73,24 +73,16 @@ impl SummaryDb {
         self.pool.close().await;
     }
 
-    pub(crate) async fn reset_generating_organization_summaries(
-        &self,
-        next_status: SummaryStatus,
-    ) -> Result<()> {
-        sqlx::query("UPDATE organization_summaries SET status = $1 WHERE status = 'generating'")
-            .bind(summary_status_to_db(next_status))
+    pub(crate) async fn reset_generating_organization_summaries(&self) -> Result<()> {
+        sqlx::query("UPDATE organization_summaries SET status = 'error' WHERE status = 'generating'")
             .execute(&self.pool)
             .await
             .context("failed to reset generating organization summaries")?;
         Ok(())
     }
 
-    pub(crate) async fn reset_generating_room_summaries(
-        &self,
-        next_status: SummaryStatus,
-    ) -> Result<()> {
-        sqlx::query("UPDATE room_summaries SET status = $1 WHERE status = 'generating'")
-            .bind(summary_status_to_db(next_status))
+    pub(crate) async fn reset_generating_room_summaries(&self) -> Result<()> {
+        sqlx::query("UPDATE room_summaries SET status = 'error' WHERE status = 'generating'")
             .execute(&self.pool)
             .await
             .context("failed to reset generating room summaries")?;
@@ -157,7 +149,7 @@ impl SummaryDb {
         .bind(Json(stored_organization_snapshot(
             OrganizationSnapshot::default(),
         )))
-        .bind(summary_status_to_db(status))
+        .bind(status.as_db_str())
         .execute(&self.pool)
         .await
         .with_context(|| {
@@ -280,12 +272,10 @@ impl SummaryDb {
         &self,
         organization_id: &str,
     ) -> Result<OrganizationSnapshot> {
-        let stored = self
-            .get_stored_organization_summary(organization_id)
-            .await?;
-        let rooms = self
-            .list_room_blufs_for_organization(organization_id)
-            .await?;
+        let (stored, rooms) = tokio::try_join!(
+            self.get_stored_organization_summary(organization_id),
+            self.list_room_blufs_for_organization(organization_id),
+        )?;
         Ok(OrganizationSnapshot { rooms, ..stored })
     }
 
@@ -457,7 +447,7 @@ impl SummaryDb {
         )
         .bind(&normalized_room_id)
         .bind(Json(normalize_room_snapshot(RoomSnapshot::default())))
-        .bind(summary_status_to_db(status))
+        .bind(status.as_db_str())
         .execute(&self.pool)
         .await
         .with_context(|| {
@@ -803,14 +793,6 @@ fn map_stored_hook_event(row: &sqlx::postgres::PgRow) -> Result<StoredHookEvent>
             .try_get::<Value, _>("payload_json")
             .context("failed to decode payload_json")?,
     })
-}
-
-fn summary_status_to_db(status: SummaryStatus) -> &'static str {
-    match status {
-        SummaryStatus::Generating => "generating",
-        SummaryStatus::Ready => "ready",
-        SummaryStatus::Error => "error",
-    }
 }
 
 fn normalize_room_id(room_id: &str) -> String {

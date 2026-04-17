@@ -24,7 +24,7 @@ export interface ApiConfig {
   auth: AuthConfig;
 }
 
-export async function loadApiConfig(argv: string[]): Promise<ApiConfig> {
+export function loadApiConfig(argv: string[]): ApiConfig {
   const parsed = parseArgs({
     args: argv,
     options: {
