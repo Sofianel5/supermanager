@@ -9,9 +9,11 @@ import { DeviceApprovalDialog } from "../components/app-page/device-approval-dia
 import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
 import { InviteJoinGate } from "../components/app-page/invite-join-gate";
 import { InviteTeammatesBanner } from "../components/app-page/invite-teammates-banner";
+import { OrgWideBlufCard } from "../components/app-page/org-wide-bluf-card";
 import { OrganizationInsightsHeader } from "../components/app-page/organization-insights-header";
 import { OrganizationInsightsPanel } from "../components/app-page/organization-insights-panel";
 import { OrganizationOnboarding } from "../components/app-page/organization-onboarding";
+import { SecondaryActionLink } from "../components/app-page/secondary-action-link";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
 import {
@@ -247,16 +249,30 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
               summaryStatus={summaryStatus}
             />
           ) : (
-            <WorkspacePanel
-              activeOrganization={activeOrganization}
-              error={workspaceError}
-              isCreatingRoom={isCreatingRoom}
-              isLoading={isLoading}
-              organizationSummary={summaryQuery.data?.summary ?? null}
-              summaryStatus={summaryStatus}
-              rooms={rooms}
-              onCreateRoom={openCreateRoomDialog}
-            />
+            <div className="mt-7 grid gap-6">
+              {activeOrganization && !isLoading ? (
+                <OrgWideBlufCard
+                  action={
+                    <SecondaryActionLink
+                      to={buildOrganizationInsightsHref(activeOrganization.organization_slug)}
+                    >
+                      View org insights
+                    </SecondaryActionLink>
+                  }
+                  organizationSummary={summaryQuery.data?.summary ?? null}
+                  summaryStatus={summaryStatus}
+                />
+              ) : null}
+
+              <WorkspacePanel
+                activeOrganization={activeOrganization}
+                error={workspaceError}
+                isCreatingRoom={isCreatingRoom}
+                isLoading={isLoading}
+                rooms={rooms}
+                onCreateRoom={openCreateRoomDialog}
+              />
+            </div>
           )}
         </main>
       )}
@@ -316,4 +332,12 @@ function readSummaryStatus(
   }
 
   return "ready" as const;
+}
+
+function buildOrganizationInsightsHref(organizationSlug: string | null) {
+  if (!organizationSlug) {
+    return "/app/insights";
+  }
+
+  return `/app/insights?organization=${encodeURIComponent(organizationSlug)}`;
 }
