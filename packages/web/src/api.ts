@@ -1,21 +1,31 @@
 import type {
+  CreateRoomResponse,
   FeedResponse,
   RoomMetadataResponse,
-  StoredHookEvent,
-} from "./generated";
+} from "@supermanager/common/api-protocol";
 import type {
-  EmployeeSnapshot,
-  OrganizationSnapshot,
-  RoomBlufSnapshot,
-  RoomSnapshot,
-  SummaryStatus,
-} from "@supermanager/common/summary-protocol";
+  OrganizationSummaryResponse,
+  RoomListResponse,
+  RoomSummaryResponse,
+  ViewerResponse,
+} from "@supermanager/common/http-types";
 
 export type {
+  CreateRoomRequest,
+  CreateRoomResponse,
   FeedResponse,
   RoomMetadataResponse,
   StoredHookEvent,
-} from "./generated";
+} from "@supermanager/common/api-protocol";
+export type {
+  OrganizationMembership,
+  OrganizationSummaryResponse,
+  RoomListEntry,
+  RoomListResponse,
+  RoomSummaryResponse,
+  ViewerResponse,
+  ViewerUser,
+} from "@supermanager/common/http-types";
 export type {
   EmployeeSnapshot,
   OrganizationSnapshot,
@@ -23,60 +33,6 @@ export type {
   RoomSnapshot,
   SummaryStatus,
 } from "@supermanager/common/summary-protocol";
-
-export interface ViewerUser {
-  email: string;
-  id: string;
-  image: string | null;
-  name: string;
-}
-
-export interface ViewerOrganization {
-  organization_id: string;
-  organization_name: string;
-  organization_slug: string;
-  member_count: number;
-  role: string;
-}
-
-export interface ViewerResponse {
-  active_organization_id: string | null;
-  has_cli_auth: boolean;
-  organizations: ViewerOrganization[];
-  user: ViewerUser;
-}
-
-export interface RoomListEntry {
-  created_at: string;
-  name: string;
-  organization_slug: string;
-  room_id: string;
-  bluf_markdown: string;
-  employee_count: number;
-}
-
-export interface RoomListResponse {
-  organization_slug: string;
-  rooms: RoomListEntry[];
-}
-
-export interface OrganizationSummaryResponse {
-  status: SummaryStatus;
-  summary: OrganizationSnapshot;
-}
-
-export interface RoomSummaryResponse {
-  last_processed_seq: number;
-  status: SummaryStatus;
-  summary: RoomSnapshot;
-}
-
-export interface CreateRoomResponse {
-  dashboard_url: string;
-  join_command: string;
-  organization_slug: string;
-  room_id: string;
-}
 
 const API_BASE_URL = normalizeBaseUrl(
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8787",

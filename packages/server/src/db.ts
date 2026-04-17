@@ -11,6 +11,7 @@ import {
   type SummaryStatus,
   emptyOrganizationSnapshot,
   emptyRoomSnapshot,
+  formatError,
 } from "./types";
 import { CLI_DEVICE_CLIENT_ID, CLI_USER_AGENT_PREFIX } from "./auth";
 
@@ -808,11 +809,6 @@ export class Db {
   ): Promise<{ lastProcessedSeq: number } | null> {
     const normalizedRoomId = normalizeRoomId(roomId);
     const [row] = await this.client<Pick<RoomSummaryRow, "last_processed_seq">[]>`
-      WITH latest_event AS (
-        SELECT COALESCE(MAX(seq), 0) AS latest_seq
-        FROM hook_events
-        WHERE room_id = ${normalizedRoomId}
-      )
       INSERT INTO room_summaries (
         room_id,
         content_json,
@@ -820,18 +816,16 @@ export class Db {
         updated_at,
         last_processed_seq
       )
-      SELECT
+      VALUES (
         ${normalizedRoomId},
         ${normalizeStoredRoomSummary()},
         'generating',
         TO_TIMESTAMP(0),
         0
-      FROM latest_event
-      WHERE latest_event.latest_seq > 0
+      )
       ON CONFLICT(room_id) DO UPDATE SET
         status = 'generating'
       WHERE room_summaries.status <> 'generating'
-        AND (SELECT latest_seq FROM latest_event) > room_summaries.last_processed_seq
       RETURNING last_processed_seq
     `;
 
@@ -1133,11 +1127,4 @@ function isUniqueViolation(error: unknown): boolean {
     return error.code === "23505";
   }
   return false;
-}
-
-function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
 }

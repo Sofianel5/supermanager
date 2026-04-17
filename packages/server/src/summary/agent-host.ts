@@ -1,6 +1,7 @@
 import type { Db } from "../db";
 import type { SummaryWorkerConfig } from "../config";
 import type { StoragePaths } from "../storage";
+import { formatError, type SummaryStatus } from "../types";
 import type { AgentMessage, HostMessage } from "./protocol";
 import { applySummaryToolCall } from "./tool-executor";
 
@@ -100,6 +101,7 @@ export class SummaryAgentHost {
             `[summary-agent] exited code=${code ?? "null"} signal=${signal ?? "null"}`,
           );
           this.detachChild(child);
+          this.cleanupPendingWork();
         },
       });
 
@@ -123,6 +125,31 @@ export class SummaryAgentHost {
   private detachChild(child: SummaryAgentProcess): void {
     if (this.child === child) {
       this.child = null;
+    }
+  }
+
+  private cleanupPendingWork(): void {
+    const hadOrganizations = this.pendingOrganizationHeartbeatCutoff.size > 0;
+    const hadRooms = this.pendingRoomSummarySeq.size > 0;
+    this.pendingOrganizationHeartbeatCutoff.clear();
+    this.pendingRoomSummarySeq.clear();
+    if (hadOrganizations) {
+      void this.options.db
+        .resetGeneratingOrganizationSummaries("error")
+        .catch((error) => {
+          console.error(
+            `[summary-agent] failed to reset generating organization summaries: ${formatError(error)}`,
+          );
+        });
+    }
+    if (hadRooms) {
+      void this.options.db
+        .resetGeneratingRoomSummaries("error")
+        .catch((error) => {
+          console.error(
+            `[summary-agent] failed to reset generating room summaries: ${formatError(error)}`,
+          );
+        });
     }
   }
 
@@ -157,53 +184,25 @@ export class SummaryAgentHost {
     switch (message.type) {
       case "summary_status": {
         if (message.scope === "organization") {
-          if (message.status === "ready") {
-            const pendingCutoff = this.pendingOrganizationHeartbeatCutoff.get(
-              message.target_id,
-            );
-            if (pendingCutoff != null) {
-              await this.options.db.setOrganizationSummaryUpdatedAt(
-                message.target_id,
-                pendingCutoff,
-              );
-            }
-            await this.options.db.setOrganizationSummaryStatus(
-              message.target_id,
-              message.status,
-            );
-            this.pendingOrganizationHeartbeatCutoff.delete(message.target_id);
-          } else {
-            await this.options.db.setOrganizationSummaryStatus(
-              message.target_id,
-              message.status,
-            );
-          }
-          if (message.status === "error") {
-            this.pendingOrganizationHeartbeatCutoff.delete(message.target_id);
-          }
+          await this.persistSummaryStatus(
+            message.target_id,
+            message.status,
+            this.pendingOrganizationHeartbeatCutoff,
+            (id, cutoff) =>
+              this.options.db.setOrganizationSummaryUpdatedAt(id, cutoff),
+            (id, status) =>
+              this.options.db.setOrganizationSummaryStatus(id, status),
+          );
         } else {
-          if (message.status === "ready") {
-            const processedSeq = this.pendingRoomSummarySeq.get(message.target_id);
-            if (processedSeq != null) {
-              await this.options.db.setRoomSummaryLastProcessedSeq(
-                message.target_id,
-                processedSeq,
-              );
-            }
-            await this.options.db.setRoomSummaryStatus(
-              message.target_id,
-              message.status,
-            );
-            this.pendingRoomSummarySeq.delete(message.target_id);
-          } else {
-            await this.options.db.setRoomSummaryStatus(
-              message.target_id,
-              message.status,
-            );
-          }
-          if (message.status === "error") {
-            this.pendingRoomSummarySeq.delete(message.target_id);
-          }
+          await this.persistSummaryStatus(
+            message.target_id,
+            message.status,
+            this.pendingRoomSummarySeq,
+            (id, seq) =>
+              this.options.db.setRoomSummaryLastProcessedSeq(id, seq),
+            (id, status) =>
+              this.options.db.setRoomSummaryStatus(id, status),
+          );
         }
         return;
       }
@@ -238,6 +237,25 @@ export class SummaryAgentHost {
           `[summary-agent] unhandled child message: ${JSON.stringify(neverMessage)}`,
         );
       }
+    }
+  }
+
+  private async persistSummaryStatus<T>(
+    targetId: string,
+    status: SummaryStatus,
+    pending: Map<string, T>,
+    commitPending: (id: string, value: T) => Promise<void>,
+    setStatus: (id: string, status: SummaryStatus) => Promise<void>,
+  ): Promise<void> {
+    if (status === "ready") {
+      const pendingValue = pending.get(targetId);
+      if (pendingValue !== undefined) {
+        await commitPending(targetId, pendingValue);
+      }
+    }
+    await setStatus(targetId, status);
+    if (status === "ready" || status === "error") {
+      pending.delete(targetId);
     }
   }
 
@@ -337,52 +355,59 @@ export class SummaryAgentHost {
     try {
       const rooms =
         await this.options.db.listRoomsNeedingSummary(ROOM_SUMMARY_SWEEP_LIMIT);
-      for (const room of rooms) {
-        try {
-          if (this.pendingRoomSummarySeq.has(room.room_id)) {
-            continue;
-          }
+      await Promise.all(
+        rooms.map(async (room) => {
+          try {
+            if (this.pendingRoomSummarySeq.has(room.room_id)) {
+              return;
+            }
 
-          const claim = await this.options.db.tryStartRoomSummary(room.room_id);
-          if (!claim) {
-            continue;
-          }
+            const claim = await this.options.db.tryStartRoomSummary(
+              room.room_id,
+            );
+            if (!claim) {
+              return;
+            }
 
-          const events = await this.options.db.queryRoomEventsForSummary(
-            room.room_id,
-            {
-              afterSeq: claim.lastProcessedSeq,
-              limit: ROOM_SUMMARY_EVENT_LIMIT,
-            },
-          );
-          if (events.length === 0) {
-            await this.options.db.setRoomSummaryStatus(room.room_id, "ready");
-            continue;
-          }
+            const events = await this.options.db.queryRoomEventsForSummary(
+              room.room_id,
+              {
+                afterSeq: claim.lastProcessedSeq,
+                limit: ROOM_SUMMARY_EVENT_LIMIT,
+              },
+            );
+            if (events.length === 0) {
+              await this.options.db.setRoomSummaryStatus(
+                room.room_id,
+                "ready",
+              );
+              return;
+            }
 
-          this.pendingRoomSummarySeq.set(
-            room.room_id,
-            events[events.length - 1]!.seq,
-          );
-          await this.ensureRunning();
-          for (const event of events) {
-            this.send({
-              type: "enqueue_room_event",
-              room_id: room.room_id,
-              room_name: room.name,
-              event,
-            });
+            this.pendingRoomSummarySeq.set(
+              room.room_id,
+              events[events.length - 1]!.seq,
+            );
+            await this.ensureRunning();
+            for (const event of events) {
+              this.send({
+                type: "enqueue_room_event",
+                room_id: room.room_id,
+                room_name: room.name,
+                event,
+              });
+            }
+          } catch (error) {
+            console.error(
+              `[summary-agent] failed to enqueue room summary for ${room.room_id}: ${formatError(error)}`,
+            );
+            await this.options.db
+              .setRoomSummaryStatus(room.room_id, "error")
+              .catch(() => undefined);
+            this.pendingRoomSummarySeq.delete(room.room_id);
           }
-        } catch (error) {
-          console.error(
-            `[summary-agent] failed to enqueue room summary for ${room.room_id}: ${formatError(error)}`,
-          );
-          await this.options.db
-            .setRoomSummaryStatus(room.room_id, "error")
-            .catch(() => undefined);
-          this.pendingRoomSummarySeq.delete(room.room_id);
-        }
-      }
+        }),
+      );
     } finally {
       this.roomSweepInFlight = false;
     }
@@ -456,11 +481,4 @@ async function consumeLines(
   } finally {
     reader.releaseLock();
   }
-}
-
-function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
 }

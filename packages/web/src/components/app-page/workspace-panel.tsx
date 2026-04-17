@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import type {
   RoomListEntry,
-  ViewerOrganization,
+  OrganizationMembership,
 } from "../../api";
 import {
   cx,
@@ -13,7 +13,7 @@ import {
 } from "../../ui";
 
 interface WorkspacePanelProps {
-  activeOrganization: ViewerOrganization | null;
+  activeOrganization: OrganizationMembership | null;
   error: string | null;
   isLoading: boolean;
   isCreatingRoom: boolean;

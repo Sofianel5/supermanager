@@ -7,6 +7,7 @@ import { Db } from "./db";
 import { runAppMigrations } from "./migrations";
 import { indexUnembeddedEvents } from "./search/store";
 import { FeedStreamHub } from "./sse";
+import { formatError } from "./types";
 
 async function main(): Promise<void> {
   const cwd = process.cwd();
@@ -72,10 +73,3 @@ void main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-
-function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
