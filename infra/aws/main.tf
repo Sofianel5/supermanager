@@ -239,6 +239,12 @@ resource "aws_cloudwatch_log_group" "server" {
   tags              = local.tags
 }
 
+resource "aws_cloudwatch_log_group" "summary_worker" {
+  name              = "/ecs/${var.name}-summary-worker"
+  retention_in_days = var.log_retention_days
+  tags              = local.tags
+}
+
 resource "aws_efs_file_system" "server" {
   encrypted = true
 
@@ -409,11 +415,11 @@ resource "aws_lb" "server" {
 }
 
 resource "aws_lb_target_group" "server" {
-  name        = "${var.name}-tg"
-  port        = var.container_port
-  protocol    = "HTTP"
-  target_type = "ip"
-  vpc_id      = aws_vpc.this.id
+  name                 = "${var.name}-tg"
+  port                 = var.container_port
+  protocol             = "HTTP"
+  target_type          = "ip"
+  vpc_id               = aws_vpc.this.id
   deregistration_delay = 0
 
   health_check {
@@ -467,19 +473,6 @@ resource "aws_ecs_task_definition" "server" {
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
-  volume {
-    name = "server-data"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.server.id
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.server.id
-      }
-    }
-  }
-
   container_definitions = jsonencode([
     {
       name      = var.container_name
@@ -500,17 +493,6 @@ resource "aws_ecs_task_definition" "server" {
         {
           name  = "SUPERMANAGER_PUBLIC_APP_URL"
           value = var.public_app_url
-        },
-        {
-          name  = "SUPERMANAGER_DATA_DIR"
-          value = "/srv/supermanager"
-        }
-      ]
-      mountPoints = [
-        {
-          sourceVolume  = "server-data"
-          containerPath = "/srv/supermanager"
-          readOnly      = false
         }
       ]
       secrets = [
@@ -563,8 +545,8 @@ resource "aws_ecs_service" "server" {
   task_definition                    = aws_ecs_task_definition.server.arn
   desired_count                      = 1
   launch_type                        = "FARGATE"
-  deployment_minimum_healthy_percent = 0
-  deployment_maximum_percent         = 100
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
   health_check_grace_period_seconds  = 60
 
   network_configuration {
@@ -579,7 +561,92 @@ resource "aws_ecs_service" "server" {
     container_port   = var.container_port
   }
 
-  depends_on = [aws_lb_listener.https, aws_efs_mount_target.server]
+  depends_on = [aws_lb_listener.https]
+
+  tags = local.tags
+}
+
+resource "aws_ecs_task_definition" "summary_worker" {
+  family                   = "${var.name}-summary-worker"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = tostring(var.summary_worker_ecs_cpu)
+  memory                   = tostring(var.summary_worker_ecs_memory)
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  volume {
+    name = "summary-worker-data"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.server.id
+      transit_encryption = "ENABLED"
+
+      authorization_config {
+        access_point_id = aws_efs_access_point.server.id
+      }
+    }
+  }
+
+  container_definitions = jsonencode([
+    {
+      name      = var.summary_worker_container_name
+      image     = "${aws_ecr_repository.server.repository_url}:latest"
+      essential = true
+      command   = ["/usr/local/bin/supermanager-worker"]
+      environment = [
+        {
+          name  = "SUPERMANAGER_DATA_DIR"
+          value = "/srv/supermanager"
+        }
+      ]
+      mountPoints = [
+        {
+          sourceVolume  = "summary-worker-data"
+          containerPath = "/srv/supermanager"
+          readOnly      = false
+        }
+      ]
+      secrets = [
+        {
+          name      = "DATABASE_URL"
+          valueFrom = aws_secretsmanager_secret.database_url.arn
+        },
+        {
+          name      = "CODEX_API_KEY"
+          valueFrom = var.openai_api_key_secret_arn
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.summary_worker.name
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "ecs"
+        }
+      }
+    }
+  ])
+
+  tags = local.tags
+}
+
+resource "aws_ecs_service" "summary_worker" {
+  name                               = "${var.name}-summary-worker"
+  cluster                            = aws_ecs_cluster.this.id
+  task_definition                    = aws_ecs_task_definition.summary_worker.arn
+  desired_count                      = 1
+  launch_type                        = "FARGATE"
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+
+  network_configuration {
+    subnets          = [for subnet in values(aws_subnet.public) : subnet.id]
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+
+  depends_on = [aws_efs_mount_target.server]
 
   tags = local.tags
 }

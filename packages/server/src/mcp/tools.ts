@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 
 import type { SupermanagerAuth } from "../auth";
-import type { ServerConfig } from "../config";
+import type { ApiConfig } from "../config";
 import type { Db } from "../db";
 import {
   requireRoomAccess,
@@ -110,7 +110,7 @@ type SearchEventsInput = z.infer<typeof searchEventsSchema>;
 
 export interface McpToolOptions {
   auth: SupermanagerAuth;
-  config: Pick<ServerConfig, "publicApiUrl" | "publicAppUrl">;
+  config: Pick<ApiConfig, "publicApiUrl" | "publicAppUrl">;
   db: Db;
 }
 

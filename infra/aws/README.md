@@ -3,10 +3,11 @@
 This Terraform stack provisions the AWS-native backend for Supermanager:
 
 - ECR for the server image
-- ECS Fargate for the backend service
+- ECS Fargate API service
+- ECS Fargate summary worker service
 - ALB with TLS termination and `/health` checks
 - PostgreSQL on RDS
-- EFS for durable Codex and per-room working state
+- EFS for durable Codex and summary-worker state
 - Secrets Manager wiring for `DATABASE_URL`, Better Auth secrets, and `CODEX_API_KEY`
 - CloudWatch log group and basic alarms
 - Optional GitHub Actions OIDC deploy role
@@ -53,10 +54,11 @@ After apply, set these repository variables from the Terraform outputs:
 - `AWS_ECR_REPOSITORY` from `ecr_repository_name`
 - `AWS_ECS_CLUSTER` from `ecs_cluster_name`
 - `AWS_ECS_SERVICE` from `ecs_service_name`
+- `AWS_ECS_SUMMARY_WORKER_SERVICE` from `ecs_summary_worker_service_name`
 
-The deploy workflow assumes the ECS service already exists, runs only from `master`, pushes the backend image to ECR as `:latest`, and forces a new ECS deployment so the service pulls that tag.
+The deploy workflow assumes both ECS services already exist, runs only from `master`, pushes the backend image to ECR as `:latest`, rolls the API service first so it can apply migrations, then restarts the summary worker service.
 
-The ECS task definition is managed in Terraform and mounts EFS at `/srv/supermanager`, with `SUPERMANAGER_DATA_DIR=/srv/supermanager` set in the container environment. The service is configured as a single writer during deploys with `desired_count = 1`, `deployment_minimum_healthy_percent = 0`, and `deployment_maximum_percent = 100`.
+The API task definition is managed in Terraform and no longer mounts EFS. The summary worker task definition mounts EFS at `/srv/supermanager`, with `SUPERMANAGER_DATA_DIR=/srv/supermanager` set in the container environment. The API service now rolls with `desired_count = 1`, `deployment_minimum_healthy_percent = 100`, and `deployment_maximum_percent = 200`, while the summary worker replays room summaries from Postgres using `room_summaries.last_processed_seq`.
 
 The task definition also injects these auth-related secrets from Secrets Manager:
 

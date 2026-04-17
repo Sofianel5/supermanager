@@ -1,45 +1,61 @@
-import type { Db, RoomRecord } from "../db";
-import type { FeedStreamHub } from "../sse";
+import type { Db } from "../db";
+import type { SummaryWorkerConfig } from "../config";
 import type { StoragePaths } from "../storage";
-import type { ServerConfig } from "../config";
-import type { StoredHookEvent } from "../types";
 import type { AgentMessage, HostMessage } from "./protocol";
 import { applySummaryToolCall } from "./tool-executor";
 
 interface SummaryAgentHostOptions {
-  config: ServerConfig;
+  config: SummaryWorkerConfig;
   db: Db;
-  feedHub: FeedStreamHub;
   storage: StoragePaths;
 }
 
 type SummaryAgentProcess = Bun.Subprocess<"pipe", "pipe", "pipe">;
+
 const ORGANIZATION_HEARTBEAT_EVENT_LIMIT = 500;
+const ROOM_SUMMARY_EVENT_LIMIT = 200;
+const ROOM_SUMMARY_SWEEP_LIMIT = 50;
 
 export class SummaryAgentHost {
   private child: SummaryAgentProcess | null = null;
-  private heartbeatTimer: Timer | null = null;
+  private organizationHeartbeatTimer: Timer | null = null;
+  private roomSweepTimer: Timer | null = null;
   private heartbeatSweepInFlight = false;
+  private roomSweepInFlight = false;
   private pendingOrganizationHeartbeatCutoff = new Map<string, string>();
+  private pendingRoomSummarySeq = new Map<string, number>();
   private starting: Promise<void> | null = null;
 
   constructor(private readonly options: SummaryAgentHostOptions) {}
 
   async start(): Promise<void> {
-    await this.options.db.resetGeneratingOrganizationSummaries("error");
+    await Promise.all([
+      this.options.db.resetGeneratingOrganizationSummaries("error"),
+      this.options.db.resetGeneratingRoomSummaries("error"),
+    ]);
     await this.ensureRunning();
-    this.startHeartbeatTimer();
+    this.startOrganizationHeartbeatTimer();
+    this.startRoomSweepTimer();
     void this.runHeartbeatSweep().catch((error) => {
       console.error(
-        `[summary-agent] initial heartbeat sweep failed: ${formatError(error)}`,
+        `[summary-agent] initial organization heartbeat sweep failed: ${formatError(error)}`,
+      );
+    });
+    void this.runRoomSweep().catch((error) => {
+      console.error(
+        `[summary-agent] initial room summary sweep failed: ${formatError(error)}`,
       );
     });
   }
 
   async stop(): Promise<void> {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
+    if (this.organizationHeartbeatTimer) {
+      clearInterval(this.organizationHeartbeatTimer);
+      this.organizationHeartbeatTimer = null;
+    }
+    if (this.roomSweepTimer) {
+      clearInterval(this.roomSweepTimer);
+      this.roomSweepTimer = null;
     }
 
     const child = this.child;
@@ -50,58 +66,6 @@ export class SummaryAgentHost {
     this.detachChild(child);
     child.kill("SIGTERM");
     await child.exited.catch(() => undefined);
-  }
-
-  async checkReady(): Promise<void> {
-    await this.ensureRunning();
-  }
-
-  async enqueue(
-    room: Pick<RoomRecord, "name" | "room_id">,
-    event: StoredHookEvent,
-  ): Promise<void> {
-    await this.ensureRunning();
-    this.send({
-      type: "enqueue_room_event",
-      room_id: room.room_id,
-      room_name: room.name,
-      event,
-    });
-  }
-
-  private async enqueueOrganizationHeartbeat(
-    organizationId: string,
-  ): Promise<void> {
-    await this.ensureRunning();
-    if (this.pendingOrganizationHeartbeatCutoff.has(organizationId)) {
-      return;
-    }
-
-    const previousSummaryUpdatedAt =
-      await this.options.db.getOrganizationSummaryUpdatedAt(organizationId);
-    const heartbeatCutoff = new Date().toISOString();
-    const [events, rooms] = await Promise.all([
-      this.options.db.queryOrganizationEventsForSummary(organizationId, {
-        afterReceivedAt: previousSummaryUpdatedAt,
-        beforeReceivedAt: heartbeatCutoff,
-        limit: ORGANIZATION_HEARTBEAT_EVENT_LIMIT,
-      }),
-      this.options.db.listRoomsForSummary(organizationId),
-    ]);
-    const summaryUpdatedAt =
-      events.length === ORGANIZATION_HEARTBEAT_EVENT_LIMIT
-        ? events.at(-1)?.received_at ?? heartbeatCutoff
-        : heartbeatCutoff;
-    this.pendingOrganizationHeartbeatCutoff.set(
-      organizationId,
-      summaryUpdatedAt,
-    );
-    this.send({
-      type: "organization_heartbeat",
-      events,
-      organization_id: organizationId,
-      rooms,
-    });
   }
 
   private async ensureRunning(): Promise<void> {
@@ -193,10 +157,6 @@ export class SummaryAgentHost {
     switch (message.type) {
       case "summary_status": {
         if (message.scope === "organization") {
-          await this.options.db.setOrganizationSummaryStatus(
-            message.target_id,
-            message.status,
-          );
           if (message.status === "ready") {
             const pendingCutoff = this.pendingOrganizationHeartbeatCutoff.get(
               message.target_id,
@@ -207,19 +167,43 @@ export class SummaryAgentHost {
                 pendingCutoff,
               );
             }
+            await this.options.db.setOrganizationSummaryStatus(
+              message.target_id,
+              message.status,
+            );
             this.pendingOrganizationHeartbeatCutoff.delete(message.target_id);
-          } else if (message.status === "error") {
+          } else {
+            await this.options.db.setOrganizationSummaryStatus(
+              message.target_id,
+              message.status,
+            );
+          }
+          if (message.status === "error") {
             this.pendingOrganizationHeartbeatCutoff.delete(message.target_id);
           }
         } else {
-          await this.options.db.setRoomSummaryStatus(
-            message.target_id,
-            message.status,
-          );
-          this.options.feedHub.publishSummaryStatus(
-            message.target_id,
-            message.status,
-          );
+          if (message.status === "ready") {
+            const processedSeq = this.pendingRoomSummarySeq.get(message.target_id);
+            if (processedSeq != null) {
+              await this.options.db.setRoomSummaryLastProcessedSeq(
+                message.target_id,
+                processedSeq,
+              );
+            }
+            await this.options.db.setRoomSummaryStatus(
+              message.target_id,
+              message.status,
+            );
+            this.pendingRoomSummarySeq.delete(message.target_id);
+          } else {
+            await this.options.db.setRoomSummaryStatus(
+              message.target_id,
+              message.status,
+            );
+          }
+          if (message.status === "error") {
+            this.pendingRoomSummarySeq.delete(message.target_id);
+          }
         }
         return;
       }
@@ -272,16 +256,31 @@ export class SummaryAgentHost {
     });
   }
 
-  private startHeartbeatTimer(): void {
-    const intervalMs = this.options.config.summaryRefreshIntervalMs;
-    if (intervalMs <= 0 || this.heartbeatTimer) {
+  private startOrganizationHeartbeatTimer(): void {
+    const intervalMs = this.options.config.organizationSummaryRefreshIntervalMs;
+    if (intervalMs <= 0 || this.organizationHeartbeatTimer) {
       return;
     }
 
-    this.heartbeatTimer = setInterval(() => {
+    this.organizationHeartbeatTimer = setInterval(() => {
       void this.runHeartbeatSweep().catch((error) => {
         console.error(
-          `[summary-agent] heartbeat sweep failed: ${formatError(error)}`,
+          `[summary-agent] organization heartbeat sweep failed: ${formatError(error)}`,
+        );
+      });
+    }, intervalMs);
+  }
+
+  private startRoomSweepTimer(): void {
+    const intervalMs = this.options.config.roomSummaryPollIntervalMs;
+    if (intervalMs <= 0 || this.roomSweepTimer) {
+      return;
+    }
+
+    this.roomSweepTimer = setInterval(() => {
+      void this.runRoomSweep().catch((error) => {
+        console.error(
+          `[summary-agent] room summary sweep failed: ${formatError(error)}`,
         );
       });
     }, intervalMs);
@@ -298,18 +297,126 @@ export class SummaryAgentHost {
         await this.options.db.listOrganizationsWithRooms();
       await Promise.all(
         organizationIds.map(async (organizationId) => {
-          const status =
-            await this.options.db.getOrganizationSummaryStatus(organizationId);
-          if (status === "generating") {
-            return;
-          }
+          try {
+            if (this.pendingOrganizationHeartbeatCutoff.has(organizationId)) {
+              return;
+            }
 
-          await this.enqueueOrganizationHeartbeat(organizationId);
+            const previousSummaryUpdatedAt =
+              await this.options.db.tryStartOrganizationSummary(organizationId);
+            if (previousSummaryUpdatedAt == null) {
+              return;
+            }
+
+            await this.enqueueOrganizationHeartbeat(
+              organizationId,
+              previousSummaryUpdatedAt,
+            );
+          } catch (error) {
+            console.error(
+              `[summary-agent] failed to enqueue organization heartbeat for ${organizationId}: ${formatError(error)}`,
+            );
+            await this.options.db
+              .setOrganizationSummaryStatus(organizationId, "error")
+              .catch(() => undefined);
+            this.pendingOrganizationHeartbeatCutoff.delete(organizationId);
+          }
         }),
       );
     } finally {
       this.heartbeatSweepInFlight = false;
     }
+  }
+
+  private async runRoomSweep(): Promise<void> {
+    if (this.roomSweepInFlight) {
+      return;
+    }
+
+    this.roomSweepInFlight = true;
+    try {
+      const rooms =
+        await this.options.db.listRoomsNeedingSummary(ROOM_SUMMARY_SWEEP_LIMIT);
+      for (const room of rooms) {
+        try {
+          if (this.pendingRoomSummarySeq.has(room.room_id)) {
+            continue;
+          }
+
+          const claim = await this.options.db.tryStartRoomSummary(room.room_id);
+          if (!claim) {
+            continue;
+          }
+
+          const events = await this.options.db.queryRoomEventsForSummary(
+            room.room_id,
+            {
+              afterSeq: claim.lastProcessedSeq,
+              limit: ROOM_SUMMARY_EVENT_LIMIT,
+            },
+          );
+          if (events.length === 0) {
+            await this.options.db.setRoomSummaryStatus(room.room_id, "ready");
+            continue;
+          }
+
+          this.pendingRoomSummarySeq.set(
+            room.room_id,
+            events[events.length - 1]!.seq,
+          );
+          await this.ensureRunning();
+          for (const event of events) {
+            this.send({
+              type: "enqueue_room_event",
+              room_id: room.room_id,
+              room_name: room.name,
+              event,
+            });
+          }
+        } catch (error) {
+          console.error(
+            `[summary-agent] failed to enqueue room summary for ${room.room_id}: ${formatError(error)}`,
+          );
+          await this.options.db
+            .setRoomSummaryStatus(room.room_id, "error")
+            .catch(() => undefined);
+          this.pendingRoomSummarySeq.delete(room.room_id);
+        }
+      }
+    } finally {
+      this.roomSweepInFlight = false;
+    }
+  }
+
+  private async enqueueOrganizationHeartbeat(
+    organizationId: string,
+    previousSummaryUpdatedAt: string | null,
+  ): Promise<void> {
+    await this.ensureRunning();
+
+    const heartbeatCutoff = new Date().toISOString();
+    const [events, rooms] = await Promise.all([
+      this.options.db.queryOrganizationEventsForSummary(organizationId, {
+        afterReceivedAt: previousSummaryUpdatedAt,
+        beforeReceivedAt: heartbeatCutoff,
+        limit: ORGANIZATION_HEARTBEAT_EVENT_LIMIT,
+      }),
+      this.options.db.listRoomsForSummary(organizationId),
+    ]);
+    const summaryUpdatedAt =
+      events.length === ORGANIZATION_HEARTBEAT_EVENT_LIMIT
+        ? events.at(-1)?.received_at ?? heartbeatCutoff
+        : heartbeatCutoff;
+    this.pendingOrganizationHeartbeatCutoff.set(
+      organizationId,
+      summaryUpdatedAt,
+    );
+    this.send({
+      type: "organization_heartbeat",
+      events,
+      organization_id: organizationId,
+      rooms,
+    });
   }
 }
 

@@ -6,7 +6,7 @@ import {
   ROOM_CONNECTION_KEY_CONFIG,
   type SupermanagerAuth,
 } from "./auth";
-import { trimUrl, type ServerConfig } from "./config";
+import { trimUrl, type ApiConfig } from "./config";
 import { Db } from "./db";
 import {
   httpError,
@@ -18,8 +18,6 @@ import {
 import { createMcpRoutes } from "./mcp/routes";
 import { indexEventById } from "./search/store";
 import type { FeedStreamHub } from "./sse";
-import type { StoragePaths } from "./storage";
-import type { SummaryAgentHost } from "./summary/agent-host";
 
 const DEFAULT_PUBLIC_API_URL = "https://api.supermanager.dev";
 const FEED_PAGE_DEFAULT = 10;
@@ -66,10 +64,8 @@ const hookTurnBody = t.Object({
 
 export interface AppContext {
   auth: SupermanagerAuth;
-  config: ServerConfig;
+  config: ApiConfig;
   db: Db;
-  storage: StoragePaths;
-  agent: SummaryAgentHost;
   feedHub: FeedStreamHub;
 }
 
@@ -125,8 +121,6 @@ export function createApp(context: AppContext) {
     .get("/health", async () => {
       try {
         await context.db.ping();
-        await context.storage.checkReady();
-        await context.agent.checkReady();
         return "ok";
       } catch (error) {
         console.error(error);
@@ -307,9 +301,6 @@ export function createApp(context: AppContext) {
               );
 
         replay.reverse();
-        const initialStatus = await context.db.getRoomSummaryStatus(
-          room.room_id,
-        );
         const client = context.feedHub.register(
           room.room_id,
           request.headers.get("origin"),
@@ -318,7 +309,6 @@ export function createApp(context: AppContext) {
         for (const event of replay) {
           client.sendHookEvent(event);
         }
-        client.sendSummaryStatus(initialStatus);
 
         return client.response;
       },
@@ -417,7 +407,6 @@ export function createApp(context: AppContext) {
         });
 
         context.feedHub.publishHookEvent(room.room_id, stored);
-        await context.agent.enqueue(room, stored);
         void indexEventById(context.db, stored.event_id).catch((error) => {
           console.error(
             `[search] failed to index hook event ${stored.event_id}: ${formatError(error)}`,
@@ -443,7 +432,7 @@ export function createApp(context: AppContext) {
           params.roomId,
         );
 
-        return context.db.getRoomSummary(room.room_id);
+        return context.db.getRoomSummaryResponse(room.room_id);
       },
       {
         params: roomParams,

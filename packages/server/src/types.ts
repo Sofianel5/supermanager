@@ -1,6 +1,7 @@
 import type {
   OrganizationSnapshot,
   RoomSnapshot,
+  SummaryStatus,
 } from "@supermanager/common/summary-protocol";
 
 export interface IngestResponse {
@@ -11,6 +12,12 @@ export interface IngestResponse {
 export interface FeedResponse {
   events: StoredHookEvent[];
   total_count: number;
+}
+
+export interface RoomSummaryResponse {
+  last_processed_seq: number;
+  status: SummaryStatus;
+  summary: RoomSnapshot;
 }
 
 export interface CreateRoomRequest {

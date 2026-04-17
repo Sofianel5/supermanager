@@ -1,6 +1,6 @@
-import type { StoredHookEvent, SummaryStatus } from "./types";
+import type { StoredHookEvent } from "./types";
 
-type EventName = "hook_event" | "summary_status";
+type EventName = "hook_event";
 
 export class FeedStreamClient {
   readonly response: Response;
@@ -41,10 +41,6 @@ export class FeedStreamClient {
 
   sendHookEvent(event: StoredHookEvent): void {
     this.send("hook_event", JSON.stringify(event), String(event.seq));
-  }
-
-  sendSummaryStatus(status: SummaryStatus): void {
-    this.send("summary_status", JSON.stringify({ status }));
   }
 
   close(): void {
@@ -119,16 +115,6 @@ export class FeedStreamHub {
     }
     for (const listener of listeners) {
       listener.sendHookEvent(event);
-    }
-  }
-
-  publishSummaryStatus(roomId: string, status: SummaryStatus): void {
-    const listeners = this.rooms.get(roomId);
-    if (!listeners) {
-      return;
-    }
-    for (const listener of listeners) {
-      listener.sendSummaryStatus(status);
     }
   }
 }
