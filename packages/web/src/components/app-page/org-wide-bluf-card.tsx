@@ -26,9 +26,6 @@ export function OrgWideBlufCard({
     <section className={cx(accentSurfaceClass, "grid gap-4 p-[18px]")}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <span className={sectionLabelClass}>Org-wide BLUF</span>
-        <span className={cx(pillBaseClass, summaryToneClass(summaryStatus))}>
-          {summaryStatus}
-        </span>
       </div>
 
       {hasBluf ? (
