@@ -593,7 +593,7 @@ resource "aws_ecs_task_definition" "summary_worker" {
       name      = var.summary_worker_container_name
       image     = "${aws_ecr_repository.server.repository_url}:latest"
       essential = true
-      command   = ["/usr/local/bin/supermanager-worker"]
+      command   = ["/usr/local/bin/summary-agent"]
       environment = [
         {
           name  = "SUPERMANAGER_DATA_DIR"

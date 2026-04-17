@@ -7,7 +7,6 @@
   "scripts": {
     "dev": "bun --watch src/main.ts",
     "build": "bun build --compile --bytecode --outfile .build/supermanager-server ./src/main.ts",
-    "build:worker": "bun build --compile --bytecode --outfile .build/supermanager-worker ./src/worker-main.ts",
     "start": "./.build/supermanager-server",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

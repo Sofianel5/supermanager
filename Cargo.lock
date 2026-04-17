@@ -8479,6 +8479,8 @@ dependencies = [
  "reporter-protocol",
  "serde",
  "serde_json",
+ "sqlx",
+ "time",
  "tokio",
  "uuid",
 ]

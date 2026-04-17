@@ -10,8 +10,7 @@ FROM server-deps AS server-build
 WORKDIR /app/packages/server
 COPY packages/server/ ./
 RUN bun run typecheck \
- && bun run build \
- && bun run build:worker
+ && bun run build
 
 FROM rust:1.93-slim-bookworm AS rust-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -50,9 +49,7 @@ WORKDIR /app/server
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates libssl3 \
     && rm -rf /var/lib/apt/lists/*
-ENV SUPERMANAGER_SUMMARY_AGENT_BIN=/usr/local/bin/summary-agent
 COPY --from=server-build /app/packages/server/.build/supermanager-server /usr/local/bin/supermanager-server
-COPY --from=server-build /app/packages/server/.build/supermanager-worker /usr/local/bin/supermanager-worker
 COPY --from=server-build /app/packages/server/migrations ./migrations
 COPY --from=rust-builder /rds-global-bundle.pem /etc/ssl/certs/rds-global-bundle.pem
 COPY --from=rust-builder /summary-agent /usr/local/bin/summary-agent

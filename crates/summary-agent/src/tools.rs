@@ -204,49 +204,6 @@ impl SummaryTool {
             other => anyhow::bail!("unknown organization summary tool: {other}"),
         }
     }
-
-    pub(crate) fn into_wire(self) -> (String, Value) {
-        match self {
-            Self::RoomGetSnapshot | Self::OrganizationGetSnapshot => {
-                ("get_snapshot".to_owned(), json!({}))
-            }
-            Self::SetRoomBluf { markdown } => {
-                ("set_bluf".to_owned(), json!({ "markdown": markdown }))
-            }
-            Self::SetRoomDetailedSummary { markdown } => {
-                (
-                    "set_detailed_summary".to_owned(),
-                    json!({ "markdown": markdown }),
-                )
-            }
-            Self::SetOrgBluf { markdown } => {
-                ("set_org_bluf".to_owned(), json!({ "markdown": markdown }))
-            }
-            Self::SetEmployeeBluf {
-                employee_name,
-                room_ids,
-                markdown,
-            } => {
-                let arguments = if room_ids.is_empty() {
-                    json!({
-                        "employee_name": employee_name,
-                        "markdown": markdown,
-                    })
-                } else {
-                    json!({
-                        "employee_name": employee_name,
-                        "room_ids": room_ids,
-                        "markdown": markdown,
-                    })
-                };
-                ("set_employee_bluf".to_owned(), arguments)
-            }
-            Self::RemoveEmployeeBluf { employee_name } => (
-                "remove_employee_bluf".to_owned(),
-                json!({ "employee_name": employee_name }),
-            ),
-        }
-    }
 }
 
 pub(crate) fn tool_failure(message: impl Into<String>) -> DynamicToolCallResponse {

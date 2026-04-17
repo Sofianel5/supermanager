@@ -9,16 +9,16 @@ use codex_app_server_protocol::{
     ThreadStartResponse, TurnStartParams, TurnStartResponse, TurnStatus, TurnSteerParams,
     TurnSteerResponse, UserInput,
 };
-use reporter_protocol::StoredHookEvent;
+use reporter_protocol::{StoredHookEvent, SummaryStatus};
 use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use crate::{
+    db::SummaryDb,
     event::{
         OrganizationHeartbeatEvent, OrganizationHeartbeatRoom,
         format_organization_heartbeat_request, format_room_event,
     },
-    ipc::{AgentMessage, PendingToolCalls},
     prompt::{ORGANIZATION_SYSTEM_PROMPT, ROOM_SYSTEM_PROMPT},
     tools::{SummaryTool, tool_failure},
 };
@@ -44,25 +44,8 @@ enum LoopInput {
     Event(Option<InProcessServerEvent>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SummaryStatus {
-    Generating,
-    Ready,
-    Error,
-}
-
-impl SummaryStatus {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Generating => "generating",
-            Self::Ready => "ready",
-            Self::Error => "error",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum SummaryScope {
+pub(crate) enum SummaryScope {
     Organization,
     Room,
 }
@@ -88,6 +71,15 @@ impl SummaryScope {
             Self::Room => ROOM_SYSTEM_PROMPT,
         }
     }
+}
+
+#[derive(Debug)]
+pub(crate) enum AgentEvent {
+    SummaryStatus {
+        scope: SummaryScope,
+        target_id: String,
+        status: SummaryStatus,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -120,33 +112,31 @@ struct SummaryTargetState {
 pub(crate) struct AgentLoop {
     client: InProcessAppServerClient,
     command_rx: mpsc::Receiver<AgentCommand>,
-    output_tx: mpsc::Sender<AgentMessage>,
+    event_tx: mpsc::Sender<AgentEvent>,
+    db: SummaryDb,
     summary_threads_dir: PathBuf,
     next_request_id: i64,
-    next_tool_call_id: u64,
     targets: HashMap<SummaryTarget, SummaryTargetState>,
     thread_to_target: HashMap<String, SummaryTarget>,
-    pending_tool_calls: PendingToolCalls,
 }
 
 impl AgentLoop {
     pub(crate) fn new(
         client: InProcessAppServerClient,
         command_rx: mpsc::Receiver<AgentCommand>,
-        output_tx: mpsc::Sender<AgentMessage>,
+        event_tx: mpsc::Sender<AgentEvent>,
+        db: SummaryDb,
         summary_threads_dir: PathBuf,
-        pending_tool_calls: PendingToolCalls,
     ) -> Self {
         Self {
             client,
             command_rx,
-            output_tx,
+            event_tx,
+            db,
             summary_threads_dir,
             next_request_id: 1,
-            next_tool_call_id: 1,
             targets: HashMap::new(),
             thread_to_target: HashMap::new(),
-            pending_tool_calls,
         }
     }
 
@@ -238,33 +228,21 @@ impl AgentLoop {
 
     async fn handle_notification(&mut self, notification: ServerNotification) -> Result<()> {
         match notification {
-            ServerNotification::Error(payload) => {
-                let label = self
-                    .thread_to_target
-                    .get(&payload.thread_id)
-                    .map(|target| format!("{} {}", target.scope.as_str(), target.id))
-                    .unwrap_or_else(|| format!("thread {}", payload.thread_id));
-                eprintln!(
-                    "[summary-agent] turn error for {label} turn {}: {}",
-                    payload.turn_id, payload.error
-                );
-            }
             ServerNotification::TurnCompleted(payload) => {
                 let Some(target) = self.thread_to_target.get(&payload.thread_id).cloned() else {
                     return Ok(());
                 };
-                let Some(state) = self.targets.get_mut(&target) else {
-                    return Ok(());
-                };
-                if state.active_turn.as_deref() != Some(payload.turn.id.as_str()) {
-                    return Ok(());
+                if let Some(state) = self.targets.get_mut(&target) {
+                    if state.active_turn.as_deref() != Some(payload.turn.id.as_str()) {
+                        return Ok(());
+                    }
+                    state.active_turn = None;
+                    let status = match payload.turn.status {
+                        TurnStatus::Completed => SummaryStatus::Ready,
+                        _ => SummaryStatus::Error,
+                    };
+                    self.emit_summary_status(&target, status).await;
                 }
-                state.active_turn = None;
-                let status = match payload.turn.status {
-                    TurnStatus::Completed => SummaryStatus::Ready,
-                    _ => SummaryStatus::Error,
-                };
-                self.emit_summary_status(&target, status).await;
             }
             _ => {}
         }
@@ -532,48 +510,35 @@ impl AgentLoop {
             Err(error) => return Ok(tool_failure(error.to_string())),
         };
 
-        let (tool_name, arguments) = tool.into_wire();
-        let tool_call_id = self.next_tool_call_id();
-        let (tx, rx) = oneshot::channel();
-        self.pending_tool_calls
-            .lock()
-            .await
-            .insert(tool_call_id.clone(), tx);
+        let result = match target.scope {
+            SummaryScope::Organization => {
+                self.db
+                    .execute_organization_tool_call(&target.id, tool)
+                    .await
+            }
+            SummaryScope::Room => self.db.execute_room_tool_call(&target.id, tool).await,
+        };
 
-        if self
-            .output_tx
-            .send(AgentMessage::ToolCall {
-                id: tool_call_id.clone(),
-                scope: target.scope.as_str().to_owned(),
-                target_id: target.id.clone(),
-                tool: tool_name,
-                arguments,
-            })
-            .await
-            .is_err()
-        {
-            self.pending_tool_calls.lock().await.remove(&tool_call_id);
-            return Ok(tool_failure("host is not accepting tool calls"));
-        }
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => return Ok(tool_failure(error.to_string())),
+        };
 
-        match rx.await {
-            Ok(result) => Ok(DynamicToolCallResponse {
-                content_items: vec![DynamicToolCallOutputContentItem::InputText {
-                    text: result.message,
-                }],
-                success: result.success,
-            }),
-            Err(_) => Ok(tool_failure("tool call channel closed unexpectedly")),
-        }
+        Ok(DynamicToolCallResponse {
+            content_items: vec![DynamicToolCallOutputContentItem::InputText {
+                text: result.message,
+            }],
+            success: result.success,
+        })
     }
 
     async fn emit_summary_status(&self, target: &SummaryTarget, status: SummaryStatus) {
         let _ = self
-            .output_tx
-            .send(AgentMessage::SummaryStatus {
-                scope: target.scope.as_str().to_owned(),
+            .event_tx
+            .send(AgentEvent::SummaryStatus {
+                scope: target.scope,
                 target_id: target.id.clone(),
-                status: status.as_str().to_owned(),
+                status,
             })
             .await;
     }
@@ -582,11 +547,5 @@ impl AgentLoop {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
         RequestId::Integer(request_id)
-    }
-
-    fn next_tool_call_id(&mut self) -> String {
-        let tool_call_id = format!("tool_{}", self.next_tool_call_id);
-        self.next_tool_call_id += 1;
-        tool_call_id
     }
 }
