@@ -500,8 +500,8 @@ function SummaryContent({
           </span>
         </summary>
         <div className="border-t border-border px-[18px] pb-[18px] pt-4">
-          {snapshot.overview_markdown.trim() ? (
-            <MarkdownBlock markdown={snapshot.overview_markdown} />
+          {snapshot.detailed_summary_markdown.trim() ? (
+            <MarkdownBlock markdown={snapshot.detailed_summary_markdown} />
           ) : (
             <p className={messageClass}>No detailed summary yet.</p>
           )}
@@ -551,7 +551,7 @@ function SummaryContent({
 function emptyRoomSnapshot(): RoomSnapshot {
   return {
     bluf_markdown: "",
-    overview_markdown: "",
+    detailed_summary_markdown: "",
     employees: [],
   };
 }
@@ -559,7 +559,7 @@ function emptyRoomSnapshot(): RoomSnapshot {
 function hasSnapshotContent(snapshot: RoomSnapshot) {
   return Boolean(
     snapshot.bluf_markdown.trim() ||
-      snapshot.overview_markdown.trim() ||
+      snapshot.detailed_summary_markdown.trim() ||
       snapshot.employees.some((employee) => employee.bluf_markdown.trim()),
   );
 }

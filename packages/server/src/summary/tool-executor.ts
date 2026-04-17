@@ -55,13 +55,13 @@ async function applyRoomSummaryToolCall(
         };
       });
     }
-    case "set_overview": {
+    case "set_detailed_summary": {
       const markdown = readRequiredString(argumentsValue, "markdown").trim();
       return mutateRoomSummary(db, roomId, (snapshot) => {
-        snapshot.overview_markdown = markdown;
+        snapshot.detailed_summary_markdown = markdown;
         return {
           changed: true,
-          message: `updated room overview for ${normalizeRoomId(roomId)}`,
+          message: `updated room detailed summary for ${normalizeRoomId(roomId)}`,
         };
       });
     }

@@ -34,7 +34,7 @@ pub(crate) enum SummaryTool {
     SetRoomBluf {
         markdown: String,
     },
-    SetRoomOverview {
+    SetRoomDetailedSummary {
         markdown: String,
     },
     OrganizationGetSnapshot,
@@ -65,7 +65,7 @@ impl SummaryTool {
                 markdown_only_schema(),
             ),
             spec(
-                "set_overview",
+                "set_detailed_summary",
                 "Replace the room detailed summary markdown.",
                 markdown_only_schema(),
             ),
@@ -147,10 +147,10 @@ impl SummaryTool {
                     markdown: args.markdown,
                 })
             }
-            "set_overview" => {
+            "set_detailed_summary" => {
                 let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid set_overview arguments")?;
-                Ok(Self::SetRoomOverview {
+                    .context("invalid set_detailed_summary arguments")?;
+                Ok(Self::SetRoomDetailedSummary {
                     markdown: args.markdown,
                 })
             }
@@ -213,8 +213,11 @@ impl SummaryTool {
             Self::SetRoomBluf { markdown } => {
                 ("set_bluf".to_owned(), json!({ "markdown": markdown }))
             }
-            Self::SetRoomOverview { markdown } => {
-                ("set_overview".to_owned(), json!({ "markdown": markdown }))
+            Self::SetRoomDetailedSummary { markdown } => {
+                (
+                    "set_detailed_summary".to_owned(),
+                    json!({ "markdown": markdown }),
+                )
             }
             Self::SetOrgBluf { markdown } => {
                 ("set_org_bluf".to_owned(), json!({ "markdown": markdown }))

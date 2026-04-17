@@ -99,7 +99,7 @@ export type {
 export function emptyRoomSnapshot(): RoomSnapshot {
   return {
     bluf_markdown: "",
-    overview_markdown: "",
+    detailed_summary_markdown: "",
     employees: [],
   };
 }
