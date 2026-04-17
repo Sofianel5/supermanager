@@ -38,7 +38,6 @@ type FeedMessageKind = "model" | "update" | "user";
 
 const FEED_MESSAGE_PREVIEW_LENGTH = 320;
 const FEED_FILE_PREVIEW_LIMIT = 4;
-const FEED_METADATA_PREVIEW_LIMIT = 3;
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
@@ -296,10 +295,8 @@ function RawFeedEvent({
   const details = describeFeedEvent(event);
   const visibleFiles = details.files.slice(0, FEED_FILE_PREVIEW_LIMIT);
   const hiddenFileCount = details.files.length - visibleFiles.length;
-  const metadataPreview = details.metadata
-    .slice(0, FEED_METADATA_PREVIEW_LIMIT)
-    .map((field) => field.label.toLowerCase())
-    .join(", ");
+  const detailFields = buildSessionDetailFields(event, details.metadata);
+  const repoLabel = formatRepoRootLabel(event.repo_root);
 
   return (
     <article className="relative border-t border-border pt-4 pl-[18px] animate-[rise-in_380ms_ease-out_both] before:absolute before:left-0 before:top-[21px] before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent before:shadow-[0_0_16px_rgba(245,158,11,0.45)] first:border-t-0 first:pt-0 first:before:top-1">
@@ -321,11 +318,17 @@ function RawFeedEvent({
           </time>
         </div>
 
-        <p className="m-0 flex flex-wrap gap-2.5 font-mono text-[0.76rem] text-ink-dim">
-          <span>{event.repo_root}</span>
-          {event.branch && <span>{event.branch}</span>}
-          <span>{event.client}</span>
-        </p>
+        <div className="flex flex-wrap items-center gap-2 text-[0.82rem] text-ink-dim">
+          <span className="font-medium text-ink">{repoLabel}</span>
+          {event.branch && (
+            <span className="font-mono text-[0.74rem] text-ink-muted">
+              {event.branch}
+            </span>
+          )}
+          <span className="font-mono text-[0.74rem] uppercase text-ink-muted">
+            {event.client}
+          </span>
+        </div>
 
         {details.title && (
           <p className="m-0 text-[1rem] font-medium leading-6 text-ink">
@@ -343,26 +346,23 @@ function RawFeedEvent({
 
           return (
             <div
-              className="grid gap-2 border-l-2 border-border pl-3"
+              className="grid gap-2"
               key={message.id}
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={cx(
-                    pillBaseClass,
-                    "min-h-[24px] border-border px-2.5",
-                    feedMessageToneClass(message.kind),
-                  )}
-                >
-                  {feedMessageLabel(message.kind)}
-                </span>
+              <div
+                className={cx(
+                  "font-mono text-[0.68rem] font-semibold uppercase tracking-[0.08em]",
+                  feedMessageToneClass(message.kind),
+                )}
+              >
+                {feedMessageLabel(message.kind)}
               </div>
               <p className="m-0 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-[#dbe7ff]">
                 {visibleMessage}
               </p>
               {shouldTruncate && (
                 <button
-                  className="inline-flex w-fit border-none bg-transparent p-0 font-mono text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-accent"
+                  className="inline-flex w-fit border-none bg-transparent p-0 font-mono text-[0.72rem] font-semibold text-accent"
                   type="button"
                   onClick={() =>
                     setExpandedMessages((current) => ({
@@ -371,7 +371,13 @@ function RawFeedEvent({
                     }))
                   }
                 >
-                  {isExpanded ? "Show less" : "Show full message"}
+                  {isExpanded
+                    ? "Show less"
+                    : message.kind === "model"
+                      ? "Show full reply"
+                      : message.kind === "user"
+                        ? "Show full prompt"
+                        : "Show full message"}
                 </button>
               )}
             </div>
@@ -401,21 +407,16 @@ function RawFeedEvent({
           </div>
         )}
 
-        {details.metadata.length > 0 && (
+        {detailFields.length > 0 && (
           <details className="grid gap-3">
-            <summary className="flex cursor-pointer list-none items-center gap-3 font-mono text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-ink-muted [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
-              <span>See more</span>
-              {metadataPreview && (
-                <span className="truncate lowercase tracking-normal text-ink-dim">
-                  {metadataPreview}
-                  {details.metadata.length > FEED_METADATA_PREVIEW_LIMIT
-                    ? ` +${details.metadata.length - FEED_METADATA_PREVIEW_LIMIT}`
-                    : ""}
-                </span>
-              )}
+            <summary className="flex cursor-pointer list-none items-center gap-3 font-mono text-[0.72rem] font-semibold text-ink-muted [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
+              <span>Session details</span>
+              <span className="text-[0.68rem] uppercase tracking-[0.08em]">
+                {detailFields.length}
+              </span>
             </summary>
             <dl className="grid gap-2 sm:grid-cols-2">
-              {details.metadata.map((field) => (
+              {detailFields.map((field) => (
                 <div
                   className="grid gap-1 border border-border bg-[rgba(10,14,21,0.44)] p-3"
                   key={`${field.label}:${field.value}`}
@@ -435,7 +436,7 @@ function RawFeedEvent({
         {!details.title &&
           details.messages.length === 0 &&
           details.files.length === 0 &&
-          details.metadata.length === 0 && (
+          detailFields.length === 0 && (
             <p className={messageClass}>No readable update details were included.</p>
           )}
       </div>
@@ -577,12 +578,6 @@ function buildFeedMessages(
   pushFeedMessage(
     messages,
     payload,
-    ["summary", "message", "description"],
-    "update",
-  );
-  pushFeedMessage(
-    messages,
-    payload,
     ["prompt", "last_user_message", "user_message"],
     "user",
   );
@@ -591,6 +586,12 @@ function buildFeedMessages(
     payload,
     ["last_assistant_message", "assistant_message", "response"],
     "model",
+  );
+  pushFeedMessage(
+    messages,
+    payload,
+    ["summary", "message", "description"],
+    "update",
   );
 
   if (messages.length === 0) {
@@ -802,11 +803,11 @@ function formatFeedMetadataLabel(key: string) {
 
 function feedMessageLabel(kind: FeedMessageKind) {
   if (kind === "user") {
-    return "User";
+    return "User asked";
   }
 
   if (kind === "model") {
-    return "Model";
+    return "Model replied";
   }
 
   return "Update";
@@ -824,6 +825,33 @@ function feedMessageToneClass(kind: FeedMessageKind) {
   return "text-ink-dim";
 }
 
+function buildSessionDetailFields(
+  event: StoredHookEvent,
+  metadata: Array<{ label: string; value: string }>,
+) {
+  const fields = [...metadata];
+  const repoLabel = formatRepoRootLabel(event.repo_root);
+
+  if (repoLabel !== event.repo_root) {
+    fields.unshift({
+      label: "Repo path",
+      value: event.repo_root,
+    });
+  }
+
+  return fields;
+}
+
+function formatRepoRootLabel(repoRoot: string) {
+  const trimmed = repoRoot.trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return repoRoot;
+  }
+
+  const segments = trimmed.split("/");
+  return segments[segments.length - 1] || repoRoot;
+}
+
 function shouldHidePayloadField(key: string) {
   const normalized = key.trim().toLowerCase();
 
@@ -831,7 +859,9 @@ function shouldHidePayloadField(key: string) {
     normalized === "cwd" ||
     normalized === "extra" ||
     normalized === "files" ||
+    normalized === "client" ||
     normalized === "hook_event_name" ||
+    normalized === "repo_root" ||
     normalized === "summary" ||
     normalized === "last_assistant_message" ||
     normalized === "message" ||
