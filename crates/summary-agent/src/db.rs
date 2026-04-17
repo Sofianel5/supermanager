@@ -74,10 +74,12 @@ impl SummaryDb {
     }
 
     pub(crate) async fn reset_generating_organization_summaries(&self) -> Result<()> {
-        sqlx::query("UPDATE organization_summaries SET status = 'error' WHERE status = 'generating'")
-            .execute(&self.pool)
-            .await
-            .context("failed to reset generating organization summaries")?;
+        sqlx::query(
+            "UPDATE organization_summaries SET status = 'error' WHERE status = 'generating'",
+        )
+        .execute(&self.pool)
+        .await
+        .context("failed to reset generating organization summaries")?;
         Ok(())
     }
 

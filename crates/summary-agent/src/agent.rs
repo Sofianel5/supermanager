@@ -539,8 +539,8 @@ async fn read_thread_id(path: &std::path::Path) -> Result<Option<String>> {
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| {
-            format!("failed to read thread id from {}", path.display())
-        }),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to read thread id from {}", path.display()))
+        }
     }
 }

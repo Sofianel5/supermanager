@@ -164,8 +164,13 @@ impl SummaryCoordinator {
                 Ok(Some(claim)) => claim,
                 Ok(None) => continue,
                 Err(error) => {
-                    self.mark_error(SummaryScope::Organization, &organization_id, "claim", &error)
-                        .await;
+                    self.mark_error(
+                        SummaryScope::Organization,
+                        &organization_id,
+                        "claim",
+                        &error,
+                    )
+                    .await;
                     continue;
                 }
             };
@@ -227,29 +232,29 @@ impl SummaryCoordinator {
         let heartbeat_cutoff = OffsetDateTime::now_utc()
             .format(&Rfc3339)
             .context("failed to format organization heartbeat cutoff")?;
-        let (events, rooms) = tokio::try_join!(
-            self.db.query_organization_events_for_summary(
+        let events = self
+            .db
+            .query_organization_events_for_summary(
                 organization_id,
                 OrganizationSummaryQueryOptions {
                     after_received_at: previous_summary_updated_at,
                     before_received_at: Some(heartbeat_cutoff.clone()),
                     limit: Some(ORGANIZATION_HEARTBEAT_EVENT_LIMIT),
                 },
-            ),
-            self.db.list_rooms_for_summary(organization_id),
-        )?;
+            )
+            .await?;
 
-        let summary_updated_at = if events.len() as i64 == ORGANIZATION_HEARTBEAT_EVENT_LIMIT {
-            events
-                .last()
-                .map(|event| event.event.received_at.clone())
-                .unwrap_or(heartbeat_cutoff.clone())
-        } else {
-            heartbeat_cutoff.clone()
-        };
-
+        let summary_updated_at = organization_heartbeat_cutoff(&events, &heartbeat_cutoff);
         self.pending_organization_heartbeat_cutoff
-            .insert(organization_id.to_owned(), summary_updated_at);
+            .insert(organization_id.to_owned(), summary_updated_at.to_owned());
+
+        if events.is_empty() {
+            self.persist_organization_status(organization_id, SummaryStatus::Ready)
+                .await?;
+            return Ok(());
+        }
+
+        let rooms = self.db.list_rooms_for_summary(organization_id).await?;
         self.command_tx
             .send(AgentCommand::OrganizationHeartbeat {
                 organization_id: organization_id.to_owned(),
@@ -356,6 +361,78 @@ async fn wait_for_interval(interval: &mut Option<Interval>) {
             interval.tick().await;
         }
         None => pending::<()>().await,
+    }
+}
+
+fn organization_heartbeat_cutoff<'a>(
+    events: &'a [crate::event::OrganizationHeartbeatEvent],
+    heartbeat_cutoff: &'a str,
+) -> &'a str {
+    if events.len() as i64 == ORGANIZATION_HEARTBEAT_EVENT_LIMIT {
+        events
+            .last()
+            .map(|event| event.event.received_at.as_str())
+            .unwrap_or(heartbeat_cutoff)
+    } else {
+        heartbeat_cutoff
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use reporter_protocol::StoredHookEvent;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use crate::event::OrganizationHeartbeatEvent;
+
+    #[test]
+    fn empty_events_use_heartbeat_cutoff() {
+        assert_eq!(
+            organization_heartbeat_cutoff(&[], "2026-04-17T12:00:00Z"),
+            "2026-04-17T12:00:00Z"
+        );
+    }
+
+    #[test]
+    fn at_limit_uses_last_event_received_at() {
+        let events = (0..ORGANIZATION_HEARTBEAT_EVENT_LIMIT)
+            .map(|_| heartbeat_event("2026-04-17T11:59:58Z"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            organization_heartbeat_cutoff(&events, "2026-04-17T12:00:00Z"),
+            "2026-04-17T11:59:58Z"
+        );
+    }
+
+    #[test]
+    fn below_limit_uses_heartbeat_cutoff() {
+        let events = vec![heartbeat_event("2026-04-17T11:59:58Z")];
+
+        assert_eq!(
+            organization_heartbeat_cutoff(&events, "2026-04-17T12:00:00Z"),
+            "2026-04-17T12:00:00Z"
+        );
+    }
+
+    fn heartbeat_event(received_at: &str) -> OrganizationHeartbeatEvent {
+        OrganizationHeartbeatEvent {
+            room_id: "ROOM42".to_owned(),
+            room_name: "Operations".to_owned(),
+            event: StoredHookEvent {
+                seq: 1,
+                event_id: Uuid::nil(),
+                received_at: received_at.to_owned(),
+                employee_name: "Dana".to_owned(),
+                client: "codex".to_owned(),
+                repo_root: "/tmp/repo".to_owned(),
+                branch: None,
+                payload: json!({ "hook_event_name": "Stop" }),
+            },
+        }
     }
 }
 
