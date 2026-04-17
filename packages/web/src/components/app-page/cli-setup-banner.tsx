@@ -1,4 +1,9 @@
-import { accentSurfaceClass, cx, messageClass, sectionLabelClass } from "../../ui";
+import {
+  accentSurfaceClass,
+  cx,
+  messageClass,
+  sectionLabelClass,
+} from "../../ui";
 import { SecondaryActionLink } from "./secondary-action-link";
 
 export function CliSetupBanner() {
@@ -12,17 +17,15 @@ export function CliSetupBanner() {
       <div className="grid gap-2.5">
         <div className={sectionLabelClass}>CLI setup</div>
         <h2 className="m-0 max-w-[24ch] text-3xl font-semibold leading-none text-ink sm:text-[2.6rem]">
-          Install and sign in to the CLI before repo activity lands here.
+          Your sessions aren't streaming yet.
         </h2>
         <p className={messageClass}>
-          Open the setup docs, run the install command on the repo machine, then
-          authenticate and join a room from that checkout.
+          Install the Supermanager CLI and sign in to start sending your Claude
+          Code and Codex activity to your team.
         </p>
       </div>
 
-      <SecondaryActionLink to="/docs">
-        Open setup docs
-      </SecondaryActionLink>
+      <SecondaryActionLink to="/docs">Open setup docs</SecondaryActionLink>
     </section>
   );
 }
