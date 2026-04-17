@@ -275,13 +275,11 @@ export function createApp(context: AppContext) {
 
         const before = query.before;
         const limit = clampLimit(query.limit);
-        const events = await context.db.getHookEvents(
-          room.room_id,
-          before,
-          undefined,
-          limit,
-        );
-        return { events };
+        const [events, totalCount] = await Promise.all([
+          context.db.getHookEvents(room.room_id, before, undefined, limit),
+          context.db.countHookEvents(room.room_id),
+        ]);
+        return { events, total_count: totalCount };
       },
       {
         params: roomParams,

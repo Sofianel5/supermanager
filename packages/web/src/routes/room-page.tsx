@@ -49,6 +49,7 @@ export function RoomPage() {
 
   const room = roomQuery.data ?? null;
   const events = flattenFeedEvents(feedQuery.data?.pages);
+  const totalEventCount = feedQuery.data?.pages[0]?.total_count ?? events.length;
   const snapshot = summaryQuery.data ?? emptyRoomSnapshot();
   const organization = findOrganizationBySlug(
     viewerQuery.data?.organizations ?? [],
@@ -243,7 +244,7 @@ export function RoomPage() {
           <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <span className={sectionLabelClass}>Raw feed</span>
             <span className={`${pillBaseClass} border-border text-ink-dim`}>
-              {events.length} update{events.length === 1 ? "" : "s"}
+              {totalEventCount} update{totalEventCount === 1 ? "" : "s"}
             </span>
           </div>
 
@@ -422,7 +423,7 @@ function prependFeedEvent(
   if (!current) {
     return {
       pageParams: [undefined],
-      pages: [{ events: [nextEvent] }],
+      pages: [{ events: [nextEvent], total_count: 1 }],
     };
   }
 
@@ -439,7 +440,7 @@ function prependFeedEvent(
   if (!firstPage) {
     return {
       ...current,
-      pages: [{ events: [nextEvent] }],
+      pages: [{ events: [nextEvent], total_count: 1 }],
     };
   }
 
@@ -449,6 +450,7 @@ function prependFeedEvent(
       {
         ...firstPage,
         events: [nextEvent, ...firstPage.events],
+        total_count: firstPage.total_count + 1,
       },
       ...restPages,
     ],

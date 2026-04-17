@@ -61,6 +61,10 @@ interface HookEventRow {
   received_at: unknown;
 }
 
+interface CountRow {
+  count: unknown;
+}
+
 interface SummaryRow {
   content_json?: OrganizationSnapshot;
   updated_at?: unknown;
@@ -405,6 +409,16 @@ export class Db {
     `;
 
     return rows.map(mapStoredHookEvent);
+  }
+
+  async countHookEvents(roomId: string): Promise<number> {
+    const [row] = await this.client<CountRow[]>`
+      SELECT COUNT(*)::INT AS count
+      FROM hook_events
+      WHERE room_id = ${normalizeRoomId(roomId)}
+    `;
+
+    return row == null ? 0 : toNumber(row.count);
   }
 
   async listOrganizationsWithRooms(): Promise<string[]> {

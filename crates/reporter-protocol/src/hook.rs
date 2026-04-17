@@ -13,6 +13,7 @@ pub struct IngestResponse {
 #[ts(export, export_to = "../../../packages/web/src/generated/")]
 pub struct FeedResponse {
     pub events: Vec<StoredHookEvent>,
+    pub total_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

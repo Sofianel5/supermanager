@@ -10,6 +10,7 @@ export interface IngestResponse {
 
 export interface FeedResponse {
   events: StoredHookEvent[];
+  total_count: number;
 }
 
 export interface CreateRoomRequest {
