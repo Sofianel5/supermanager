@@ -5,7 +5,7 @@ mod event;
 mod prompt;
 mod tools;
 
-use std::{fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -117,7 +117,6 @@ async fn main() -> Result<()> {
 
 struct SummaryPaths {
     codex_home: PathBuf,
-    data_dir: PathBuf,
     summary_threads_dir: PathBuf,
 }
 
@@ -126,13 +125,13 @@ impl SummaryPaths {
         Self {
             codex_home: data_dir.join("codex"),
             summary_threads_dir: data_dir.join("summary-threads"),
-            data_dir,
         }
     }
 
     async fn initialize(&self) -> Result<()> {
-        for path in [&self.data_dir, &self.codex_home, &self.summary_threads_dir] {
-            fs::create_dir_all(path)
+        for path in [&self.codex_home, &self.summary_threads_dir] {
+            tokio::fs::create_dir_all(path)
+                .await
                 .with_context(|| format!("failed to create {}", path.display()))?;
         }
         Ok(())

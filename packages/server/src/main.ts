@@ -10,7 +10,7 @@ import { FeedStreamHub } from "./sse";
 import { formatError } from "./types";
 
 async function main(): Promise<void> {
-  const config = await loadApiConfig(Bun.argv.slice(2));
+  const config = loadApiConfig(Bun.argv.slice(2));
   const db = await Db.connect(config.databaseUrl);
   const auth = createAuthServices(config);
   await auth.runMigrations();

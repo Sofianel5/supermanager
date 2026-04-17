@@ -14,6 +14,12 @@ use crate::{
     db::{OrganizationSummaryQueryOptions, RoomSummaryQueryOptions, SummaryDb},
 };
 
+#[derive(Clone, Copy)]
+enum ErrorScope {
+    Organization,
+    Room,
+}
+
 const ORGANIZATION_HEARTBEAT_EVENT_LIMIT: i64 = 500;
 const ROOM_SUMMARY_EVENT_LIMIT: i64 = 200;
 const ROOM_SUMMARY_SWEEP_LIMIT: i64 = 50;
@@ -48,12 +54,10 @@ impl SummaryCoordinator {
     }
 
     pub(crate) async fn run(&mut self) -> Result<()> {
-        self.db
-            .reset_generating_organization_summaries(SummaryStatus::Ready)
-            .await?;
-        self.db
-            .reset_generating_room_summaries(SummaryStatus::Ready)
-            .await?;
+        tokio::try_join!(
+            self.db.reset_generating_organization_summaries(),
+            self.db.reset_generating_room_summaries(),
+        )?;
 
         self.run_heartbeat_sweep().await?;
         self.run_room_sweep().await?;
@@ -166,13 +170,8 @@ impl SummaryCoordinator {
                 Ok(Some(claim)) => claim,
                 Ok(None) => continue,
                 Err(error) => {
-                    eprintln!(
-                        "[summary-agent] failed to claim organization summary for {organization_id}: {error:#}"
-                    );
-                    self.db
-                        .set_organization_summary_status(&organization_id, SummaryStatus::Error)
-                        .await
-                        .ok();
+                    self.mark_error(ErrorScope::Organization, &organization_id, "claim", &error)
+                        .await;
                     continue;
                 }
             };
@@ -181,19 +180,52 @@ impl SummaryCoordinator {
                 .enqueue_organization_heartbeat(&organization_id, claim.previous_summary_updated_at)
                 .await
             {
-                eprintln!(
-                    "[summary-agent] failed to enqueue organization heartbeat for {organization_id}: {error:#}"
-                );
-                self.db
-                    .set_organization_summary_status(&organization_id, SummaryStatus::Error)
-                    .await
-                    .ok();
+                self.mark_error(
+                    ErrorScope::Organization,
+                    &organization_id,
+                    "enqueue heartbeat",
+                    &error,
+                )
+                .await;
                 self.pending_organization_heartbeat_cutoff
                     .remove(&organization_id);
             }
         }
 
         Ok(())
+    }
+
+    async fn mark_error(
+        &self,
+        scope: ErrorScope,
+        target_id: &str,
+        action: &str,
+        error: &anyhow::Error,
+    ) {
+        let scope_label = match scope {
+            ErrorScope::Organization => "organization",
+            ErrorScope::Room => "room",
+        };
+        eprintln!(
+            "[summary-agent] failed to {action} {scope_label} summary for {target_id}: {error:#}"
+        );
+        let result = match scope {
+            ErrorScope::Organization => {
+                self.db
+                    .set_organization_summary_status(target_id, SummaryStatus::Error)
+                    .await
+            }
+            ErrorScope::Room => {
+                self.db
+                    .set_room_summary_status(target_id, SummaryStatus::Error)
+                    .await
+            }
+        };
+        if let Err(persist_error) = result {
+            eprintln!(
+                "[summary-agent] failed to persist error status for {scope_label} {target_id}: {persist_error:#}"
+            );
+        }
     }
 
     async fn enqueue_organization_heartbeat(
@@ -204,18 +236,17 @@ impl SummaryCoordinator {
         let heartbeat_cutoff = OffsetDateTime::now_utc()
             .format(&Rfc3339)
             .context("failed to format organization heartbeat cutoff")?;
-        let events = self
-            .db
-            .query_organization_events_for_summary(
+        let (events, rooms) = tokio::try_join!(
+            self.db.query_organization_events_for_summary(
                 organization_id,
                 OrganizationSummaryQueryOptions {
                     after_received_at: previous_summary_updated_at,
                     before_received_at: Some(heartbeat_cutoff.clone()),
                     limit: Some(ORGANIZATION_HEARTBEAT_EVENT_LIMIT),
                 },
-            )
-            .await?;
-        let rooms = self.db.list_rooms_for_summary(organization_id).await?;
+            ),
+            self.db.list_rooms_for_summary(organization_id),
+        )?;
 
         let summary_updated_at = if events.len() as i64 == ORGANIZATION_HEARTBEAT_EVENT_LIMIT {
             events
@@ -257,14 +288,8 @@ impl SummaryCoordinator {
                 Ok(Some(claim)) => claim,
                 Ok(None) => continue,
                 Err(error) => {
-                    eprintln!(
-                        "[summary-agent] failed to claim room summary for {}: {error:#}",
-                        room.room_id
-                    );
-                    self.db
-                        .set_room_summary_status(&room.room_id, SummaryStatus::Error)
-                        .await
-                        .ok();
+                    self.mark_error(ErrorScope::Room, &room.room_id, "claim", &error)
+                        .await;
                     continue;
                 }
             };
@@ -273,14 +298,8 @@ impl SummaryCoordinator {
                 .enqueue_room_summary(&room.room_id, &room.name, claim.last_processed_seq)
                 .await
             {
-                eprintln!(
-                    "[summary-agent] failed to enqueue room summary for {}: {error:#}",
-                    room.room_id
-                );
-                self.db
-                    .set_room_summary_status(&room.room_id, SummaryStatus::Error)
-                    .await
-                    .ok();
+                self.mark_error(ErrorScope::Room, &room.room_id, "enqueue summary", &error)
+                    .await;
                 self.pending_room_summary_seq.remove(&room.room_id);
             }
         }

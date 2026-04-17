@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 use anyhow::{Context, Result};
 use codex_app_server_client::{InProcessAppServerClient, InProcessServerEvent};
@@ -364,10 +364,18 @@ impl AgentLoop {
             return Ok(thread_id);
         }
 
-        let cwd = self.target_cwd(target)?;
+        let target_dir = self
+            .summary_threads_dir
+            .join(target.scope.directory_name())
+            .join(&target.id);
+        let cwd = target_dir.join("cwd");
+        tokio::fs::create_dir_all(&cwd)
+            .await
+            .with_context(|| format!("failed to create target cwd: {}", cwd.display()))?;
         let cwd_str = cwd.display().to_string();
+        let thread_id_path = target_dir.join("thread-id");
 
-        let stored_thread_id = self.read_thread_id(target)?;
+        let stored_thread_id = read_thread_id(&thread_id_path).await?;
         let thread_id = if let Some(thread_id) = stored_thread_id {
             match self.resume_thread(&thread_id, &cwd_str).await {
                 Ok(thread_id) => thread_id,
@@ -385,7 +393,11 @@ impl AgentLoop {
             self.create_thread(target.scope, &cwd_str).await?
         };
 
-        self.write_thread_id(target, &thread_id)?;
+        tokio::fs::write(&thread_id_path, &thread_id)
+            .await
+            .with_context(|| {
+                format!("failed to write thread id to {}", thread_id_path.display())
+            })?;
 
         let state = self
             .targets
@@ -399,47 +411,6 @@ impl AgentLoop {
             .insert(thread_id.clone(), target.clone());
 
         Ok(thread_id)
-    }
-
-    fn target_dir(&self, target: &SummaryTarget) -> PathBuf {
-        self.summary_threads_dir
-            .join(target.scope.directory_name())
-            .join(&target.id)
-    }
-
-    fn target_cwd(&self, target: &SummaryTarget) -> Result<PathBuf> {
-        let dir = self.target_dir(target).join("cwd");
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("failed to create target dir: {}", dir.display()))?;
-        Ok(dir)
-    }
-
-    fn thread_id_path(&self, target: &SummaryTarget) -> Result<PathBuf> {
-        let dir = self.target_dir(target);
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("failed to create target state dir: {}", dir.display()))?;
-        Ok(dir.join("thread-id"))
-    }
-
-    fn read_thread_id(&self, target: &SummaryTarget) -> Result<Option<String>> {
-        let path = self.thread_id_path(target)?;
-        if !path.is_file() {
-            return Ok(None);
-        }
-        let value = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read thread id from {}", path.display()))?;
-        let value = value.trim().to_owned();
-        if value.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(value))
-    }
-
-    fn write_thread_id(&self, target: &SummaryTarget, thread_id: &str) -> Result<()> {
-        let path = self.thread_id_path(target)?;
-        fs::write(&path, thread_id)
-            .with_context(|| format!("failed to write thread id to {}", path.display()))?;
-        Ok(())
     }
 
     async fn create_thread(&mut self, scope: SummaryScope, cwd: &str) -> Result<String> {
@@ -533,19 +504,43 @@ impl AgentLoop {
     }
 
     async fn emit_summary_status(&self, target: &SummaryTarget, status: SummaryStatus) {
-        let _ = self
+        if let Err(error) = self
             .event_tx
             .send(AgentEvent::SummaryStatus {
                 scope: target.scope,
                 target_id: target.id.clone(),
                 status,
             })
-            .await;
+            .await
+        {
+            eprintln!(
+                "[summary-agent] failed to deliver status {status:?} for {} {}: {error}",
+                target.scope.as_str(),
+                target.id,
+            );
+        }
     }
 
     fn next_request_id(&mut self) -> RequestId {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
         RequestId::Integer(request_id)
+    }
+}
+
+async fn read_thread_id(path: &std::path::Path) -> Result<Option<String>> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(value) => {
+            let trimmed = value.trim().to_owned();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(trimmed))
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| {
+            format!("failed to read thread id from {}", path.display())
+        }),
     }
 }

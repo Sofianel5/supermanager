@@ -53,3 +53,13 @@ pub enum SummaryStatus {
     Ready,
     Error,
 }
+
+impl SummaryStatus {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Generating => "generating",
+            Self::Ready => "ready",
+            Self::Error => "error",
+        }
+    }
+}
