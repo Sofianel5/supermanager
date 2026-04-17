@@ -35,6 +35,10 @@ import { readMessage, useCopyHandler } from "../utils";
 type SummaryStatus = "idle" | "ready" | "generating" | "error";
 type ConnectionStatus = "connecting" | "live" | "reconnecting";
 
+const FEED_MESSAGE_PREVIEW_LENGTH = 320;
+const FEED_FILE_PREVIEW_LIMIT = 4;
+const FEED_FIELD_PREVIEW_LIMIT = 4;
+
 export function RoomPage() {
   const { roomId = "" } = useParams();
   const queryClient = useQueryClient();
@@ -251,28 +255,7 @@ export function RoomPage() {
           <div className="grid gap-3.5">
             {events.length > 0 ? (
               events.map((event) => (
-                <article
-                  className="relative border-t border-border pt-4 pl-[18px] animate-[rise-in_380ms_ease-out_both] before:absolute before:left-0 before:top-[21px] before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent before:shadow-[0_0_16px_rgba(245,158,11,0.45)] first:border-t-0 first:pt-0 first:before:top-1"
-                  key={event.event_id}
-                >
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
-                    <strong>{event.employee_name}</strong>
-                    <time
-                      className="font-mono text-[0.72rem] text-ink-muted"
-                      dateTime={event.received_at}
-                    >
-                      {formatRelativeTime(event.received_at, clock)}
-                    </time>
-                  </div>
-                  <p className="my-[10px] flex flex-wrap gap-2.5 font-mono text-[0.76rem] text-ink-dim">
-                    <span>{event.repo_root}</span>
-                    {event.branch && <span>{event.branch}</span>}
-                    <span>{event.client}</span>
-                  </p>
-                  <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[0.8rem] leading-7 text-[#dbe7ff]">
-                    {formatPayload(event.payload)}
-                  </pre>
-                </article>
+                <RawFeedEvent clock={clock} event={event} key={event.event_id} />
               ))
             ) : (
               <p className={messageClass}>No hook updates have landed yet.</p>
@@ -296,6 +279,126 @@ export function RoomPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function RawFeedEvent({
+  clock,
+  event,
+}: {
+  clock: number;
+  event: StoredHookEvent;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const details = describeFeedEvent(event);
+  const shouldTruncate =
+    details.message != null &&
+    details.message.length > FEED_MESSAGE_PREVIEW_LENGTH;
+  const visibleMessage =
+    shouldTruncate && !isExpanded
+      ? truncateFeedMessage(details.message!, FEED_MESSAGE_PREVIEW_LENGTH)
+      : details.message;
+  const visibleFiles = details.files.slice(0, FEED_FILE_PREVIEW_LIMIT);
+  const hiddenFileCount = details.files.length - visibleFiles.length;
+
+  return (
+    <article className="relative border-t border-border pt-4 pl-[18px] animate-[rise-in_380ms_ease-out_both] before:absolute before:left-0 before:top-[21px] before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent before:shadow-[0_0_16px_rgba(245,158,11,0.45)] first:border-t-0 first:pt-0 first:before:top-1">
+      <div className="grid gap-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <strong>{event.employee_name}</strong>
+            {details.eventName && (
+              <span className={`${pillBaseClass} min-h-[24px] border-border px-2.5 text-ink-dim`}>
+                {details.eventName}
+              </span>
+            )}
+          </div>
+          <time
+            className="font-mono text-[0.72rem] text-ink-muted"
+            dateTime={event.received_at}
+          >
+            {formatRelativeTime(event.received_at, clock)}
+          </time>
+        </div>
+
+        <p className="m-0 flex flex-wrap gap-2.5 font-mono text-[0.76rem] text-ink-dim">
+          <span>{event.repo_root}</span>
+          {event.branch && <span>{event.branch}</span>}
+          <span>{event.client}</span>
+        </p>
+
+        {details.title && (
+          <p className="m-0 text-[1rem] font-medium leading-6 text-ink">
+            {details.title}
+          </p>
+        )}
+
+        {visibleMessage && (
+          <div className="grid gap-2">
+            <p className="m-0 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-[#dbe7ff]">
+              {visibleMessage}
+            </p>
+            {shouldTruncate && (
+              <button
+                className="inline-flex w-fit border-none bg-transparent p-0 font-mono text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-accent"
+                type="button"
+                onClick={() => setIsExpanded((current) => !current)}
+              >
+                {isExpanded ? "Show less" : "Show full message"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {details.files.length > 0 && (
+          <div className="grid gap-2">
+            <span className="font-mono text-[0.72rem] uppercase tracking-[0.08em] text-ink-muted">
+              Files
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {visibleFiles.map((file) => (
+                <code
+                  className="inline-flex items-center border border-border bg-[rgba(10,14,21,0.72)] px-2 py-1 text-[0.72rem] text-ink-dim"
+                  key={`${event.event_id}:${file}`}
+                >
+                  {file}
+                </code>
+              ))}
+              {hiddenFileCount > 0 && (
+                <span className="inline-flex items-center border border-border px-2 py-1 font-mono text-[0.72rem] text-ink-muted">
+                  +{hiddenFileCount} more
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {details.fields.length > 0 && (
+          <dl className="grid gap-2 sm:grid-cols-2">
+            {details.fields.map((field) => (
+              <div
+                className="grid gap-1 border border-border bg-[rgba(10,14,21,0.44)] p-3"
+                key={`${field.label}:${field.value}`}
+              >
+                <dt className="font-mono text-[0.68rem] uppercase tracking-[0.08em] text-ink-muted">
+                  {field.label}
+                </dt>
+                <dd className="m-0 break-words text-[0.9rem] leading-6 text-ink-dim">
+                  {field.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {!details.title &&
+          !visibleMessage &&
+          details.files.length === 0 &&
+          details.fields.length === 0 && (
+            <p className={messageClass}>No readable update details were included.</p>
+          )}
+      </div>
+    </article>
   );
 }
 
@@ -401,14 +504,220 @@ function hasSnapshotContent(snapshot: RoomSnapshot) {
   );
 }
 
-function formatPayload(payload: unknown) {
-  try {
-    return JSON.stringify(payload, null, 2);
-  } catch {
-    return String(payload);
-  }
+function describeFeedEvent(event: StoredHookEvent) {
+  const payload = toRecord(event.payload);
+  const eventName = humanizeEventName(
+    readStringValue(payload, ["hook_event_name", "event", "type"]),
+  );
+  const title = firstNonEmptyText([
+    readStringValue(payload, ["task", "title", "headline"]),
+  ]);
+  const message = firstNonEmptyText([
+    readStringValue(payload, ["summary", "last_assistant_message", "message"]),
+    readStringValue(payload, ["prompt", "last_user_message", "description"]),
+    payload == null ? stringifyPrimitive(event.payload) : null,
+  ]);
+  const files = readStringArray(payload?.files);
+  const fields = buildReadablePayloadFields(payload);
+
+  return {
+    eventName,
+    fields,
+    files,
+    message: message === title ? null : message,
+    title,
+  };
 }
 
+function buildReadablePayloadFields(
+  payload: Record<string, unknown> | null,
+): Array<{ label: string; value: string }> {
+  if (!payload) {
+    return [];
+  }
+
+  const fields: Array<{ label: string; value: string }> = [];
+
+  for (const [key, value] of Object.entries(payload)) {
+    if (shouldHidePayloadField(key)) {
+      continue;
+    }
+
+    const text = stringifyFieldValue(value);
+    if (!text) {
+      continue;
+    }
+
+    fields.push({
+      label: humanizeFieldName(key),
+      value: text,
+    });
+
+    if (fields.length >= FEED_FIELD_PREVIEW_LIMIT) {
+      break;
+    }
+  }
+
+  return fields;
+}
+
+function truncateFeedMessage(message: string, maxLength: number) {
+  if (message.length <= maxLength) {
+    return message;
+  }
+
+  const truncated = message.slice(0, maxLength);
+  const boundary = truncated.lastIndexOf(" ");
+  const safeText =
+    boundary >= Math.floor(maxLength * 0.6)
+      ? truncated.slice(0, boundary)
+      : truncated;
+
+  return `${safeText.trimEnd()}…`;
+}
+
+function firstNonEmptyText(values: Array<string | null>) {
+  for (const value of values) {
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function readStringValue(
+  payload: Record<string, unknown> | null,
+  keys: string[],
+): string | null {
+  if (!payload) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    const normalized = normalizeFeedText(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => normalizeFeedText(stringifyPrimitive(entry)))
+    .filter((entry): entry is string => Boolean(entry));
+}
+
+function stringifyFieldValue(value: unknown) {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return normalizeFeedText(String(value));
+  }
+
+  if (Array.isArray(value)) {
+    const entries = value
+      .map((entry) => normalizeFeedText(stringifyPrimitive(entry)))
+      .filter((entry): entry is string => Boolean(entry));
+
+    return entries.length > 0 ? entries.join(", ") : null;
+  }
+
+  return null;
+}
+
+function stringifyPrimitive(value: unknown) {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+
+  return null;
+}
+
+function normalizeFeedText(value: string | null) {
+  if (value == null) {
+    return null;
+  }
+
+  const normalized = value.replace(/\r\n/g, "\n").trim();
+  return normalized ? normalized : null;
+}
+
+function humanizeEventName(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^userpromptsubmit$/i.test(normalized)) {
+    return "Prompt";
+  }
+
+  if (/^stop$/i.test(normalized)) {
+    return "Stop";
+  }
+
+  return humanizeFieldName(normalized);
+}
+
+function humanizeFieldName(value: string) {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function shouldHidePayloadField(key: string) {
+  const normalized = key.trim().toLowerCase();
+
+  return (
+    normalized === "cwd" ||
+    normalized === "extra" ||
+    normalized === "files" ||
+    normalized === "hook_event_name" ||
+    normalized === "summary" ||
+    normalized === "last_assistant_message" ||
+    normalized === "message" ||
+    normalized === "prompt" ||
+    normalized === "last_user_message" ||
+    normalized === "description" ||
+    normalized === "task" ||
+    normalized === "title" ||
+    normalized === "headline" ||
+    normalized.endsWith("id")
+  );
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
 
 function flattenFeedEvents(
   pages: FeedResponse[] | undefined,
