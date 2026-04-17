@@ -1,4 +1,4 @@
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 export class StoragePaths {
@@ -16,17 +16,6 @@ export class StoragePaths {
     await Promise.all(
       [this.dataDir, this.codexHome, this.summaryThreadsDir].map(async (target) => {
         await mkdir(target, { recursive: true });
-      }),
-    );
-  }
-
-  async checkReady(): Promise<void> {
-    await Promise.all(
-      [this.dataDir, this.codexHome, this.summaryThreadsDir].map(async (target) => {
-        const details = await stat(target).catch(() => null);
-        if (!details?.isDirectory()) {
-          throw new Error(`storage dir missing or not a directory: ${target}`);
-        }
       }),
     );
   }

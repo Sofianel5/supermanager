@@ -1,6 +1,6 @@
 # Supermanager
 
-Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, room storage, hook ingest, PostgreSQL state, SSE, and agent orchestration. A separate Rust `summary-agent` process owns the in-process Codex runtime for org-level BLUF generation. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live room dashboard.
+Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, hook ingest, PostgreSQL state, and SSE. A separate Bun summary worker owns room and organization summary orchestration and spawns the Rust `summary-agent` process for Codex runtime state. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live room dashboard.
 
 ## Setup
 
@@ -10,7 +10,6 @@ Supermanager is an authenticated, organization-scoped coordination system for co
 cd packages/server
 bun install
 export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
-export SUPERMANAGER_DATA_DIR='../.supermanager-data'
 export BETTER_AUTH_SECRET='replace-me'
 export GOOGLE_CLIENT_ID='replace-me'
 export GOOGLE_CLIENT_SECRET='replace-me'
@@ -29,26 +28,48 @@ The server reads runtime config from environment variables:
 - `GOOGLE_CLIENT_SECRET`
 - `GITHUB_CLIENT_ID`
 - `GITHUB_CLIENT_SECRET`
-- `SUPERMANAGER_DATA_DIR`
 - `SUPERMANAGER_PUBLIC_API_URL`
 - `SUPERMANAGER_PUBLIC_APP_URL`
-- `SUPERMANAGER_SUMMARY_AGENT_BIN`
-- `SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS`
 - `CODEX_API_KEY`
 
-In local development the Bun server automatically starts the Rust summary agent through `cargo run -p summary-agent`. For packaged environments, point `SUPERMANAGER_SUMMARY_AGENT_BIN` at a compiled `summary-agent` binary.
+### 2. Start the summary worker
+
+```sh
+cd packages/server
+export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
+export SUPERMANAGER_DATA_DIR='../.supermanager-data'
+export SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS='300'
+export SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS='5'
+export CODEX_API_KEY='replace-me'
+bun run src/worker-main.ts
+```
+
+The summary worker reads these runtime config values:
+
+- `DATABASE_URL`
+- `SUPERMANAGER_DATA_DIR`
+- `SUPERMANAGER_SUMMARY_AGENT_BIN`
+- `SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS`
+- `SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS`
+- `CODEX_API_KEY`
+
+In local development the summary worker starts the Rust summary agent through `cargo run -p summary-agent`. For packaged environments, point `SUPERMANAGER_SUMMARY_AGENT_BIN` at a compiled `summary-agent` binary.
 
 For production packaging, compile the server to a standalone Bun executable:
 
 ```sh
 cd packages/server
 bun run build
+bun run build:worker
 SUPERMANAGER_PUBLIC_API_URL='https://api.supermanager.dev' \
 SUPERMANAGER_PUBLIC_APP_URL='https://supermanager.dev' \
 ./.build/supermanager-server
+SUPERMANAGER_DATA_DIR='/srv/supermanager' \
+CODEX_API_KEY='replace-me' \
+./.build/supermanager-worker
 ```
 
-### 2. Start the frontend
+### 3. Start the frontend
 
 ```sh
 cd packages/web
@@ -56,7 +77,7 @@ VITE_API_BASE_URL='http://127.0.0.1:8787' bun install
 VITE_API_BASE_URL='http://127.0.0.1:8787' bun run dev
 ```
 
-### 3. Install the CLI once per machine
+### 4. Install the CLI once per machine
 
 From this repo:
 
@@ -222,10 +243,11 @@ required Codex attribution for this distribution.
 This repo now deploys the backend as:
 
 - ECR image
-- ECS Fargate service
+- ECS Fargate API service
+- ECS Fargate summary worker service
 - ALB on `https://api.supermanager.dev`
 - RDS PostgreSQL
-- EFS mounted at `/srv/supermanager` for durable room-agent state
+- EFS mounted at `/srv/supermanager` for durable summary-worker state
 - Secrets Manager for `DATABASE_URL`, auth secrets, and `CODEX_API_KEY`
 
 Files involved:
@@ -257,10 +279,11 @@ Add these repository variables under `Settings -> Secrets and variables -> Actio
 - `AWS_ECR_REPOSITORY` from `ecr_repository_name`
 - `AWS_ECS_CLUSTER` from `ecs_cluster_name`
 - `AWS_ECS_SERVICE` from `ecs_service_name`
+- `AWS_ECS_SUMMARY_WORKER_SERVICE` from `ecs_summary_worker_service_name`
 
-The deploy workflow runs only from `master`, uses GitHub OIDC with `aws-actions/configure-aws-credentials`, pushes the server image to ECR as `:latest`, then forces a new ECS deployment so the service pulls that tag.
+The deploy workflow runs only from `master`, uses GitHub OIDC with `aws-actions/configure-aws-credentials`, pushes the server image to ECR as `:latest`, rolls the API service first so it can apply migrations, then restarts the summary worker service against the same image.
 
-The ECS task definition should be managed in Terraform and point at the ECR repository's `:latest` tag. The backend runtime environment is still supplied there:
+The API task definition should be managed in Terraform and point at the ECR repository's `:latest` tag. The API runtime environment is still supplied there:
 
 - `DATABASE_URL`
 - `BETTER_AUTH_SECRET`
@@ -269,12 +292,17 @@ The ECS task definition should be managed in Terraform and point at the ECR repo
 - `GITHUB_CLIENT_ID`
 - `GITHUB_CLIENT_SECRET`
 - `CODEX_API_KEY`
-- `SUPERMANAGER_DATA_DIR=/srv/supermanager`
 - `SUPERMANAGER_PUBLIC_API_URL=https://api.supermanager.dev`
 - `SUPERMANAGER_PUBLIC_APP_URL=https://supermanager.dev`
+
+The summary worker task definition mounts EFS and keeps the Codex runtime state:
+
+- `DATABASE_URL`
+- `CODEX_API_KEY`
+- `SUPERMANAGER_DATA_DIR=/srv/supermanager`
 - `SUPERMANAGER_SUMMARY_AGENT_BIN=/usr/local/bin/summary-agent`
 
-The ECS service is intentionally single-writer during deploys: `desired_count = 1`, `deployment_minimum_healthy_percent = 0`, and `deployment_maximum_percent = 100`. That allows the durable Codex state on EFS to survive task replacement cleanly.
+The API service now uses rolling deploys with `desired_count = 1`, `deployment_minimum_healthy_percent = 100`, and `deployment_maximum_percent = 200`. Room summarization replays from Postgres using `room_summaries.last_processed_seq`, so the worker can be restarted independently without losing summary progress.
 
 ## Deploying the frontend to Cloudflare Pages
 

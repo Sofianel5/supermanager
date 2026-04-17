@@ -29,8 +29,13 @@ output "ecs_cluster_name" {
 }
 
 output "ecs_service_name" {
-  description = "ECS service name for deploy workflow configuration."
+  description = "ECS API service name for deploy workflow configuration."
   value       = aws_ecs_service.server.name
+}
+
+output "ecs_summary_worker_service_name" {
+  description = "ECS summary worker service name for deploy workflow configuration."
+  value       = aws_ecs_service.summary_worker.name
 }
 
 output "database_url_secret_arn" {

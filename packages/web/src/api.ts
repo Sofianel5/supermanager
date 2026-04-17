@@ -65,6 +65,12 @@ export interface OrganizationSummaryResponse {
   summary: OrganizationSnapshot;
 }
 
+export interface RoomSummaryResponse {
+  last_processed_seq: number;
+  status: SummaryStatus;
+  summary: RoomSnapshot;
+}
+
 export interface CreateRoomResponse {
   dashboard_url: string;
   join_command: string;
@@ -136,7 +142,7 @@ export const api = {
     );
   },
   getSummary(roomId: string) {
-    return requestJson<RoomSnapshot>(
+    return requestJson<RoomSummaryResponse>(
       `/v1/rooms/${encodeURIComponent(roomId)}/summary`,
     );
   },

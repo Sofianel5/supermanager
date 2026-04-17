@@ -29,9 +29,15 @@ variable "public_app_url" {
 }
 
 variable "container_name" {
-  description = "Container name inside the ECS task definition."
+  description = "Container name inside the API ECS task definition."
   type        = string
   default     = "coordination-server"
+}
+
+variable "summary_worker_container_name" {
+  description = "Container name inside the summary worker ECS task definition."
+  type        = string
+  default     = "summary-worker"
 }
 
 variable "container_port" {
@@ -48,6 +54,18 @@ variable "ecs_cpu" {
 
 variable "ecs_memory" {
   description = "Fargate memory (MiB) for the server task."
+  type        = number
+  default     = 1024
+}
+
+variable "summary_worker_ecs_cpu" {
+  description = "Fargate CPU units for the summary worker task."
+  type        = number
+  default     = 512
+}
+
+variable "summary_worker_ecs_memory" {
+  description = "Fargate memory (MiB) for the summary worker task."
   type        = number
   default     = 1024
 }

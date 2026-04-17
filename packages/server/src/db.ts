@@ -5,6 +5,7 @@ import {
   type OrganizationSnapshot,
   type RoomListEntry,
   type RoomBlufSnapshot,
+  type RoomSummaryResponse,
   type RoomSnapshot,
   type StoredHookEvent,
   type SummaryStatus,
@@ -73,6 +74,7 @@ interface SummaryRow {
 interface RoomSummaryRow {
   room_id?: unknown;
   content_json?: RoomSnapshot;
+  last_processed_seq?: unknown;
   status: unknown;
   updated_at?: unknown;
 }
@@ -505,6 +507,34 @@ export class Db {
     }));
   }
 
+  async queryRoomEventsForSummary(
+    roomId: string,
+    options: {
+      afterSeq?: number;
+      limit?: number;
+    } = {},
+  ): Promise<StoredHookEvent[]> {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const rows = await this.client<HookEventRow[]>`
+      SELECT
+        seq,
+        event_id,
+        employee_name,
+        client,
+        repo_root,
+        branch,
+        payload_json,
+        received_at
+      FROM hook_events
+      WHERE room_id = ${normalizedRoomId}
+        AND (${options.afterSeq ?? null}::bigint IS NULL OR seq > ${options.afterSeq ?? null})
+      ORDER BY seq ASC
+      ${options.limit == null ? this.client`` : this.client`LIMIT ${options.limit}`}
+    `;
+
+    return rows.map(mapStoredHookEvent);
+  }
+
   async getOrganizationSummary(
     organizationId: string,
   ): Promise<OrganizationSnapshot> {
@@ -521,6 +551,22 @@ export class Db {
 
   async getRoomSummary(roomId: string): Promise<RoomSnapshot> {
     return this.getStoredRoomSummary(normalizeRoomId(roomId));
+  }
+
+  async getRoomSummaryResponse(roomId: string): Promise<RoomSummaryResponse> {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const [row] = await this.client<RoomSummaryRow[]>`
+      SELECT content_json, last_processed_seq, status
+      FROM room_summaries
+      WHERE room_id = ${normalizedRoomId}
+    `;
+
+    return {
+      last_processed_seq:
+        row?.last_processed_seq == null ? 0 : toNumber(row.last_processed_seq),
+      status: row ? parseSummaryStatus(row.status) : "ready",
+      summary: normalizeStoredRoomSummary(row?.content_json),
+    };
   }
 
   async getOrganizationSummaryStatus(
@@ -571,6 +617,26 @@ export class Db {
       SET status = ${nextStatus}
       WHERE status = 'generating'
     `;
+  }
+
+  async tryStartOrganizationSummary(
+    organizationId: string,
+  ): Promise<string | null> {
+    const [row] = await this.client<Pick<SummaryRow, "updated_at">[]>`
+      INSERT INTO organization_summaries (organization_id, content_json, status, updated_at)
+      VALUES (
+        ${organizationId},
+        ${normalizeStoredOrganizationSummary()},
+        'generating',
+        TO_TIMESTAMP(0)
+      )
+      ON CONFLICT(organization_id) DO UPDATE SET
+        status = 'generating'
+      WHERE organization_summaries.status <> 'generating'
+      RETURNING updated_at
+    `;
+
+    return row?.updated_at == null ? null : toRfc3339(row.updated_at);
   }
 
   async setOrganizationSummary(
@@ -656,16 +722,32 @@ export class Db {
   ): Promise<void> {
     const normalizedRoomId = normalizeRoomId(roomId);
     await this.client`
-      INSERT INTO room_summaries (room_id, content_json, status, updated_at)
+      INSERT INTO room_summaries (
+        room_id,
+        content_json,
+        status,
+        updated_at,
+        last_processed_seq
+      )
       VALUES (
         ${normalizedRoomId},
         ${normalizeStoredRoomSummary()},
         ${status},
-        NOW()
+        TO_TIMESTAMP(0),
+        0
       )
       ON CONFLICT(room_id) DO UPDATE SET
-        status = EXCLUDED.status,
-        updated_at = EXCLUDED.updated_at
+        status = EXCLUDED.status
+    `;
+  }
+
+  async resetGeneratingRoomSummaries(
+    nextStatus: Extract<SummaryStatus, "error" | "ready"> = "error",
+  ): Promise<void> {
+    await this.client`
+      UPDATE room_summaries
+      SET status = ${nextStatus}
+      WHERE status = 'generating'
     `;
   }
 
@@ -673,13 +755,114 @@ export class Db {
     const normalizedRoomId = normalizeRoomId(roomId);
     const normalizedSummary = normalizeStoredRoomSummary(content);
     await this.client`
-      INSERT INTO room_summaries (room_id, content_json, status, updated_at)
-      VALUES (${normalizedRoomId}, ${normalizedSummary}, 'ready', NOW())
+      INSERT INTO room_summaries (
+        room_id,
+        content_json,
+        status,
+        updated_at,
+        last_processed_seq
+      )
+      VALUES (
+        ${normalizedRoomId},
+        ${normalizedSummary},
+        'ready',
+        NOW(),
+        0
+      )
       ON CONFLICT(room_id) DO UPDATE SET
         content_json = EXCLUDED.content_json,
-        status = 'ready',
         updated_at = EXCLUDED.updated_at
     `;
+  }
+
+  async setRoomSummaryLastProcessedSeq(
+    roomId: string,
+    lastProcessedSeq: number,
+  ): Promise<void> {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    await this.client`
+      INSERT INTO room_summaries (
+        room_id,
+        content_json,
+        status,
+        updated_at,
+        last_processed_seq
+      )
+      VALUES (
+        ${normalizedRoomId},
+        ${normalizeStoredRoomSummary()},
+        'ready',
+        TO_TIMESTAMP(0),
+        ${lastProcessedSeq}
+      )
+      ON CONFLICT(room_id) DO UPDATE SET
+        last_processed_seq = GREATEST(
+          room_summaries.last_processed_seq,
+          EXCLUDED.last_processed_seq
+        )
+    `;
+  }
+
+  async tryStartRoomSummary(
+    roomId: string,
+  ): Promise<{ lastProcessedSeq: number } | null> {
+    const normalizedRoomId = normalizeRoomId(roomId);
+    const [row] = await this.client<Pick<RoomSummaryRow, "last_processed_seq">[]>`
+      WITH latest_event AS (
+        SELECT COALESCE(MAX(seq), 0) AS latest_seq
+        FROM hook_events
+        WHERE room_id = ${normalizedRoomId}
+      )
+      INSERT INTO room_summaries (
+        room_id,
+        content_json,
+        status,
+        updated_at,
+        last_processed_seq
+      )
+      SELECT
+        ${normalizedRoomId},
+        ${normalizeStoredRoomSummary()},
+        'generating',
+        TO_TIMESTAMP(0),
+        0
+      FROM latest_event
+      WHERE latest_event.latest_seq > 0
+      ON CONFLICT(room_id) DO UPDATE SET
+        status = 'generating'
+      WHERE room_summaries.status <> 'generating'
+        AND (SELECT latest_seq FROM latest_event) > room_summaries.last_processed_seq
+      RETURNING last_processed_seq
+    `;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      lastProcessedSeq:
+        row.last_processed_seq == null ? 0 : toNumber(row.last_processed_seq),
+    };
+  }
+
+  async listRoomsNeedingSummary(limit: number): Promise<SummaryRoomRecord[]> {
+    const rows = await this.client<Pick<RoomRow, "room_id" | "name">[]>`
+      SELECT
+        rooms.room_id,
+        rooms.name
+      FROM rooms
+      INNER JOIN hook_events ON hook_events.room_id = rooms.room_id
+      LEFT JOIN room_summaries ON room_summaries.room_id = rooms.room_id
+      GROUP BY rooms.room_id, rooms.name, room_summaries.last_processed_seq
+      HAVING MAX(hook_events.seq) > COALESCE(room_summaries.last_processed_seq, 0)
+      ORDER BY MAX(hook_events.received_at) ASC, rooms.room_id ASC
+      LIMIT ${limit}
+    `;
+
+    return rows.map((row) => ({
+      room_id: readString(row.room_id, "room_id"),
+      name: readString(row.name, "name"),
+    }));
   }
 
   private async getStoredOrganizationSummary(

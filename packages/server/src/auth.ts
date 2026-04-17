@@ -7,7 +7,7 @@ import { apiKey } from "@better-auth/api-key";
 import { Kysely, PostgresDialect } from "kysely";
 import { Pool } from "pg";
 
-import { trimUrl, type ServerConfig } from "./config";
+import { trimUrl, type ApiConfig } from "./config";
 
 export const AUTH_BASE_PATH = "/api/auth";
 export const CLI_DEVICE_CLIENT_ID = "supermanager-cli";
@@ -26,7 +26,7 @@ export interface AuthServices {
   close(): Promise<void>;
 }
 
-export function createAuthServices(config: ServerConfig): AuthServices {
+export function createAuthServices(config: ApiConfig): AuthServices {
   const poolConfig = buildAuthPoolConfig(config.databaseUrl);
   const db = new Kysely<Record<string, never>>({
     dialect: new PostgresDialect({
@@ -64,7 +64,7 @@ function buildAuthPoolConfig(databaseUrl: string) {
   };
 }
 
-function createAuth(config: ServerConfig, db: Kysely<Record<string, never>>) {
+function createAuth(config: ApiConfig, db: Kysely<Record<string, never>>) {
   const baseUrl = trimUrl(config.publicApiUrl);
   const appUrl = trimUrl(config.publicAppUrl);
 

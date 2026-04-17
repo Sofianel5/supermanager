@@ -36,6 +36,7 @@ jobs:
       AWS_ECR_REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
       AWS_ECS_CLUSTER: ${{ vars.AWS_ECS_CLUSTER }}
       AWS_ECS_SERVICE: ${{ vars.AWS_ECS_SERVICE }}
+      AWS_ECS_SUMMARY_WORKER_SERVICE: ${{ vars.AWS_ECS_SUMMARY_WORKER_SERVICE }}
     steps:
       - name: Validate required configuration
         run: |
@@ -45,7 +46,8 @@ jobs:
             AWS_DEPLOY_ROLE_ARN \
             AWS_ECR_REPOSITORY \
             AWS_ECS_CLUSTER \
-            AWS_ECS_SERVICE
+            AWS_ECS_SERVICE \
+            AWS_ECS_SUMMARY_WORKER_SERVICE
           do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required GitHub Actions variable ${name}"
@@ -80,103 +82,110 @@ jobs:
           cache-from: type=gha,scope=deploy-server
           cache-to: type=gha,scope=deploy-server,mode=max
 
-      - name: Force ECS deployment
+      - name: Force ECS deployments
         run: |
           set -euo pipefail
-          service_json="$(aws ecs update-service \
-            --cluster "${AWS_ECS_CLUSTER}" \
-            --service "${AWS_ECS_SERVICE}" \
-            --force-new-deployment \
-            --output json)"
-          deployment_id="$(printf '%s' "${service_json}" | jq -r '.service.deployments[] | select(.status == "PRIMARY") | .id')"
+          deploy_service() {
+            local service_name="$1"
+            local service_json deployment_id deployment_summary target_complete only_one_deployment
+            local max_attempts=80
+            local sleep_seconds=15
 
-          if [ -z "${deployment_id}" ] || [ "${deployment_id}" = "null" ]; then
-            echo "::error::Failed to determine ECS primary deployment id after update-service"
-            exit 1
-          fi
-
-          echo "Waiting for ECS deployment ${deployment_id} to stabilize"
-
-          max_attempts=80
-          sleep_seconds=15
-
-          for attempt in $(seq 1 "${max_attempts}"); do
-            service_json="$(aws ecs describe-services \
+            service_json="$(aws ecs update-service \
               --cluster "${AWS_ECS_CLUSTER}" \
-              --services "${AWS_ECS_SERVICE}" \
+              --service "${service_name}" \
+              --force-new-deployment \
               --output json)"
+            deployment_id="$(printf '%s' "${service_json}" | jq -r '.service.deployments[] | select(.status == "PRIMARY") | .id')"
 
-            deployment_summary="$(printf '%s' "${service_json}" | jq -r --arg deployment_id "${deployment_id}" '
-              .services[0].deployments
-              | map(
-                  (.id
-                  + " status=" + .status
-                  + " rollout=" + (.rolloutState // "NONE")
-                  + " desired=" + (.desiredCount | tostring)
-                  + " running=" + (.runningCount | tostring)
-                  + " pending=" + (.pendingCount | tostring)
-                  + (if .id == $deployment_id then " primary-target" else "" end))
-                )
-              | join(" | ")
-            ')"
-            target_complete="$(printf '%s' "${service_json}" | jq -e --arg deployment_id "${deployment_id}" '
-              .services[0].deployments
-              | map(select(.id == $deployment_id))
-              | length == 1
-              and .[0].rolloutState == "COMPLETED"
-              and .[0].runningCount == .[0].desiredCount
-              and .[0].pendingCount == 0
-            ' >/dev/null && echo true || echo false)"
-            only_one_deployment="$(printf '%s' "${service_json}" | jq -r '.services[0].deployments | length == 1')"
-
-            echo "Attempt ${attempt}/${max_attempts}: ${deployment_summary}"
-
-            if [ "${target_complete}" = "true" ] && [ "${only_one_deployment}" = "true" ]; then
-              echo "ECS deployment ${deployment_id} stabilized"
-              exit 0
+            if [ -z "${deployment_id}" ] || [ "${deployment_id}" = "null" ]; then
+              echo "::error::Failed to determine ECS primary deployment id for ${service_name}"
+              exit 1
             fi
 
-            sleep "${sleep_seconds}"
-          done
+            echo "Waiting for ECS deployment ${deployment_id} (${service_name}) to stabilize"
 
-          echo "::error::ECS deployment ${deployment_id} did not stabilize within $((max_attempts * sleep_seconds)) seconds"
-          echo "::group::Recent ECS service events"
-          printf '%s' "${service_json}" | jq -r '
-            .services[0].events[:10][]
-            | (.createdAt + " " + .message)
-          '
-          echo "::endgroup::"
+            for attempt in $(seq 1 "${max_attempts}"); do
+              service_json="$(aws ecs describe-services \
+                --cluster "${AWS_ECS_CLUSTER}" \
+                --services "${service_name}" \
+                --output json)"
 
-          echo "::group::Stopped ECS tasks"
-          stopped_task_arns="$(aws ecs list-tasks \
-            --cluster "${AWS_ECS_CLUSTER}" \
-            --service-name "${AWS_ECS_SERVICE}" \
-            --desired-status STOPPED \
-            --output json | jq -r '.taskArns[:10][]?')"
-          if [ -n "${stopped_task_arns}" ]; then
-            aws ecs describe-tasks \
+              deployment_summary="$(printf '%s' "${service_json}" | jq -r --arg deployment_id "${deployment_id}" '
+                .services[0].deployments
+                | map(
+                    (.id
+                    + " status=" + .status
+                    + " rollout=" + (.rolloutState // "NONE")
+                    + " desired=" + (.desiredCount | tostring)
+                    + " running=" + (.runningCount | tostring)
+                    + " pending=" + (.pendingCount | tostring)
+                    + (if .id == $deployment_id then " primary-target" else "" end))
+                  )
+                | join(" | ")
+              ')"
+              target_complete="$(printf '%s' "${service_json}" | jq -e --arg deployment_id "${deployment_id}" '
+                .services[0].deployments
+                | map(select(.id == $deployment_id))
+                | length == 1
+                and .[0].rolloutState == "COMPLETED"
+                and .[0].runningCount == .[0].desiredCount
+                and .[0].pendingCount == 0
+              ' >/dev/null && echo true || echo false)"
+              only_one_deployment="$(printf '%s' "${service_json}" | jq -r '.services[0].deployments | length == 1')"
+
+              echo "Attempt ${attempt}/${max_attempts} (${service_name}): ${deployment_summary}"
+
+              if [ "${target_complete}" = "true" ] && [ "${only_one_deployment}" = "true" ]; then
+                echo "ECS deployment ${deployment_id} (${service_name}) stabilized"
+                return 0
+              fi
+
+              sleep "${sleep_seconds}"
+            done
+
+            echo "::error::ECS deployment ${deployment_id} (${service_name}) did not stabilize within $((max_attempts * sleep_seconds)) seconds"
+            echo "::group::Recent ECS service events (${service_name})"
+            printf '%s' "${service_json}" | jq -r '
+              .services[0].events[:10][]
+              | (.createdAt + " " + .message)
+            '
+            echo "::endgroup::"
+
+            echo "::group::Stopped ECS tasks (${service_name})"
+            stopped_task_arns="$(aws ecs list-tasks \
               --cluster "${AWS_ECS_CLUSTER}" \
-              --tasks ${stopped_task_arns} \
-              --output json | jq -r '
-                .tasks[]
-                | .taskArn as $task
-                | [
-                    $task,
-                    ("stoppedReason=" + (.stoppedReason // "none")),
-                    (
-                      .containers
-                      | map(
-                          .name
-                          + ":exit=" + ((.exitCode // -1) | tostring)
-                          + " reason=" + (.reason // "none")
-                        )
-                      | join(", ")
-                    )
-                  ]
-                | @tsv
-              '
-          else
-            echo "No stopped tasks reported for ${AWS_ECS_SERVICE}"
-          fi
-          echo "::endgroup::"
-          exit 1
+              --service-name "${service_name}" \
+              --desired-status STOPPED \
+              --output json | jq -r '.taskArns[:10][]?')"
+            if [ -n "${stopped_task_arns}" ]; then
+              aws ecs describe-tasks \
+                --cluster "${AWS_ECS_CLUSTER}" \
+                --tasks ${stopped_task_arns} \
+                --output json | jq -r '
+                  .tasks[]
+                  | .taskArn as $task
+                  | [
+                      $task,
+                      ("stoppedReason=" + (.stoppedReason // "none")),
+                      (
+                        .containers
+                        | map(
+                            .name
+                            + ":exit=" + ((.exitCode // -1) | tostring)
+                            + " reason=" + (.reason // "none")
+                          )
+                        | join(", ")
+                      )
+                    ]
+                  | @tsv
+                '
+            else
+              echo "No stopped tasks reported for ${service_name}"
+            fi
+            echo "::endgroup::"
+            exit 1
+          }
+
+          deploy_service "${AWS_ECS_SERVICE}"
+          deploy_service "${AWS_ECS_SUMMARY_WORKER_SERVICE}"

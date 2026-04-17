@@ -7,6 +7,7 @@ import {
   api,
   type FeedResponse,
   type RoomSnapshot,
+  type RoomSummaryResponse,
   type StoredHookEvent,
 } from "../api";
 import { CopyPanel } from "../components/copy-panel";
@@ -42,8 +43,6 @@ const FEED_FILE_PREVIEW_LIMIT = 4;
 export function RoomPage() {
   const { roomId = "" } = useParams();
   const queryClient = useQueryClient();
-  const [streamedSummaryStatus, setStreamedSummaryStatus] =
-    useState<SummaryStatus>("idle");
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("connecting");
   const { copiedValue, copy } = useCopyHandler();
@@ -54,15 +53,17 @@ export function RoomPage() {
   const room = roomQuery.data ?? null;
   const events = flattenFeedEvents(feedQuery.data?.pages);
   const totalEventCount = feedQuery.data?.pages[0]?.total_count ?? events.length;
-  const snapshot = summaryQuery.data ?? emptyRoomSnapshot();
+  const summary = summaryQuery.data ?? emptyRoomSummaryResponse();
+  const snapshot = summary.summary;
+  const latestEventSeq = events[0]?.seq ?? 0;
   const organization = findOrganizationBySlug(
     viewerQuery.data?.organizations ?? [],
     room?.organization_slug ?? null,
   );
   const summaryStatus =
-    streamedSummaryStatus === "idle" && summaryQuery.data
-      ? "ready"
-      : streamedSummaryStatus;
+    !summaryQuery.data && summaryQuery.isPending
+      ? "idle"
+      : getSummaryStatus(summary, latestEventSeq);
   const feedError =
     feedQuery.isFetchNextPageError && feedQuery.error
       ? readMessage(feedQuery.error)
@@ -102,7 +103,6 @@ export function RoomPage() {
 
     let disposed = false;
     setConnectionStatus("connecting");
-    setStreamedSummaryStatus("idle");
 
     const stream = api.openRoomStream(roomId);
 
@@ -124,41 +124,6 @@ export function RoomPage() {
       }
     });
 
-    stream.addEventListener("summary_status", (event) => {
-      try {
-        const payload = JSON.parse(event.data) as { status?: string };
-        const nextStatus = payload.status || "ready";
-
-        if (nextStatus === "generating") {
-          setStreamedSummaryStatus("generating");
-          return;
-        }
-
-        if (nextStatus === "error") {
-          setStreamedSummaryStatus("error");
-          return;
-        }
-
-        void queryClient
-          .fetchQuery({
-            ...roomSummaryQueryOptions(roomId),
-            staleTime: 0,
-          })
-          .then(() => {
-            if (!disposed) {
-              setStreamedSummaryStatus("ready");
-            }
-          })
-          .catch(() => {
-            if (!disposed) {
-              setStreamedSummaryStatus("error");
-            }
-          });
-      } catch {
-        // Ignore malformed summary status events.
-      }
-    });
-
     stream.onerror = () => {
       if (!disposed) {
         setConnectionStatus("reconnecting");
@@ -170,6 +135,46 @@ export function RoomPage() {
       stream.close();
     };
   }, [queryClient, roomId]);
+
+  useEffect(() => {
+    if (!roomId) {
+      return;
+    }
+    if (
+      summary.status !== "generating" &&
+      latestEventSeq <= summary.last_processed_seq
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    const refreshSummary = () => {
+      void queryClient
+        .fetchQuery({
+          ...roomSummaryQueryOptions(roomId),
+          staleTime: 0,
+        })
+        .catch(() => undefined);
+    };
+
+    refreshSummary();
+    const timer = window.setInterval(() => {
+      if (!disposed) {
+        refreshSummary();
+      }
+    }, 2_000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    latestEventSeq,
+    queryClient,
+    roomId,
+    summary.last_processed_seq,
+    summary.status,
+  ]);
 
   if (error) {
     return (
@@ -556,12 +561,36 @@ function emptyRoomSnapshot(): RoomSnapshot {
   };
 }
 
+function emptyRoomSummaryResponse(): RoomSummaryResponse {
+  return {
+    last_processed_seq: 0,
+    status: "ready",
+    summary: emptyRoomSnapshot(),
+  };
+}
+
 function hasSnapshotContent(snapshot: RoomSnapshot) {
   return Boolean(
     snapshot.bluf_markdown.trim() ||
       snapshot.detailed_summary_markdown.trim() ||
       snapshot.employees.some((employee) => employee.bluf_markdown.trim()),
   );
+}
+
+function getSummaryStatus(
+  summary: RoomSummaryResponse,
+  latestEventSeq: number,
+): SummaryStatus {
+  if (summary.status === "error" && summary.last_processed_seq < latestEventSeq) {
+    return "error";
+  }
+  if (
+    summary.status === "generating" ||
+    summary.last_processed_seq < latestEventSeq
+  ) {
+    return "generating";
+  }
+  return "ready";
 }
 
 function describeFeedEvent(event: StoredHookEvent) {

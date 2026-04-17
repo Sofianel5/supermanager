@@ -23,49 +23,44 @@ export interface AuthConfig {
   github: OAuthProviderConfig;
 }
 
-export interface ServerConfig {
+export interface ApiConfig {
   bind: BindAddress;
   databaseUrl: string;
-  dataDir: string;
   publicApiUrl: string;
   publicAppUrl: string;
   auth: AuthConfig;
-  summaryAgent: SummaryAgentCommand;
-  summaryRefreshIntervalMs: number;
 }
 
-export async function loadConfig(argv: string[], cwd: string): Promise<ServerConfig> {
+export interface SummaryWorkerConfig {
+  databaseUrl: string;
+  dataDir: string;
+  summaryAgent: SummaryAgentCommand;
+  organizationSummaryRefreshIntervalMs: number;
+  roomSummaryPollIntervalMs: number;
+}
+
+export async function loadApiConfig(
+  argv: string[],
+  cwd: string,
+): Promise<ApiConfig> {
   const parsed = parseArgs({
     args: argv,
     options: {
       bind: { type: "string", default: "127.0.0.1:8787" },
       "database-url": { type: "string" },
-      "data-dir": { type: "string" },
-      "summary-agent-bin": { type: "string" },
-      "summary-refresh-interval-seconds": { type: "string" },
     },
     allowPositionals: false,
   });
 
   const databaseUrl = parsed.values["database-url"] ?? Bun.env.DATABASE_URL;
-  const dataDir = parsed.values["data-dir"] ?? Bun.env.SUPERMANAGER_DATA_DIR;
-  const summaryRefreshIntervalMs = parseRefreshIntervalMs(
-    parsed.values["summary-refresh-interval-seconds"] ??
-      Bun.env.SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS ??
-      "300",
-  );
 
   if (!databaseUrl) {
     throw new Error("missing required DATABASE_URL / --database-url");
-  }
-  if (!dataDir) {
-    throw new Error("missing required SUPERMANAGER_DATA_DIR / --data-dir");
   }
 
   return {
     bind: parseBindAddress(parsed.values.bind),
     databaseUrl,
-    dataDir,
     publicApiUrl: readRequiredEnv(["SUPERMANAGER_PUBLIC_API_URL"]),
     publicAppUrl: readRequiredEnv(["SUPERMANAGER_PUBLIC_APP_URL"]),
     auth: {
@@ -79,11 +74,52 @@ export async function loadConfig(argv: string[], cwd: string): Promise<ServerCon
         clientSecret: readRequiredEnv(["GITHUB_CLIENT_SECRET"]),
       },
     },
+  };
+}
+
+export async function loadSummaryWorkerConfig(
+  argv: string[],
+  cwd: string,
+): Promise<SummaryWorkerConfig> {
+  const parsed = parseArgs({
+    args: argv,
+    options: {
+      "database-url": { type: "string" },
+      "data-dir": { type: "string" },
+      "summary-agent-bin": { type: "string" },
+      "organization-summary-refresh-interval-seconds": { type: "string" },
+      "room-summary-poll-interval-seconds": { type: "string" },
+    },
+    allowPositionals: false,
+  });
+
+  const databaseUrl = parsed.values["database-url"] ?? Bun.env.DATABASE_URL;
+  const dataDir = parsed.values["data-dir"] ?? Bun.env.SUPERMANAGER_DATA_DIR;
+
+  if (!databaseUrl) {
+    throw new Error("missing required DATABASE_URL / --database-url");
+  }
+  if (!dataDir) {
+    throw new Error("missing required SUPERMANAGER_DATA_DIR / --data-dir");
+  }
+
+  return {
+    databaseUrl,
+    dataDir,
     summaryAgent: await resolveSummaryAgentCommand(
       parsed.values["summary-agent-bin"] ?? Bun.env.SUPERMANAGER_SUMMARY_AGENT_BIN ?? null,
       cwd,
     ),
-    summaryRefreshIntervalMs,
+    organizationSummaryRefreshIntervalMs: parseRefreshIntervalMs(
+      parsed.values["organization-summary-refresh-interval-seconds"] ??
+        Bun.env.SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS ??
+        "300",
+    ),
+    roomSummaryPollIntervalMs: parseRefreshIntervalMs(
+      parsed.values["room-summary-poll-interval-seconds"] ??
+        Bun.env.SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS ??
+        "5",
+    ),
   };
 }
 
