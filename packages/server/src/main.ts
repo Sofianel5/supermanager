@@ -10,12 +10,11 @@ import { FeedStreamHub } from "./sse";
 import { formatError } from "./types";
 
 async function main(): Promise<void> {
-  const cwd = process.cwd();
-  const config = await loadApiConfig(Bun.argv.slice(2), cwd);
+  const config = await loadApiConfig(Bun.argv.slice(2));
   const db = await Db.connect(config.databaseUrl);
   const auth = createAuthServices(config);
   await auth.runMigrations();
-  await runAppMigrations(db.client, path.join(cwd, "migrations"));
+  await runAppMigrations(db.client, path.join(process.cwd(), "migrations"));
 
   const feedHub = new FeedStreamHub([
     trimUrl(config.publicApiUrl),

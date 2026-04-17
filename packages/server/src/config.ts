@@ -1,15 +1,8 @@
-import path from "node:path";
 import { parseArgs } from "node:util";
 
 export interface BindAddress {
   host: string;
   port: number;
-}
-
-export interface SummaryAgentCommand {
-  command: string;
-  args: string[];
-  cwd: string;
 }
 
 export interface OAuthProviderConfig {
@@ -31,18 +24,7 @@ export interface ApiConfig {
   auth: AuthConfig;
 }
 
-export interface SummaryWorkerConfig {
-  databaseUrl: string;
-  dataDir: string;
-  summaryAgent: SummaryAgentCommand;
-  organizationSummaryRefreshIntervalMs: number;
-  roomSummaryPollIntervalMs: number;
-}
-
-export async function loadApiConfig(
-  argv: string[],
-  cwd: string,
-): Promise<ApiConfig> {
+export async function loadApiConfig(argv: string[]): Promise<ApiConfig> {
   const parsed = parseArgs({
     args: argv,
     options: {
@@ -77,52 +59,6 @@ export async function loadApiConfig(
   };
 }
 
-export async function loadSummaryWorkerConfig(
-  argv: string[],
-  cwd: string,
-): Promise<SummaryWorkerConfig> {
-  const parsed = parseArgs({
-    args: argv,
-    options: {
-      "database-url": { type: "string" },
-      "data-dir": { type: "string" },
-      "summary-agent-bin": { type: "string" },
-      "organization-summary-refresh-interval-seconds": { type: "string" },
-      "room-summary-poll-interval-seconds": { type: "string" },
-    },
-    allowPositionals: false,
-  });
-
-  const databaseUrl = parsed.values["database-url"] ?? Bun.env.DATABASE_URL;
-  const dataDir = parsed.values["data-dir"] ?? Bun.env.SUPERMANAGER_DATA_DIR;
-
-  if (!databaseUrl) {
-    throw new Error("missing required DATABASE_URL / --database-url");
-  }
-  if (!dataDir) {
-    throw new Error("missing required SUPERMANAGER_DATA_DIR / --data-dir");
-  }
-
-  return {
-    databaseUrl,
-    dataDir,
-    summaryAgent: await resolveSummaryAgentCommand(
-      parsed.values["summary-agent-bin"] ?? Bun.env.SUPERMANAGER_SUMMARY_AGENT_BIN ?? null,
-      cwd,
-    ),
-    organizationSummaryRefreshIntervalMs: parseRefreshIntervalMs(
-      parsed.values["organization-summary-refresh-interval-seconds"] ??
-        Bun.env.SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS ??
-        "300",
-    ),
-    roomSummaryPollIntervalMs: parseRefreshIntervalMs(
-      parsed.values["room-summary-poll-interval-seconds"] ??
-        Bun.env.SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS ??
-        "5",
-    ),
-  };
-}
-
 function readRequiredEnv(names: string[]): string {
   for (const name of names) {
     const value = Bun.env[name]?.trim();
@@ -149,53 +85,6 @@ function parseBindAddress(raw: string): BindAddress {
   return { host, port };
 }
 
-async function resolveSummaryAgentCommand(
-  explicitBinary: string | null,
-  cwd: string,
-): Promise<SummaryAgentCommand> {
-  if (explicitBinary) {
-    return {
-      command: explicitBinary,
-      args: [],
-      cwd,
-    };
-  }
-
-  const cargoWorkspace = await findCargoWorkspace(cwd);
-  if (cargoWorkspace) {
-    return {
-      command: "cargo",
-      args: ["run", "-q", "-p", "summary-agent", "--"],
-      cwd: cargoWorkspace,
-    };
-  }
-
-  return {
-    command: "summary-agent",
-    args: [],
-    cwd,
-  };
-}
-
 export function trimUrl(url: string): string {
   return url.replace(/\/+$/, "");
-}
-
-async function findCargoWorkspace(cwd: string): Promise<string | null> {
-  const candidates = [cwd, path.resolve(cwd, "..")];
-  for (const candidate of candidates) {
-    if (await Bun.file(path.join(candidate, "Cargo.toml")).exists()) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function parseRefreshIntervalMs(raw: string): number {
-  const seconds = Number.parseInt(raw, 10);
-  if (!Number.isFinite(seconds) || seconds < 0) {
-    throw new Error(`invalid summary refresh interval: ${raw}`);
-  }
-
-  return seconds * 1000;
 }

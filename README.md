@@ -1,6 +1,6 @@
 # Supermanager
 
-Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, hook ingest, PostgreSQL state, and SSE. A separate Bun summary worker owns room and organization summary orchestration and spawns the Rust `summary-agent` process for Codex runtime state. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live room dashboard.
+Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, hook ingest, PostgreSQL state, and SSE. A separate Rust summary worker owns room and organization summary orchestration plus Codex runtime state. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live room dashboard.
 
 ## Setup
 
@@ -35,38 +35,36 @@ The server reads runtime config from environment variables:
 ### 2. Start the summary worker
 
 ```sh
-cd packages/server
+cd crates/summary-agent
 export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
-export SUPERMANAGER_DATA_DIR='../.supermanager-data'
+export SUPERMANAGER_DATA_DIR='../../.supermanager-data'
 export SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS='300'
 export SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS='5'
 export CODEX_API_KEY='replace-me'
-bun run src/worker-main.ts
+cargo run -- --database-url "$DATABASE_URL" --data-dir "$SUPERMANAGER_DATA_DIR"
 ```
 
 The summary worker reads these runtime config values:
 
 - `DATABASE_URL`
 - `SUPERMANAGER_DATA_DIR`
-- `SUPERMANAGER_SUMMARY_AGENT_BIN`
 - `SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS`
 - `SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS`
 - `CODEX_API_KEY`
-
-In local development the summary worker starts the Rust summary agent through `cargo run -p summary-agent`. For packaged environments, point `SUPERMANAGER_SUMMARY_AGENT_BIN` at a compiled `summary-agent` binary.
 
 For production packaging, compile the server to a standalone Bun executable:
 
 ```sh
 cd packages/server
 bun run build
-bun run build:worker
 SUPERMANAGER_PUBLIC_API_URL='https://api.supermanager.dev' \
 SUPERMANAGER_PUBLIC_APP_URL='https://supermanager.dev' \
 ./.build/supermanager-server
+cd ../../
+CARGO_PROFILE_RELEASE_LTO=true cargo build --release -p summary-agent
 SUPERMANAGER_DATA_DIR='/srv/supermanager' \
 CODEX_API_KEY='replace-me' \
-./.build/supermanager-worker
+./target/release/summary-agent
 ```
 
 ### 3. Start the frontend
@@ -300,7 +298,6 @@ The summary worker task definition mounts EFS and keeps the Codex runtime state:
 - `DATABASE_URL`
 - `CODEX_API_KEY`
 - `SUPERMANAGER_DATA_DIR=/srv/supermanager`
-- `SUPERMANAGER_SUMMARY_AGENT_BIN=/usr/local/bin/summary-agent`
 
 The API service now uses rolling deploys with `desired_count = 1`, `deployment_minimum_healthy_percent = 100`, and `deployment_maximum_percent = 200`. Room summarization replays from Postgres using `room_summaries.last_processed_seq`, so the worker can be restarted independently without losing summary progress.
 

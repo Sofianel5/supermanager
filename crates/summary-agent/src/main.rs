@@ -1,10 +1,11 @@
 mod agent;
+mod coordinator;
+mod db;
 mod event;
-mod ipc;
 mod prompt;
 mod tools;
 
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -21,35 +22,47 @@ use codex_protocol::protocol::SessionSource;
 use tokio::sync::mpsc;
 
 use crate::{
-    agent::AgentLoop,
-    ipc::{PendingToolCalls, read_host_messages, write_agent_messages},
+    agent::{AgentCommand, AgentLoop},
+    coordinator::SummaryCoordinator,
+    db::SummaryDb,
 };
 
 const CLIENT_NAME: &str = "supermanager_summary_agent";
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Run the Supermanager Codex summary agent")]
+#[command(author, version, about = "Run the Supermanager summary worker")]
 struct Cli {
-    #[arg(long)]
-    codex_home: PathBuf,
-    #[arg(long)]
-    summary_threads_dir: PathBuf,
+    #[arg(long, env = "DATABASE_URL")]
+    database_url: String,
+    #[arg(long, env = "SUPERMANAGER_DATA_DIR")]
+    data_dir: PathBuf,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS",
+        default_value_t = 300
+    )]
+    organization_summary_refresh_interval_seconds: u64,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS",
+        default_value_t = 5
+    )]
+    room_summary_poll_interval_seconds: u64,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    fs::create_dir_all(&cli.codex_home)
-        .with_context(|| format!("failed to create codex home {}", cli.codex_home.display()))?;
-    fs::create_dir_all(&cli.summary_threads_dir).with_context(|| {
-        format!(
-            "failed to create summary threads dir {}",
-            cli.summary_threads_dir.display()
-        )
-    })?;
+    let paths = SummaryPaths::new(cli.data_dir);
+    paths.initialize().await?;
 
-    let config = Config::load_default_with_cli_overrides_for_codex_home(cli.codex_home, Vec::new())
-        .context("failed to load default Codex config")?;
+    let db = SummaryDb::connect(&cli.database_url).await?;
+
+    let config = Config::load_default_with_cli_overrides_for_codex_home(
+        paths.codex_home.clone(),
+        Vec::new(),
+    )
+    .context("failed to load default Codex config")?;
     let client = InProcessAppServerClient::start(InProcessClientStartArgs {
         arg0_paths: Arg0DispatchPaths::default(),
         config: Arc::new(config),
@@ -69,32 +82,59 @@ async fn main() -> Result<()> {
     .await
     .context("failed to start in-process Codex app server")?;
 
-    let (command_tx, command_rx) = mpsc::channel(256);
-    let (output_tx, output_rx) = mpsc::channel(256);
-    let pending_tool_calls: PendingToolCalls = Arc::default();
+    let (command_tx, command_rx) = mpsc::channel::<AgentCommand>(256);
+    let (event_tx, event_rx) = mpsc::channel(256);
 
-    let stdin_task = tokio::spawn(read_host_messages(
+    let agent_task = tokio::spawn({
+        let db = db.clone();
+        let summary_threads_dir = paths.summary_threads_dir.clone();
+        async move {
+            AgentLoop::new(client, command_rx, event_tx, db, summary_threads_dir)
+                .run()
+                .await
+        }
+    });
+
+    let mut coordinator = SummaryCoordinator::new(
+        db.clone(),
         command_tx.clone(),
-        pending_tool_calls.clone(),
-    ));
-    let stdout_task = tokio::spawn(write_agent_messages(output_rx));
-
-    let loop_state = AgentLoop::new(
-        client,
-        command_rx,
-        output_tx.clone(),
-        cli.summary_threads_dir,
-        pending_tool_calls,
+        event_rx,
+        Duration::from_secs(cli.organization_summary_refresh_interval_seconds),
+        Duration::from_secs(cli.room_summary_poll_interval_seconds),
     );
+    let coordinator_result = coordinator.run().await;
 
-    let run_result = loop_state.run().await;
-    drop(output_tx);
+    let _ = command_tx.send(AgentCommand::Shutdown).await;
+    let agent_result = agent_task.await.context("summary agent task join failed")?;
 
-    let stdin_result = stdin_task.await.context("stdin task join failed")?;
-    let stdout_result = stdout_task.await.context("stdout task join failed")?;
+    db.close().await;
 
-    run_result?;
-    stdin_result?;
-    stdout_result?;
+    coordinator_result?;
+    agent_result?;
+
     Ok(())
+}
+
+struct SummaryPaths {
+    codex_home: PathBuf,
+    data_dir: PathBuf,
+    summary_threads_dir: PathBuf,
+}
+
+impl SummaryPaths {
+    fn new(data_dir: PathBuf) -> Self {
+        Self {
+            codex_home: data_dir.join("codex"),
+            summary_threads_dir: data_dir.join("summary-threads"),
+            data_dir,
+        }
+    }
+
+    async fn initialize(&self) -> Result<()> {
+        for path in [&self.data_dir, &self.codex_home, &self.summary_threads_dir] {
+            fs::create_dir_all(path)
+                .with_context(|| format!("failed to create {}", path.display()))?;
+        }
+        Ok(())
+    }
 }
