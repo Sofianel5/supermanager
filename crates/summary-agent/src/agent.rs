@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use anyhow::{Context, Result};
-use codex_app_server_client::{InProcessAppServerClient, InProcessServerEvent};
+use codex_app_server_client::{InProcessAppServerClient, InProcessServerEvent, TypedRequestError};
 use codex_app_server_protocol::{
     AskForApproval, ClientRequest, DynamicToolCallOutputContentItem, DynamicToolCallParams,
     DynamicToolCallResponse, JSONRPCErrorError, RequestId, SandboxMode, ServerNotification,
@@ -24,6 +24,7 @@ use crate::{
 };
 
 const SUMMARY_MODEL: &str = "gpt-5.4-mini";
+const NO_ACTIVE_TURN_TO_STEER_ERROR: &str = "no active turn to steer";
 
 pub(crate) enum AgentCommand {
     EnqueueRoomEvent {
@@ -300,8 +301,8 @@ impl AgentLoop {
                 .request_typed::<TurnSteerResponse>(ClientRequest::TurnSteer {
                     request_id,
                     params: TurnSteerParams {
-                        thread_id,
-                        input,
+                        thread_id: thread_id.clone(),
+                        input: input.clone(),
                         expected_turn_id: turn_id,
                     },
                 })
@@ -311,6 +312,7 @@ impl AgentLoop {
                     if let Some(state) = self.targets.get_mut(target) {
                         state.active_turn = Some(response.turn_id);
                     }
+                    return Ok(());
                 }
                 Err(error) => {
                     eprintln!(
@@ -318,37 +320,43 @@ impl AgentLoop {
                         target.scope.as_str(),
                         target.id
                     );
-                }
-            }
-        } else {
-            self.emit_summary_status(target, SummaryStatus::Generating)
-                .await;
-            let request_id = self.next_request_id();
-            match self
-                .client
-                .request_typed::<TurnStartResponse>(ClientRequest::TurnStart {
-                    request_id,
-                    params: TurnStartParams {
-                        thread_id,
-                        input,
-                        ..Default::default()
-                    },
-                })
-                .await
-            {
-                Ok(response) => {
+                    if !is_stale_active_turn_error(&error) {
+                        return Ok(());
+                    }
                     if let Some(state) = self.targets.get_mut(target) {
-                        state.active_turn = Some(response.turn.id);
+                        state.active_turn = None;
                     }
                 }
-                Err(error) => {
-                    eprintln!(
-                        "[summary-agent] turn start failed for {} {}: {error}",
-                        target.scope.as_str(),
-                        target.id
-                    );
-                    self.emit_summary_status(target, SummaryStatus::Error).await;
+            }
+        }
+
+        self.emit_summary_status(target, SummaryStatus::Generating)
+            .await;
+        let request_id = self.next_request_id();
+        match self
+            .client
+            .request_typed::<TurnStartResponse>(ClientRequest::TurnStart {
+                request_id,
+                params: TurnStartParams {
+                    thread_id,
+                    input,
+                    ..Default::default()
+                },
+            })
+            .await
+        {
+            Ok(response) => {
+                if let Some(state) = self.targets.get_mut(target) {
+                    state.active_turn = Some(response.turn.id);
                 }
+            }
+            Err(error) => {
+                eprintln!(
+                    "[summary-agent] turn start failed for {} {}: {error}",
+                    target.scope.as_str(),
+                    target.id
+                );
+                self.emit_summary_status(target, SummaryStatus::Error).await;
             }
         }
 
@@ -528,6 +536,14 @@ impl AgentLoop {
     }
 }
 
+fn is_stale_active_turn_error(error: &TypedRequestError) -> bool {
+    matches!(
+        error,
+        TypedRequestError::Server { source, .. }
+            if source.message == NO_ACTIVE_TURN_TO_STEER_ERROR
+    )
+}
+
 async fn read_thread_id(path: &std::path::Path) -> Result<Option<String>> {
     match tokio::fs::read_to_string(path).await {
         Ok(value) => {
@@ -542,5 +558,35 @@ async fn read_thread_id(path: &std::path::Path) -> Result<Option<String>> {
         Err(error) => {
             Err(error).with_context(|| format!("failed to read thread id from {}", path.display()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server_error(message: &str) -> TypedRequestError {
+        TypedRequestError::Server {
+            method: "turn/steer".to_owned(),
+            source: JSONRPCErrorError {
+                code: -32000,
+                data: None,
+                message: message.to_owned(),
+            },
+        }
+    }
+
+    #[test]
+    fn no_active_turn_errors_are_treated_as_stale_state() {
+        assert!(is_stale_active_turn_error(&server_error(
+            NO_ACTIVE_TURN_TO_STEER_ERROR,
+        )));
+    }
+
+    #[test]
+    fn unrelated_steer_errors_do_not_trigger_restart() {
+        assert!(!is_stale_active_turn_error(&server_error(
+            "cannot steer a compact turn",
+        )));
     }
 }
