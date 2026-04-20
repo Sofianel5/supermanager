@@ -55,8 +55,10 @@ impl WorkflowKind {
 
     pub(crate) fn sandbox(self) -> SandboxMode {
         match self {
-            Self::ProjectSummary | Self::OrganizationSummary => SandboxMode::ReadOnly,
-            Self::OrganizationMemories | Self::OrganizationSkills => SandboxMode::WorkspaceWrite,
+            Self::ProjectSummary
+            | Self::OrganizationSummary
+            | Self::OrganizationMemories
+            | Self::OrganizationSkills => SandboxMode::ReadOnly,
         }
     }
 
@@ -68,15 +70,9 @@ impl WorkflowKind {
         match self {
             Self::ProjectSummary => Some(SummaryTool::project_specs()),
             Self::OrganizationSummary => Some(SummaryTool::organization_specs()),
-            Self::OrganizationMemories | Self::OrganizationSkills => None,
+            Self::OrganizationMemories => Some(SummaryTool::organization_memory_specs()),
+            Self::OrganizationSkills => Some(SummaryTool::organization_skills_specs()),
         }
-    }
-
-    fn uses_organization_workspace(self) -> bool {
-        matches!(
-            self,
-            Self::OrganizationSummary | Self::OrganizationMemories | Self::OrganizationSkills
-        )
     }
 }
 
@@ -114,7 +110,6 @@ pub(crate) enum WorkflowCursor {
 pub(crate) struct WorkflowPaths {
     pub(crate) codex_home: PathBuf,
     workflow_threads_dir: PathBuf,
-    organization_workspaces_dir: PathBuf,
 }
 
 impl WorkflowPaths {
@@ -122,16 +117,11 @@ impl WorkflowPaths {
         Self {
             codex_home: data_dir.join("codex"),
             workflow_threads_dir: data_dir.join("workflow-threads"),
-            organization_workspaces_dir: data_dir.join("organization-workspaces"),
         }
     }
 
     pub(crate) async fn initialize(&self) -> anyhow::Result<()> {
-        for path in [
-            &self.codex_home,
-            &self.workflow_threads_dir,
-            &self.organization_workspaces_dir,
-        ] {
+        for path in [&self.codex_home, &self.workflow_threads_dir] {
             tokio::fs::create_dir_all(path)
                 .await
                 .with_context(|| format!("failed to create {}", path.display()))?;
@@ -145,28 +135,12 @@ impl WorkflowPaths {
             .join(&target.id)
     }
 
-    pub(crate) fn organization_workspace_dir(&self, organization_id: &str) -> PathBuf {
-        self.organization_workspaces_dir.join(organization_id)
-    }
-
     pub(crate) async fn prepare_cwd(&self, target: &WorkflowTarget) -> anyhow::Result<PathBuf> {
-        let cwd = if target.kind.uses_organization_workspace() {
-            self.organization_workspace_dir(&target.id)
-        } else {
-            self.thread_state_dir(target).join("cwd")
-        };
+        let cwd = self.thread_state_dir(target).join("cwd");
 
         tokio::fs::create_dir_all(&cwd)
             .await
             .with_context(|| format!("failed to create workflow cwd: {}", cwd.display()))?;
-
-        if target.kind.uses_organization_workspace() {
-            for subdir in [cwd.join("memories"), cwd.join(".codex/skills")] {
-                tokio::fs::create_dir_all(&subdir).await.with_context(|| {
-                    format!("failed to create workflow subdir: {}", subdir.display())
-                })?;
-            }
-        }
 
         Ok(cwd)
     }

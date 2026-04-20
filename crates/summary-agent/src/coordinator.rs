@@ -9,9 +9,7 @@ use tokio::{
 
 use crate::{
     agent::{AgentCommand, AgentEvent},
-    db::{
-        OrganizationSummaryQueryOptions, ProjectSummaryQueryOptions, SummaryDb, now_rfc3339,
-    },
+    db::{OrganizationSummaryQueryOptions, ProjectSummaryQueryOptions, SummaryDb, now_rfc3339},
     event::{
         format_organization_memory_request, format_organization_skills_request,
         format_organization_summary_request, format_project_event,

@@ -32,6 +32,17 @@ struct RemoveMemberBlufArgs {
     member_name: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct UpsertWorkflowFileArgs {
+    path: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteWorkflowFileArgs {
+    path: String,
+}
+
 pub(crate) enum SummaryTool {
     ProjectGetSnapshot,
     SetProjectBluf {
@@ -53,6 +64,14 @@ pub(crate) enum SummaryTool {
     RemoveMemberBluf {
         member_user_id: String,
         member_name: String,
+    },
+    OrganizationWorkflowGetSnapshot,
+    UpsertOrganizationWorkflowFile {
+        path: String,
+        content: String,
+    },
+    DeleteOrganizationWorkflowFile {
+        path: String,
     },
 }
 
@@ -150,6 +169,22 @@ impl SummaryTool {
         ]
     }
 
+    pub(crate) fn organization_memory_specs() -> Vec<DynamicToolSpec> {
+        organization_workflow_specs(
+            "Read the current DB-backed organization memory files before deciding what to change.",
+            "Create or replace one organization memory file. Paths are relative to the organization memory root, for example `MEMORY.md` or `memory_summary.md`.",
+            "Delete one organization memory file by relative path when it is stale or no longer needed.",
+        )
+    }
+
+    pub(crate) fn organization_skills_specs() -> Vec<DynamicToolSpec> {
+        organization_workflow_specs(
+            "Read the current DB-backed organization skill files before deciding what to change.",
+            "Create or replace one organization skill file. Paths are relative to the organization skills root, for example `code-review/SKILL.md`.",
+            "Delete one organization skill file by relative path when it is stale or no longer needed.",
+        )
+    }
+
     pub(crate) fn parse_project(params: &DynamicToolCallParams) -> Result<Self> {
         match params.tool.as_str() {
             "get_snapshot" => Ok(Self::ProjectGetSnapshot),
@@ -221,6 +256,28 @@ impl SummaryTool {
             other => anyhow::bail!("unknown organization summary tool: {other}"),
         }
     }
+
+    pub(crate) fn parse_organization_workflow_documents(
+        params: &DynamicToolCallParams,
+    ) -> Result<Self> {
+        match params.tool.as_str() {
+            "get_snapshot" => Ok(Self::OrganizationWorkflowGetSnapshot),
+            "upsert_file" => {
+                let args: UpsertWorkflowFileArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid upsert_file arguments")?;
+                Ok(Self::UpsertOrganizationWorkflowFile {
+                    path: args.path,
+                    content: args.content,
+                })
+            }
+            "delete_file" => {
+                let args: DeleteWorkflowFileArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid delete_file arguments")?;
+                Ok(Self::DeleteOrganizationWorkflowFile { path: args.path })
+            }
+            other => anyhow::bail!("unknown organization workflow document tool: {other}"),
+        }
+    }
 }
 
 pub(crate) fn tool_failure(message: impl Into<String>) -> DynamicToolCallResponse {
@@ -252,4 +309,39 @@ fn markdown_only_schema() -> Value {
         "required": ["markdown"],
         "properties": { "markdown": { "type": "string" } }
     })
+}
+
+fn organization_workflow_specs(
+    get_snapshot_description: &str,
+    upsert_file_description: &str,
+    delete_file_description: &str,
+) -> Vec<DynamicToolSpec> {
+    vec![
+        spec("get_snapshot", get_snapshot_description, empty_schema()),
+        spec(
+            "upsert_file",
+            upsert_file_description,
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "content"],
+                "properties": {
+                    "path": { "type": "string" },
+                    "content": { "type": "string" }
+                }
+            }),
+        ),
+        spec(
+            "delete_file",
+            delete_file_description,
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path"],
+                "properties": {
+                    "path": { "type": "string" }
+                }
+            }),
+        ),
+    ]
 }

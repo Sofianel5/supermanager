@@ -380,7 +380,7 @@ impl AgentLoop {
             WorkflowKind::OrganizationSummary => SummaryTool::parse_organization(params),
             WorkflowKind::ProjectSummary => SummaryTool::parse_project(params),
             WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => {
-                return Ok(tool_failure("workflow does not expose dynamic tools"));
+                SummaryTool::parse_organization_workflow_documents(params)
             }
         };
         let tool = match tool {
@@ -397,7 +397,11 @@ impl AgentLoop {
             WorkflowKind::ProjectSummary => {
                 self.db.execute_project_tool_call(&target.id, tool).await
             }
-            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => unreachable!(),
+            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => {
+                self.db
+                    .execute_organization_workflow_tool_call(&target.id, target.kind, tool)
+                    .await
+            }
         };
 
         let result = match result {

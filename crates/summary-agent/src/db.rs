@@ -1,10 +1,14 @@
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    path::{Component, Path},
+};
 
 use anyhow::{Context, Result};
 use reporter_protocol::{
     MemberSnapshot, OrganizationSnapshot, ProjectBlufSnapshot, ProjectSnapshot, StoredHookEvent,
     SummaryStatus,
 };
+use serde::Serialize;
 use serde_json::Value;
 use sqlx::{
     PgPool, Row,
@@ -42,6 +46,13 @@ pub(crate) struct ProjectSummaryClaim {
     pub(crate) last_processed_seq: i64,
 }
 
+#[derive(Serialize)]
+struct OrganizationWorkflowDocumentRecord {
+    path: String,
+    content: String,
+    updated_at: String,
+}
+
 pub(crate) struct ToolExecutionResult {
     pub(crate) success: bool,
     pub(crate) message: String,
@@ -52,6 +63,8 @@ pub(crate) struct OrganizationSummaryQueryOptions {
     pub(crate) before_received_at: Option<String>,
     pub(crate) limit: Option<i64>,
 }
+
+pub(crate) type OrganizationWorkflowQueryOptions = OrganizationSummaryQueryOptions;
 
 pub(crate) struct ProjectSummaryQueryOptions {
     pub(crate) after_seq: Option<i64>,
@@ -346,6 +359,121 @@ impl SummaryDb {
         Ok(())
     }
 
+    async fn list_organization_workflow_documents(
+        &self,
+        organization_id: &str,
+        workflow_kind: WorkflowKind,
+    ) -> Result<Vec<OrganizationWorkflowDocumentRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT document_path, content_text, updated_at
+            FROM organization_workflow_documents
+            WHERE organization_id = $1
+              AND workflow_kind = $2
+            ORDER BY document_path ASC
+            "#,
+        )
+        .bind(organization_id)
+        .bind(workflow_kind.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to list organization workflow documents {} for {organization_id}",
+                workflow_kind.as_str()
+            )
+        })?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(OrganizationWorkflowDocumentRecord {
+                    path: row
+                        .try_get("document_path")
+                        .context("failed to decode workflow document path")?,
+                    content: row
+                        .try_get("content_text")
+                        .context("failed to decode workflow document content")?,
+                    updated_at: row
+                        .try_get::<OffsetDateTime, _>("updated_at")
+                        .context("failed to decode workflow document updated_at")
+                        .and_then(format_timestamp)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_organization_workflow_document(
+        &self,
+        organization_id: &str,
+        workflow_kind: WorkflowKind,
+        path: &str,
+        content: &str,
+    ) -> Result<()> {
+        let normalized_path = normalize_workflow_document_path(workflow_kind, path)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO organization_workflow_documents (
+              organization_id,
+              workflow_kind,
+              document_path,
+              content_text
+            )
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT(organization_id, workflow_kind, document_path) DO UPDATE SET
+              content_text = EXCLUDED.content_text,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(organization_id)
+        .bind(workflow_kind.as_str())
+        .bind(&normalized_path)
+        .bind(content)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to upsert organization workflow document {}:{} for {organization_id}",
+                workflow_kind.as_str(),
+                normalized_path
+            )
+        })?;
+
+        Ok(())
+    }
+
+    async fn delete_organization_workflow_document(
+        &self,
+        organization_id: &str,
+        workflow_kind: WorkflowKind,
+        path: &str,
+    ) -> Result<bool> {
+        let normalized_path = normalize_workflow_document_path(workflow_kind, path)?;
+
+        let result = sqlx::query(
+            r#"
+            DELETE FROM organization_workflow_documents
+            WHERE organization_id = $1
+              AND workflow_kind = $2
+              AND document_path = $3
+            "#,
+        )
+        .bind(organization_id)
+        .bind(workflow_kind.as_str())
+        .bind(&normalized_path)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to delete organization workflow document {}:{} for {organization_id}",
+                workflow_kind.as_str(),
+                normalized_path
+            )
+        })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     pub(crate) async fn list_projects_for_summary(
         &self,
         organization_id: &str,
@@ -433,7 +561,7 @@ impl SummaryDb {
     pub(crate) async fn query_organization_transcripts_for_workflow(
         &self,
         organization_id: &str,
-        options: OrganizationSummaryQueryOptions,
+        options: OrganizationWorkflowQueryOptions,
     ) -> Result<Vec<OrganizationTranscript>> {
         let rows = sqlx::query(
             r#"
@@ -950,6 +1078,68 @@ impl SummaryDb {
         }
     }
 
+    pub(crate) async fn execute_organization_workflow_tool_call(
+        &self,
+        organization_id: &str,
+        workflow_kind: WorkflowKind,
+        tool: SummaryTool,
+    ) -> Result<ToolExecutionResult> {
+        match tool {
+            SummaryTool::OrganizationWorkflowGetSnapshot => {
+                let documents = self
+                    .list_organization_workflow_documents(organization_id, workflow_kind)
+                    .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: serde_json::to_string_pretty(&serde_json::json!({
+                        "workflow_kind": workflow_kind.as_str(),
+                        "path_root": workflow_document_root_label(workflow_kind),
+                        "files": documents,
+                    }))
+                    .context("failed to serialize organization workflow snapshot")?,
+                })
+            }
+            SummaryTool::UpsertOrganizationWorkflowFile { path, content } => {
+                let normalized_path = normalize_workflow_document_path(workflow_kind, &path)?;
+                self.upsert_organization_workflow_document(
+                    organization_id,
+                    workflow_kind,
+                    &normalized_path,
+                    &content,
+                )
+                .await?;
+
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: format!("upserted {}", normalized_path),
+                })
+            }
+            SummaryTool::DeleteOrganizationWorkflowFile { path } => {
+                let normalized_path = normalize_workflow_document_path(workflow_kind, &path)?;
+                let deleted = self
+                    .delete_organization_workflow_document(
+                        organization_id,
+                        workflow_kind,
+                        &normalized_path,
+                    )
+                    .await?;
+
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: if deleted {
+                        format!("deleted {}", normalized_path)
+                    } else {
+                        format!("already absent: {}", normalized_path)
+                    },
+                })
+            }
+            _ => Ok(ToolExecutionResult {
+                success: false,
+                message: "tool is not available for this organization workflow".to_owned(),
+            }),
+        }
+    }
+
     async fn get_stored_organization_summary(
         &self,
         organization_id: &str,
@@ -1191,6 +1381,53 @@ impl MemberSnapshotContainer for OrganizationSnapshot {
     }
 }
 
+fn workflow_document_root_label(workflow_kind: WorkflowKind) -> &'static str {
+    match workflow_kind {
+        WorkflowKind::OrganizationMemories => "memories",
+        WorkflowKind::OrganizationSkills => ".codex/skills",
+        WorkflowKind::OrganizationSummary | WorkflowKind::ProjectSummary => {
+            panic!("workflow does not use organization workflow documents")
+        }
+    }
+}
+
+fn normalize_workflow_document_path(workflow_kind: WorkflowKind, path: &str) -> Result<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("path must be a non-empty relative path");
+    }
+    if trimmed.contains('\\') {
+        anyhow::bail!("path must use '/' separators");
+    }
+
+    let mut normalized_components = Vec::new();
+    for component in Path::new(trimmed).components() {
+        match component {
+            Component::Normal(segment) => {
+                let segment = segment.to_str().context("path must be valid UTF-8")?.trim();
+                if segment.is_empty() {
+                    anyhow::bail!("path contains an empty segment");
+                }
+                normalized_components.push(segment.to_owned());
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!("path must stay within the organization workflow root");
+            }
+        }
+    }
+
+    if normalized_components.is_empty() {
+        anyhow::bail!("path must contain at least one normal path segment");
+    }
+
+    if workflow_kind == WorkflowKind::OrganizationSkills && normalized_components.len() < 2 {
+        anyhow::bail!("organization skill files must live under <skill-name>/...");
+    }
+
+    Ok(normalized_components.join("/"))
+}
+
 fn format_timestamp(timestamp: OffsetDateTime) -> Result<String> {
     timestamp
         .format(&Rfc3339)
@@ -1199,4 +1436,36 @@ fn format_timestamp(timestamp: OffsetDateTime) -> Result<String> {
 
 pub(crate) fn now_rfc3339() -> Result<String> {
     format_timestamp(OffsetDateTime::now_utc())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_workflow_document_path;
+    use crate::workflow::WorkflowKind;
+
+    #[test]
+    fn memory_document_paths_are_normalized() {
+        let path =
+            normalize_workflow_document_path(WorkflowKind::OrganizationMemories, "./MEMORY.md")
+                .unwrap();
+
+        assert_eq!(path, "MEMORY.md");
+    }
+
+    #[test]
+    fn workflow_document_paths_reject_parent_segments() {
+        let error =
+            normalize_workflow_document_path(WorkflowKind::OrganizationMemories, "../MEMORY.md")
+                .unwrap_err();
+
+        assert!(error.to_string().contains("workflow root"));
+    }
+
+    #[test]
+    fn skill_documents_require_skill_subdirectories() {
+        let error = normalize_workflow_document_path(WorkflowKind::OrganizationSkills, "SKILL.md")
+            .unwrap_err();
+
+        assert!(error.to_string().contains("<skill-name>"));
+    }
 }
