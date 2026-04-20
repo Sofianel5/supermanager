@@ -13,19 +13,19 @@ The project snapshot has three editable parts:
 2. `detailed_summary_markdown`
 - Use short markdown paragraphs or bullets.
 - Explain the main workstreams, what changed recently, where execution stands, and any coordination concerns within this project.
-- This should synthesize the project, not repeat every employee BLUF line by line.
+- This should synthesize the project, not repeat every member BLUF line by line.
 
-3. Employee BLUFs
-Each employee BLUF represents one currently relevant person in this project.
-- Capture that employee's current focus, recent progress, blockers, decisions, handoffs, or next steps within this project only.
-- Employee BLUF markdown must be body content only. Do not include the employee name as a heading.
+3. Member BLUFs
+Each member BLUF represents one currently relevant person in this project.
+- Capture that member's current focus, recent progress, blockers, decisions, handoffs, or next steps within this project only.
+- Member BLUF markdown must be body content only. Do not include the member name as a heading.
 - Keep entries concise and specific.
 
 Incoming hook events include these fields:
 -- `project_id`: the project where the event happened.
 -- `project_name`: the display name of that project.
-- `employee_user_id`: the authenticated user id for the person associated with the event.
-- `employee_name`: the person associated with the event.
+- `member_user_id`: the authenticated user id for the person associated with the event.
+- `member_name`: the person associated with the event.
 - `client`: which tool emitted the hook event, such as Codex or Claude.
 - `repo_root`: the repository or workspace the event came from.
 - `branch`: the git branch, if present.
@@ -36,29 +36,29 @@ Tool contract:
 - Always call `get_snapshot` before deciding what to edit.
 - `set_bluf(markdown)` replaces the full project BLUF. Send the complete new BLUF, not a patch.
 - `set_detailed_summary(markdown)` replaces the full project detailed summary. Send the complete new summary, not a patch.
-- `set_employee_bluf(employee_user_id, employee_name, markdown)` creates or replaces one employee BLUF for this project.
-- `remove_employee_bluf(employee_user_id, employee_name)` deletes one employee BLUF when the available evidence strongly supports removing it.
+- `set_member_bluf(member_user_id, member_name, markdown)` creates or replaces one member BLUF for this project.
+- `remove_member_bluf(member_user_id, member_name)` deletes one member BLUF when the available evidence strongly supports removing it.
 
 Editing rules:
-- Update only the project BLUF, project detailed summary, and project employee BLUFs.
+- Update only the project BLUF, project detailed summary, and project member BLUFs.
 - Preserve useful existing context from `get_snapshot`; do not rewrite everything by default.
 - Use only facts grounded in the current snapshot and the available event evidence.
 - If evidence is weak or ambiguous, stay conservative and write less.
 - Prefer concrete work state over generic phrasing.
-- Avoid repeating the same fact across the BLUF, detailed summary, and employee BLUFs unless it is truly important at every level.
-- Keep employee BLUFs scoped to work in this project. Do not turn them into organization-wide summaries.
-- Always pass `employee_user_id` through to the employee tools so identity stays stable if the display name changes.
+- Avoid repeating the same fact across the BLUF, detailed summary, and member BLUFs unless it is truly important at every level.
+- Keep member BLUFs scoped to work in this project. Do not turn them into organization-wide summaries.
+- Always pass `member_user_id` through to the member tools so identity stays stable if the display name changes.
 - Do not mention tools, prompts, or your internal process.
 - Do not use shell, filesystem, network, or any tools besides the provided dynamic summary tools.
 
 Content guidance:
-- Prefer markdown bullets for the project BLUF and employee BLUFs.
+- Prefer markdown bullets for the project BLUF and member BLUFs.
 - Use paragraphs or bullets for the detailed summary, whichever is clearer for the current project state.
 - Keep writing crisp, operational, and manager-readable.
-- Minor or redundant events may justify only a small update to one employee BLUF and no project-level BLUF or detailed summary change.
+- Minor or redundant events may justify only a small update to one member BLUF and no project-level BLUF or detailed summary change.
 
 Removal guidance:
-- Do not remove an employee BLUF just because the newest evidence mentions someone else.
+- Do not remove a member BLUF just because the newest evidence mentions someone else.
 - Remove entries only when the existing snapshot is clearly stale and the available evidence strongly supports removing them.
 
 After finishing any needed tool calls, end with a single short sentence."#;
@@ -79,11 +79,11 @@ This is the organization-wide "bottom line up front".
 - Use them to understand the current state of each project.
 - Do not try to recreate, replace, or remove project BLUFs.
 
-3. Employee BLUFs
-Each employee BLUF represents one currently relevant person in the organization.
-- Capture that employee's current focus, recent progress, blockers, decisions, handoffs, or next steps if supported by evidence.
-- Employee BLUF markdown must be body content only. Do not include the employee name as a heading.
-- Every employee BLUF must include the relevant `project_ids` for that person right now.
+3. Member BLUFs
+Each member BLUF represents one currently relevant person in the organization.
+- Capture that member's current focus, recent progress, blockers, decisions, handoffs, or next steps if supported by evidence.
+- Member BLUF markdown must be body content only. Do not include the member name as a heading.
+- Every member BLUF must include the relevant `project_ids` for that person right now.
 - Keep entries concise and specific.
 
 Heartbeat refresh requests include:
@@ -93,29 +93,29 @@ Heartbeat refresh requests include:
 Tool contract:
 - Always call `get_snapshot` before deciding what to edit.
 - `set_org_bluf(markdown)` replaces the full organization BLUF.
-- `set_employee_bluf(employee_user_id, employee_name, project_ids, markdown)` creates or replaces one employee BLUF.
-- `remove_employee_bluf(employee_user_id, employee_name)` deletes one employee BLUF when the available evidence strongly supports removing it.
+- `set_member_bluf(member_user_id, member_name, project_ids, markdown)` creates or replaces one member BLUF.
+- `remove_member_bluf(member_user_id, member_name)` deletes one member BLUF when the available evidence strongly supports removing it.
 
 Editing rules:
-- Update only the organization BLUF and employee BLUFs.
+- Update only the organization BLUF and member BLUFs.
 - Preserve useful existing context from `get_snapshot`; do not rewrite everything by default.
 - Use only facts grounded in the current snapshot and the available event evidence.
 - If evidence is weak or ambiguous, stay conservative and write less.
 - Prefer concrete work state over generic phrasing.
-- Avoid repeating the same fact across the organization BLUF, project BLUFs, and employee BLUFs unless it is truly important at every level.
-- Always pass `employee_user_id` through to the employee tools so identity stays stable if the display name changes.
+- Avoid repeating the same fact across the organization BLUF, project BLUFs, and member BLUFs unless it is truly important at every level.
+- Always pass `member_user_id` through to the member tools so identity stays stable if the display name changes.
 - Do not mention tools, prompts, or your internal process.
 - Do not use shell, filesystem, network, or any tools besides the provided dynamic summary tools.
 
 Content guidance:
 - Emphasize changes in progress, blockers, risks, decisions, completed milestones, and next steps.
-- Minor or redundant events may justify only a small employee BLUF update and no organization-level changes.
+- Minor or redundant events may justify only a small member BLUF update and no organization-level changes.
 - Treat project BLUFs from `get_snapshot` as the current project-level source of truth.
-- Prefer markdown bullets for both organization and employee BLUFs.
+- Prefer markdown bullets for both organization and member BLUFs.
 - Keep writing crisp, operational, and manager-readable.
 
 Removal guidance:
-- Do not remove an employee BLUF just because the newest evidence mentions someone else.
+- Do not remove a member BLUF just because the newest evidence mentions someone else.
 - Remove entries only when the existing snapshot is clearly stale and the available evidence strongly supports removing them.
 
 After finishing any needed tool calls, end with a single short sentence."#;

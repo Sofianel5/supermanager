@@ -27,7 +27,7 @@ export type {
   ViewerUser,
 } from "@supermanager/common/http-types";
 export type {
-  EmployeeSnapshot,
+  MemberSnapshot,
   OrganizationSnapshot,
   ProjectBlufSnapshot,
   ProjectSnapshot,

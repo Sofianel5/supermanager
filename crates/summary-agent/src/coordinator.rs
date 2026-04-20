@@ -127,16 +127,24 @@ impl SummaryCoordinator {
         Ok(())
     }
 
-    async fn persist_project_status(&mut self, project_id: &str, status: SummaryStatus) -> Result<()> {
+    async fn persist_project_status(
+        &mut self,
+        project_id: &str,
+        status: SummaryStatus,
+    ) -> Result<()> {
         if status == SummaryStatus::Ready {
-            if let Some(last_processed_seq) = self.pending_project_summary_seq.get(project_id).copied() {
+            if let Some(last_processed_seq) =
+                self.pending_project_summary_seq.get(project_id).copied()
+            {
                 self.db
                     .set_project_summary_last_processed_seq(project_id, last_processed_seq)
                     .await?;
             }
         }
 
-        self.db.set_project_summary_status(project_id, status).await?;
+        self.db
+            .set_project_summary_status(project_id, status)
+            .await?;
 
         if matches!(status, SummaryStatus::Ready | SummaryStatus::Error) {
             self.pending_project_summary_seq.remove(project_id);
@@ -276,7 +284,10 @@ impl SummaryCoordinator {
             .await?;
 
         for project in projects {
-            if self.pending_project_summary_seq.contains_key(&project.project_id) {
+            if self
+                .pending_project_summary_seq
+                .contains_key(&project.project_id)
+            {
                 continue;
             }
 
@@ -291,11 +302,20 @@ impl SummaryCoordinator {
             };
 
             if let Err(error) = self
-                .enqueue_project_summary(&project.project_id, &project.name, claim.last_processed_seq)
+                .enqueue_project_summary(
+                    &project.project_id,
+                    &project.name,
+                    claim.last_processed_seq,
+                )
                 .await
             {
-                self.mark_error(SummaryScope::Project, &project.project_id, "enqueue summary", &error)
-                    .await;
+                self.mark_error(
+                    SummaryScope::Project,
+                    &project.project_id,
+                    "enqueue summary",
+                    &error,
+                )
+                .await;
                 self.pending_project_summary_seq.remove(&project.project_id);
             }
         }
@@ -338,7 +358,9 @@ impl SummaryCoordinator {
                     event,
                 })
                 .await
-                .with_context(|| format!("failed to send project event for {project_id} to agent"))?;
+                .with_context(|| {
+                    format!("failed to send project event for {project_id} to agent")
+                })?;
         }
 
         Ok(())
@@ -426,8 +448,8 @@ mod tests {
                 seq: 1,
                 event_id: Uuid::nil(),
                 received_at: received_at.to_owned(),
-                employee_user_id: "user_123".to_owned(),
-                employee_name: "Dana".to_owned(),
+                member_user_id: "user_123".to_owned(),
+                member_name: "Dana".to_owned(),
                 client: "codex".to_owned(),
                 repo_root: "/tmp/repo".to_owned(),
                 branch: None,

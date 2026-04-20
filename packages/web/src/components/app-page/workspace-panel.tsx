@@ -69,7 +69,7 @@ export function WorkspacePanel({
                   </div>
                   <p className="mt-2.5 flex flex-wrap gap-2.5 font-mono text-[0.76rem] text-ink-dim">
                     <span>
-                      {project.employee_count} employee{project.employee_count === 1 ? "" : "s"}
+                      {project.member_count} member{project.member_count === 1 ? "" : "s"}
                     </span>
                     <span>{formatDate(project.created_at)}</span>
                   </p>

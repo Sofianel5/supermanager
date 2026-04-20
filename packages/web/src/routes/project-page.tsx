@@ -2,7 +2,7 @@ import { type InfiniteData, useQuery, useQueryClient } from "@tanstack/react-que
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { MarkdownBlock } from "../components/markdown-block";
-import { displayEmployeeName } from "../lib/display-employee-name";
+import { displayMemberName } from "../lib/display-member-name";
 import { formatRelativeTime } from "../lib/format-relative-time";
 import {
   buildOrganizationHref,
@@ -319,7 +319,7 @@ function RawFeedEvent({
       <div className="grid gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            <strong>{displayEmployeeName(event.employee_name)}</strong>
+            <strong>{displayMemberName(event.member_name)}</strong>
             {details.eventName && (
               <span className={`${pillBaseClass} min-h-[24px] border-border px-2.5 text-ink-dim`}>
                 {details.eventName}
@@ -527,37 +527,37 @@ function SummaryContent({
       <section className={cx(subduedSurfaceClass, "p-[18px]")}>
         <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex font-mono text-[11px] font-semibold uppercase text-accent">
-            Employees
+            Members
           </span>
           <span className={`${pillBaseClass} border-border text-ink-dim`}>
-            {snapshot.employees.length} card{snapshot.employees.length === 1 ? "" : "s"}
+            {snapshot.members.length} card{snapshot.members.length === 1 ? "" : "s"}
           </span>
         </div>
 
-        {snapshot.employees.length > 0 ? (
+        {snapshot.members.length > 0 ? (
           <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
-            {snapshot.employees.map((employee) => (
+            {snapshot.members.map((member) => (
               <article
                 className="border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px]"
-                key={employeeSummaryKey(employee)}
+                key={memberSummaryKey(member)}
               >
                 <div className="mb-3.5 flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
                   <h3 className="m-0 text-[1.05rem] font-semibold text-ink">
-                    {displayEmployeeName(employee.employee_name)}
+                    {displayMemberName(member.member_name)}
                   </h3>
                   <time
                     className="font-mono text-[0.72rem] text-ink-muted"
-                    dateTime={employee.last_update_at}
+                    dateTime={member.last_update_at}
                   >
-                    {formatRelativeTime(employee.last_update_at, clock)}
+                    {formatRelativeTime(member.last_update_at, clock)}
                   </time>
                 </div>
-                <MarkdownBlock markdown={employee.bluf_markdown} />
+                <MarkdownBlock markdown={member.bluf_markdown} />
               </article>
             ))}
           </div>
         ) : (
-          <p className={messageClass}>No employee cards yet.</p>
+          <p className={messageClass}>No member cards yet.</p>
         )}
       </section>
     </div>
@@ -568,7 +568,7 @@ function emptyProjectSnapshot(): ProjectSnapshot {
   return {
     bluf_markdown: "",
     detailed_summary_markdown: "",
-    employees: [],
+    members: [],
   };
 }
 
@@ -584,15 +584,15 @@ function hasSnapshotContent(snapshot: ProjectSnapshot) {
   return Boolean(
     snapshot.bluf_markdown.trim() ||
       snapshot.detailed_summary_markdown.trim() ||
-      snapshot.employees.some((employee) => employee.bluf_markdown.trim()),
+      snapshot.members.some((member) => member.bluf_markdown.trim()),
   );
 }
 
-function employeeSummaryKey(employee: {
-  employee_name: string;
-  employee_user_id: string;
+function memberSummaryKey(member: {
+  member_name: string;
+  member_user_id: string;
 }) {
-  return employee.employee_user_id;
+  return member.member_user_id;
 }
 
 function getSummaryStatus(

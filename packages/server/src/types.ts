@@ -22,7 +22,7 @@ export type {
   ViewerUser,
 } from "@supermanager/common/http-types";
 export type {
-  EmployeeSnapshot,
+  MemberSnapshot,
   OrganizationSnapshot,
   ProjectBlufSnapshot,
   ProjectSnapshot,
@@ -40,7 +40,7 @@ export function emptyProjectSnapshot(): ProjectSnapshot {
   return {
     bluf_markdown: "",
     detailed_summary_markdown: "",
-    employees: [],
+    members: [],
   };
 }
 
@@ -48,7 +48,7 @@ export function emptyOrganizationSnapshot(): OrganizationSnapshot {
   return {
     bluf_markdown: "",
     projects: [],
-    employees: [],
+    members: [],
   };
 }
 

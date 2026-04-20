@@ -192,8 +192,8 @@ From there you can create project-scoped workspaces, generate organization invit
 | `/v1/projects/{project_id}/feed/stream` | GET | SSE stream of hook-event and summary-status events |
 | `/v1/projects/{project_id}/connections` | POST | Mint a repo-scoped API key for the project |
 | `/v1/hooks/turn` | POST | Submit a hook-captured turn event using `x-api-key` |
-| `/v1/organizations/{organization_slug}/summary` | GET | Read the current org summary JSON (`bluf_markdown`, `projects[]`, `employees[]`) plus status |
-| `/v1/projects/{project_id}/summary` | GET | Read the current project summary (`bluf_markdown`, `detailed_summary_markdown`, `employees[]`) |
+| `/v1/organizations/{organization_slug}/summary` | GET | Read the current org summary JSON (`bluf_markdown`, `projects[]`, `members[]`) plus status |
+| `/v1/projects/{project_id}/summary` | GET | Read the current project summary (`bluf_markdown`, `detailed_summary_markdown`, `members[]`) |
 | `/mcp` | POST | Streamable HTTP MCP endpoint with manager-facing read-only tools |
 
 The MCP endpoint currently exposes these tools:

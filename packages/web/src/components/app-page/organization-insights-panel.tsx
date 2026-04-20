@@ -1,10 +1,10 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { formatCount } from "../../lib/format-count";
-import { displayEmployeeName } from "../../lib/display-employee-name";
+import { displayMemberName } from "../../lib/display-member-name";
 import { formatRelativeTime } from "../../lib/format-relative-time";
 import type {
-  EmployeeSnapshot,
+  MemberSnapshot,
   OrganizationSnapshot,
   ProjectBlufSnapshot,
   ProjectListEntry,
@@ -40,7 +40,7 @@ export function OrganizationInsightsPanel({
   summaryStatus,
 }: OrganizationInsightsPanelProps) {
   const [clock, setClock] = useState(() => Date.now());
-  const employees = organizationSummary?.employees ?? [];
+  const members = organizationSummary?.members ?? [];
   const projectBlufs = organizationSummary?.projects ?? [];
   const projectNames = new Map(projects.map((project) => [project.project_id, project.name]));
   const projectMetadata = new Map(projects.map((project) => [project.project_id, project]));
@@ -74,25 +74,25 @@ export function OrganizationInsightsPanel({
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
             <section className={cx(subduedSurfaceClass, "p-[18px]")}>
               <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <span className={sectionLabelClass}>Employees</span>
+                <span className={sectionLabelClass}>Members</span>
                 <span className={`${pillBaseClass} border-border text-ink-dim`}>
-                  {formatCount(employees.length, "summary", "summaries")}
+                  {formatCount(members.length, "summary", "summaries")}
                 </span>
               </div>
 
-              {employees.length > 0 ? (
+              {members.length > 0 ? (
                 <div className="grid gap-4">
-                  {employees.map((employee) => (
-                    <EmployeeBlufCard
+                  {members.map((member) => (
+                    <MemberBlufCard
                       clock={clock}
-                      employee={employee}
-                      key={employeeCardKey(employee)}
+                      member={member}
+                      key={memberCardKey(member)}
                       projectNames={projectNames}
                     />
                   ))}
                 </div>
               ) : (
-                <p className={messageClass}>No employee summaries yet.</p>
+                <p className={messageClass}>No member summaries yet.</p>
               )}
             </section>
 
@@ -126,13 +126,13 @@ export function OrganizationInsightsPanel({
   );
 }
 
-function EmployeeBlufCard({
+function MemberBlufCard({
   clock,
-  employee,
+  member,
   projectNames,
 }: {
   clock: number;
-  employee: EmployeeSnapshot;
+  member: MemberSnapshot;
   projectNames: Map<string, string>;
 }) {
   return (
@@ -140,17 +140,17 @@ function EmployeeBlufCard({
       <div className="mb-3.5 flex flex-col gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
           <h3 className="m-0 text-[1.05rem] font-semibold text-ink">
-            {displayEmployeeName(employee.employee_name)}
+            {displayMemberName(member.member_name)}
           </h3>
           <time
             className="font-mono text-[0.72rem] text-ink-muted"
-            dateTime={employee.last_update_at}
+            dateTime={member.last_update_at}
           >
-            {formatRelativeTime(employee.last_update_at, clock)}
+            {formatRelativeTime(member.last_update_at, clock)}
           </time>
         </div>
         <div className="flex flex-wrap gap-2">
-          {employee.project_ids.map((projectId) => (
+          {member.project_ids.map((projectId) => (
             <Link
               className="inline-flex min-h-[28px] items-center border border-border px-2.5 font-mono text-[11px] uppercase text-ink-dim no-underline transition duration-150 hover:border-border-strong hover:text-ink"
               key={projectId}
@@ -161,7 +161,7 @@ function EmployeeBlufCard({
           ))}
         </div>
       </div>
-      <MarkdownBlock markdown={employee.bluf_markdown} />
+      <MarkdownBlock markdown={member.bluf_markdown} />
     </article>
   );
 }
@@ -202,8 +202,8 @@ function ProjectBlufCard({
 
         {projectMetadata ? (
           <p className="font-mono text-[0.76rem] text-ink-dim">
-            {projectMetadata.employee_count} employee
-            {projectMetadata.employee_count === 1 ? "" : "s"}
+            {projectMetadata.member_count} member
+            {projectMetadata.member_count === 1 ? "" : "s"}
           </p>
         ) : null}
       </div>
@@ -213,9 +213,9 @@ function ProjectBlufCard({
   );
 }
 
-function employeeCardKey(employee: {
-  employee_name: string;
-  employee_user_id: string;
+function memberCardKey(member: {
+  member_name: string;
+  member_user_id: string;
 }) {
-  return employee.employee_user_id;
+  return member.member_user_id;
 }

@@ -12,7 +12,7 @@ pub struct JoinConfig {
 
 pub struct JoinOutcome {
     pub project_id: String,
-    pub employee_name: String,
+    pub member_name: String,
     pub dashboard_url: String,
     pub repo_dir: PathBuf,
 }

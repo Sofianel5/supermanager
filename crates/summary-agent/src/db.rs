@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 use reporter_protocol::{
-    EmployeeSnapshot, OrganizationSnapshot, ProjectBlufSnapshot, ProjectSnapshot, StoredHookEvent,
+    MemberSnapshot, OrganizationSnapshot, ProjectBlufSnapshot, ProjectSnapshot, StoredHookEvent,
     SummaryStatus,
 };
 use serde_json::Value;
@@ -236,8 +236,8 @@ impl SummaryDb {
               h.event_id,
               h.project_id,
               r.name AS project_name,
-              h.employee_user_id,
-              h.employee_name,
+              h.member_user_id,
+              h.member_name,
               h.client,
               h.repo_root,
               h.branch,
@@ -413,8 +413,8 @@ impl SummaryDb {
             SELECT
               seq,
               event_id,
-              employee_user_id,
-              employee_name,
+              member_user_id,
+              member_name,
               client,
               repo_root,
               branch,
@@ -593,18 +593,18 @@ impl SummaryDb {
                     ),
                 })
             }
-            SummaryTool::SetEmployeeBluf {
-                employee_user_id,
-                employee_name,
+            SummaryTool::SetMemberBluf {
+                member_user_id,
+                member_name,
                 markdown,
                 ..
             } => {
                 let normalized_project_id = normalize_project_id(project_id);
                 let mut snapshot = self.get_project_summary(&normalized_project_id).await?;
-                upsert_employee_bluf(
-                    &mut snapshot.employees,
-                    employee_user_id.trim(),
-                    employee_name.trim(),
+                upsert_member_bluf(
+                    &mut snapshot.members,
+                    member_user_id.trim(),
+                    member_name.trim(),
                     vec![normalized_project_id.clone()],
                     markdown.trim(),
                     now_rfc3339()?,
@@ -614,22 +614,19 @@ impl SummaryDb {
                 Ok(ToolExecutionResult {
                     success: true,
                     message: format!(
-                        "updated employee BLUF for {} in {normalized_project_id}",
-                        employee_name.trim()
+                        "updated member BLUF for {} in {normalized_project_id}",
+                        member_name.trim()
                     ),
                 })
             }
-            SummaryTool::RemoveEmployeeBluf {
-                employee_user_id,
-                employee_name,
+            SummaryTool::RemoveMemberBluf {
+                member_user_id,
+                member_name,
             } => {
                 let normalized_project_id = normalize_project_id(project_id);
                 let mut snapshot = self.get_project_summary(&normalized_project_id).await?;
-                let result = remove_employee_bluf(
-                    &mut snapshot,
-                    employee_user_id.trim(),
-                    employee_name.trim(),
-                );
+                let result =
+                    remove_member_bluf(&mut snapshot, member_user_id.trim(), member_name.trim());
                 if result.changed {
                     self.set_project_summary(&normalized_project_id, &snapshot)
                         .await?;
@@ -669,9 +666,9 @@ impl SummaryDb {
                     message: "updated organization BLUF".to_owned(),
                 })
             }
-            SummaryTool::SetEmployeeBluf {
-                employee_user_id,
-                employee_name,
+            SummaryTool::SetMemberBluf {
+                member_user_id,
+                member_name,
                 project_ids,
                 markdown,
             } => {
@@ -696,10 +693,10 @@ impl SummaryDb {
                 }
 
                 let mut snapshot = self.get_organization_summary(organization_id).await?;
-                upsert_employee_bluf(
-                    &mut snapshot.employees,
-                    employee_user_id.trim(),
-                    employee_name.trim(),
+                upsert_member_bluf(
+                    &mut snapshot.members,
+                    member_user_id.trim(),
+                    member_name.trim(),
                     valid_project_ids,
                     markdown.trim(),
                     now_rfc3339()?,
@@ -708,19 +705,16 @@ impl SummaryDb {
                     .await?;
                 Ok(ToolExecutionResult {
                     success: true,
-                    message: format!("updated employee BLUF for {}", employee_name.trim()),
+                    message: format!("updated member BLUF for {}", member_name.trim()),
                 })
             }
-            SummaryTool::RemoveEmployeeBluf {
-                employee_user_id,
-                employee_name,
+            SummaryTool::RemoveMemberBluf {
+                member_user_id,
+                member_name,
             } => {
                 let mut snapshot = self.get_organization_summary(organization_id).await?;
-                let result = remove_employee_bluf(
-                    &mut snapshot,
-                    employee_user_id.trim(),
-                    employee_name.trim(),
-                );
+                let result =
+                    remove_member_bluf(&mut snapshot, member_user_id.trim(), member_name.trim());
                 if result.changed {
                     self.set_organization_summary(organization_id, &snapshot)
                         .await?;
@@ -810,7 +804,7 @@ impl SummaryDb {
     }
 }
 
-struct RemoveEmployeeResult {
+struct RemoveMemberResult {
     changed: bool,
     message: String,
 }
@@ -825,12 +819,12 @@ fn map_stored_hook_event(row: &sqlx::postgres::PgRow) -> Result<StoredHookEvent>
             row.try_get::<OffsetDateTime, _>("received_at")
                 .context("failed to decode received_at")?,
         )?,
-        employee_user_id: row
-            .try_get("employee_user_id")
-            .context("failed to decode employee_user_id")?,
-        employee_name: row
-            .try_get("employee_name")
-            .context("failed to decode employee_name")?,
+        member_user_id: row
+            .try_get("member_user_id")
+            .context("failed to decode member_user_id")?,
+        member_name: row
+            .try_get("member_name")
+            .context("failed to decode member_name")?,
         client: row.try_get("client").context("failed to decode client")?,
         repo_root: row
             .try_get("repo_root")
@@ -859,10 +853,10 @@ fn normalize_project_ids(project_ids: Vec<String>) -> Vec<String> {
     normalized
 }
 
-fn normalize_employee_snapshot(snapshot: EmployeeSnapshot) -> EmployeeSnapshot {
-    EmployeeSnapshot {
-        employee_user_id: snapshot.employee_user_id.trim().to_owned(),
-        employee_name: snapshot.employee_name,
+fn normalize_member_snapshot(snapshot: MemberSnapshot) -> MemberSnapshot {
+    MemberSnapshot {
+        member_user_id: snapshot.member_user_id.trim().to_owned(),
+        member_name: snapshot.member_name,
         project_ids: normalize_project_ids(snapshot.project_ids),
         bluf_markdown: snapshot.bluf_markdown,
         last_update_at: snapshot.last_update_at,
@@ -873,10 +867,10 @@ fn normalize_project_snapshot(snapshot: ProjectSnapshot) -> ProjectSnapshot {
     ProjectSnapshot {
         bluf_markdown: snapshot.bluf_markdown,
         detailed_summary_markdown: snapshot.detailed_summary_markdown,
-        employees: snapshot
-            .employees
+        members: snapshot
+            .members
             .into_iter()
-            .map(normalize_employee_snapshot)
+            .map(normalize_member_snapshot)
             .collect(),
     }
 }
@@ -885,10 +879,10 @@ fn normalize_organization_snapshot(snapshot: OrganizationSnapshot) -> Organizati
     OrganizationSnapshot {
         bluf_markdown: snapshot.bluf_markdown,
         projects: snapshot.projects,
-        employees: snapshot
-            .employees
+        members: snapshot
+            .members
             .into_iter()
-            .map(normalize_employee_snapshot)
+            .map(normalize_member_snapshot)
             .collect(),
     }
 }
@@ -899,82 +893,82 @@ fn stored_organization_snapshot(snapshot: OrganizationSnapshot) -> OrganizationS
     snapshot
 }
 
-fn upsert_employee_bluf(
-    employees: &mut Vec<EmployeeSnapshot>,
-    employee_user_id: &str,
-    employee_name: &str,
+fn upsert_member_bluf(
+    members: &mut Vec<MemberSnapshot>,
+    member_user_id: &str,
+    member_name: &str,
     project_ids: Vec<String>,
     markdown: &str,
     updated_at: String,
 ) {
-    let normalized_employee_user_id = employee_user_id.trim();
-    if normalized_employee_user_id.is_empty() {
+    let normalized_member_user_id = member_user_id.trim();
+    if normalized_member_user_id.is_empty() {
         return;
     }
-    if let Some(existing) = employees
+    if let Some(existing) = members
         .iter_mut()
-        .find(|employee| employee.employee_user_id == normalized_employee_user_id)
+        .find(|member| member.member_user_id == normalized_member_user_id)
     {
-        existing.employee_user_id = normalized_employee_user_id.to_owned();
-        existing.employee_name = employee_name.to_owned();
+        existing.member_user_id = normalized_member_user_id.to_owned();
+        existing.member_name = member_name.to_owned();
         existing.project_ids = project_ids;
         existing.bluf_markdown = markdown.to_owned();
         existing.last_update_at = updated_at;
         return;
     }
 
-    employees.push(EmployeeSnapshot {
-        employee_user_id: normalized_employee_user_id.to_owned(),
-        employee_name: employee_name.to_owned(),
+    members.push(MemberSnapshot {
+        member_user_id: normalized_member_user_id.to_owned(),
+        member_name: member_name.to_owned(),
         project_ids,
         bluf_markdown: markdown.to_owned(),
         last_update_at: updated_at,
     });
 }
 
-fn remove_employee_bluf<T>(
+fn remove_member_bluf<T>(
     snapshot: &mut T,
-    employee_user_id: &str,
-    employee_name: &str,
-) -> RemoveEmployeeResult
+    member_user_id: &str,
+    member_name: &str,
+) -> RemoveMemberResult
 where
-    T: EmployeeSnapshotContainer,
+    T: MemberSnapshotContainer,
 {
-    let normalized_employee_user_id = employee_user_id.trim();
-    if normalized_employee_user_id.is_empty() {
-        return RemoveEmployeeResult {
+    let normalized_member_user_id = member_user_id.trim();
+    if normalized_member_user_id.is_empty() {
+        return RemoveMemberResult {
             changed: false,
-            message: format!("employee BLUF already absent for {employee_name}"),
+            message: format!("member BLUF already absent for {member_name}"),
         };
     }
-    let employees = snapshot.employees_mut();
-    let before = employees.len();
-    employees.retain(|employee| employee.employee_user_id != normalized_employee_user_id);
+    let members = snapshot.members_mut();
+    let before = members.len();
+    members.retain(|member| member.member_user_id != normalized_member_user_id);
 
-    let changed = employees.len() != before;
-    RemoveEmployeeResult {
+    let changed = members.len() != before;
+    RemoveMemberResult {
         changed,
         message: if changed {
-            format!("removed employee BLUF for {employee_name}")
+            format!("removed member BLUF for {member_name}")
         } else {
-            format!("employee BLUF already absent for {employee_name}")
+            format!("member BLUF already absent for {member_name}")
         },
     }
 }
 
-trait EmployeeSnapshotContainer {
-    fn employees_mut(&mut self) -> &mut Vec<EmployeeSnapshot>;
+trait MemberSnapshotContainer {
+    fn members_mut(&mut self) -> &mut Vec<MemberSnapshot>;
 }
 
-impl EmployeeSnapshotContainer for ProjectSnapshot {
-    fn employees_mut(&mut self) -> &mut Vec<EmployeeSnapshot> {
-        &mut self.employees
+impl MemberSnapshotContainer for ProjectSnapshot {
+    fn members_mut(&mut self) -> &mut Vec<MemberSnapshot> {
+        &mut self.members
     }
 }
 
-impl EmployeeSnapshotContainer for OrganizationSnapshot {
-    fn employees_mut(&mut self) -> &mut Vec<EmployeeSnapshot> {
-        &mut self.employees
+impl MemberSnapshotContainer for OrganizationSnapshot {
+    fn members_mut(&mut self) -> &mut Vec<MemberSnapshot> {
+        &mut self.members
     }
 }
 

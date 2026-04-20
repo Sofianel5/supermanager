@@ -17,7 +17,7 @@ export type {
   ViewerUser,
 } from "./http-types";
 export type {
-  EmployeeSnapshot,
+  MemberSnapshot,
   OrganizationSnapshot,
   ProjectBlufSnapshot,
   ProjectSnapshot,
