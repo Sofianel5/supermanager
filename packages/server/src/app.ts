@@ -384,11 +384,11 @@ export function createApp(context: AppContext) {
         if (!hookTarget.hasAccess) {
           throw httpError(403, "api key user no longer has room access");
         }
-        if (!hookTarget.employeeName) {
+        if (!hookTarget.userExists) {
           throw httpError(401, "api key user is invalid");
         }
         const room = hookTarget.room;
-        const employeeName = hookTarget.employeeName;
+        const employeeName = hookTarget.employeeName ?? "Unknown member";
 
         const client = body.client.trim();
         if (!client) {

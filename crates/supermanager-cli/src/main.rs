@@ -263,10 +263,7 @@ fn main() -> Result<()> {
                             outcome.repo_dir.display()
                         );
                         println!("    \x1b[2mShare\x1b[0m      {}", outcome.join_command);
-                        println!(
-                            "    \x1b[2mEmployee\x1b[0m   {}",
-                            join_outcome.employee_name
-                        );
+                        println!("    \x1b[2mEmployee\x1b[0m   {}", join_outcome.display_name);
                         println!();
                         print_clipboard_status(&outcome.dashboard_url);
                     }
@@ -316,7 +313,7 @@ fn main() -> Result<()> {
             println!("  \x1b[32m✓\x1b[0m \x1b[1mJoined room\x1b[0m");
             println!();
             println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
-            println!("    \x1b[2mEmployee\x1b[0m   {}", outcome.employee_name);
+            println!("    \x1b[2mEmployee\x1b[0m   {}", outcome.display_name);
             println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
             println!(
                 "    \x1b[2mRepo\x1b[0m       {}",

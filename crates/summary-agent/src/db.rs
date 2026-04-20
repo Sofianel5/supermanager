@@ -891,7 +891,7 @@ fn upsert_employee_bluf(
     }
     if let Some(existing) = employees
         .iter_mut()
-        .find(|employee| employee_snapshot_matches(employee, normalized_employee_user_id))
+        .find(|employee| employee.employee_user_id == normalized_employee_user_id)
     {
         existing.employee_user_id = normalized_employee_user_id.to_owned();
         existing.employee_name = employee_name.to_owned();
@@ -927,7 +927,7 @@ where
     }
     let employees = snapshot.employees_mut();
     let before = employees.len();
-    employees.retain(|employee| !employee_snapshot_matches(employee, normalized_employee_user_id));
+    employees.retain(|employee| employee.employee_user_id != normalized_employee_user_id);
 
     let changed = employees.len() != before;
     RemoveEmployeeResult {
@@ -938,10 +938,6 @@ where
             format!("employee BLUF already absent for {employee_name}")
         },
     }
-}
-
-fn employee_snapshot_matches(employee: &EmployeeSnapshot, employee_user_id: &str) -> bool {
-    employee.employee_user_id == employee_user_id
 }
 
 trait EmployeeSnapshotContainer {

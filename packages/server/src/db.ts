@@ -92,6 +92,7 @@ interface HookEventInsert {
 
 interface HookEventWriteContextRow extends RoomRow {
   has_access: unknown;
+  user_exists: unknown;
   employee_name: unknown;
 }
 export interface RoomRecord extends RoomListEntry {
@@ -348,6 +349,7 @@ export class Db {
   ): Promise<{
     room: RoomRecord | null;
     hasAccess: boolean;
+    userExists: boolean;
     employeeName: string | null;
   }> {
     const [row] = await this.client<HookEventWriteContextRow[]>`
@@ -359,7 +361,11 @@ export class Db {
         organization.slug AS organization_slug,
         rooms.created_by_user_id,
         (member."userId" IS NOT NULL) AS has_access,
-        COALESCE(NULLIF(BTRIM("user".name), ''), "user".email) AS employee_name
+        ("user".id IS NOT NULL) AS user_exists,
+        COALESCE(
+          NULLIF(BTRIM("user".name), ''),
+          NULLIF(BTRIM("user".email), '')
+        ) AS employee_name
       FROM rooms
       INNER JOIN organization ON organization.id = rooms.organization_id
       LEFT JOIN member ON member."organizationId" = rooms.organization_id AND member."userId" = ${userId}
@@ -370,6 +376,7 @@ export class Db {
     return {
       room: row ? mapRoom(row) : null,
       hasAccess: row ? readBoolean(row.has_access, "has_access") : false,
+      userExists: row ? readBoolean(row.user_exists, "user_exists") : false,
       employeeName:
         row?.employee_name == null
           ? null

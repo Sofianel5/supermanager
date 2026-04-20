@@ -68,7 +68,7 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
     let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
-    let employee_name = viewer.user.name.clone();
+    let display_name = viewer.user.name.clone();
     let active_org = resolve_active_org_interactive(
         &http,
         &server_url,
@@ -122,7 +122,7 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
 
     Ok(JoinOutcome {
         room_id: connection.room_id,
-        employee_name,
+        display_name,
         dashboard_url: connection.dashboard_url,
         repo_dir,
     })
