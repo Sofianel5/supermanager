@@ -5,10 +5,7 @@ use serde_json::json;
 
 use crate::{
     auth::{authed, fetch_room, get_viewer, require_auth_state, resolve_active_org_interactive},
-    local::{
-        default_room_name, detect_employee_name, install_repo_hooks, resolve_repo_root,
-        upsert_repo_room_config,
-    },
+    local::{default_room_name, install_repo_hooks, resolve_repo_root, upsert_repo_room_config},
     support::{API_TIMEOUT_SECONDS, build_http_client, ensure_success, normalize_url},
     types::{CreateRoomConfig, CreateRoomOutcome, JoinConfig, JoinOutcome, RepoRoomConfig},
 };
@@ -67,11 +64,11 @@ pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
 
 pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     let repo_dir = resolve_repo_root(&config.repo_dir)?;
-    let employee_name = detect_employee_name(&repo_dir)?;
     let server_url = normalize_url(&config.server_url);
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
     let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
+    let employee_name = viewer.user.name.clone();
     let active_org = resolve_active_org_interactive(
         &http,
         &server_url,

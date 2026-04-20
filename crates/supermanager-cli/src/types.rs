@@ -147,6 +147,12 @@ pub(crate) struct HomeRepoConfig {
 pub(crate) struct ViewerResponse {
     pub(crate) active_organization_id: Option<String>,
     pub(crate) organizations: Vec<ViewerOrganization>,
+    pub(crate) user: ViewerUser,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ViewerUser {
+    pub(crate) name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

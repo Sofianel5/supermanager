@@ -19,6 +19,7 @@ interface EventResultRow {
   seq: unknown;
   event_id: unknown;
   received_at: unknown;
+  employee_user_id: unknown;
   employee_name: unknown;
   client: unknown;
   repo_root: unknown;
@@ -63,6 +64,7 @@ export async function indexUnembeddedEvents(db: Db): Promise<number> {
         payload_json
       FROM hook_events
       WHERE embedding IS NULL
+        AND employee_user_id IS NOT NULL
       ORDER BY received_at ASC, seq ASC
       LIMIT ${INDEX_BATCH_SIZE}
     `;
@@ -109,16 +111,19 @@ export async function queryOrganizationEvents(
       h.seq,
       h.event_id,
       h.received_at,
-      h.employee_name,
+      h.employee_user_id,
+      COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) AS employee_name,
       h.client,
       h.repo_root,
       h.branch,
       h.payload_json
     FROM hook_events AS h
     INNER JOIN rooms AS r ON r.room_id = h.room_id
+    LEFT JOIN "user" AS u ON u.id = h.employee_user_id
     WHERE r.organization_id = ${filters.organizationId}
+      AND h.employee_user_id IS NOT NULL
       AND (${normalizeOptionalRoomId(filters.roomId)}::text IS NULL OR h.room_id = ${normalizeOptionalRoomId(filters.roomId)}::text)
-      AND (${filters.employeeName ?? null}::text IS NULL OR h.employee_name = ${filters.employeeName ?? null}::text)
+      AND (${filters.employeeName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) = ${filters.employeeName ?? null}::text)
       AND (${filters.repoRoot ?? null}::text IS NULL OR h.repo_root = ${filters.repoRoot ?? null}::text)
       AND (${filters.branch ?? null}::text IS NULL OR h.branch = ${filters.branch ?? null}::text)
       AND (${filters.client ?? null}::text IS NULL OR h.client = ${filters.client ?? null}::text)
@@ -143,7 +148,8 @@ export async function searchEvents(
       h.seq,
       h.event_id,
       h.received_at,
-      h.employee_name,
+      h.employee_user_id,
+      COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) AS employee_name,
       h.client,
       h.repo_root,
       h.branch,
@@ -152,10 +158,12 @@ export async function searchEvents(
       (1 - (h.embedding <=> ${vector}::vector)) AS score
     FROM hook_events AS h
     INNER JOIN rooms AS r ON r.room_id = h.room_id
+    LEFT JOIN "user" AS u ON u.id = h.employee_user_id
     WHERE r.organization_id = ${filters.organizationId}
       AND h.embedding IS NOT NULL
+      AND h.employee_user_id IS NOT NULL
       AND (${normalizeOptionalRoomId(filters.roomId)}::text IS NULL OR h.room_id = ${normalizeOptionalRoomId(filters.roomId)}::text)
-      AND (${filters.employeeName ?? null}::text IS NULL OR h.employee_name = ${filters.employeeName ?? null}::text)
+      AND (${filters.employeeName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) = ${filters.employeeName ?? null}::text)
       AND (${filters.repoRoot ?? null}::text IS NULL OR h.repo_root = ${filters.repoRoot ?? null}::text)
       AND (${filters.branch ?? null}::text IS NULL OR h.branch = ${filters.branch ?? null}::text)
       AND (${filters.client ?? null}::text IS NULL OR h.client = ${filters.client ?? null}::text)
@@ -206,6 +214,7 @@ function mapStoredHookEvent(row: EventResultRow): StoredHookEvent {
     seq: toNumber(row.seq),
     event_id: readString(row.event_id, "event_id"),
     received_at: toRfc3339(row.received_at),
+    employee_user_id: readString(row.employee_user_id, "employee_user_id"),
     employee_name: readString(row.employee_name, "employee_name"),
     client: readString(row.client, "client"),
     repo_root: readString(row.repo_root, "repo_root"),

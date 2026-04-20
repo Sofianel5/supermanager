@@ -313,7 +313,7 @@ function RawFeedEvent({
       <div className="grid gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            <strong>{event.employee_name}</strong>
+            <strong>{displayEmployeeName(event.employee_name)}</strong>
             {details.eventName && (
               <span className={`${pillBaseClass} min-h-[24px] border-border px-2.5 text-ink-dim`}>
                 {details.eventName}
@@ -533,11 +533,11 @@ function SummaryContent({
             {snapshot.employees.map((employee) => (
               <article
                 className="border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px]"
-                key={employee.employee_name}
+                key={employeeSummaryKey(employee)}
               >
                 <div className="mb-3.5 flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
                   <h3 className="m-0 text-[1.05rem] font-semibold text-ink">
-                    {employee.employee_name}
+                    {displayEmployeeName(employee.employee_name)}
                   </h3>
                   <time
                     className="font-mono text-[0.72rem] text-ink-muted"
@@ -580,6 +580,13 @@ function hasSnapshotContent(snapshot: RoomSnapshot) {
       snapshot.detailed_summary_markdown.trim() ||
       snapshot.employees.some((employee) => employee.bluf_markdown.trim()),
   );
+}
+
+function employeeSummaryKey(employee: {
+  employee_name: string;
+  employee_user_id: string;
+}) {
+  return employee.employee_user_id;
 }
 
 function getSummaryStatus(
@@ -1003,4 +1010,9 @@ function summaryToneClass(status: UiSummaryStatus) {
     return "border-red-400/30 text-danger";
   }
   return "border-border text-ink-dim";
+}
+
+function displayEmployeeName(value: string) {
+  const trimmed = value.trim();
+  return trimmed || "Unknown member";
 }

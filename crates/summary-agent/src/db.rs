@@ -232,6 +232,7 @@ impl SummaryDb {
               h.event_id,
               h.room_id,
               r.name AS room_name,
+              h.employee_user_id,
               h.employee_name,
               h.client,
               h.repo_root,
@@ -241,6 +242,7 @@ impl SummaryDb {
             FROM hook_events AS h
             INNER JOIN rooms AS r ON r.room_id = h.room_id
             WHERE r.organization_id = $1
+              AND h.employee_user_id IS NOT NULL
               AND ($2::timestamptz IS NULL OR h.received_at > $2::timestamptz)
               AND ($3::timestamptz IS NULL OR h.received_at <= $3::timestamptz)
             ORDER BY h.received_at ASC, h.seq ASC
@@ -402,6 +404,7 @@ impl SummaryDb {
             SELECT
               seq,
               event_id,
+              employee_user_id,
               employee_name,
               client,
               repo_root,
@@ -410,6 +413,7 @@ impl SummaryDb {
               received_at
             FROM hook_events
             WHERE room_id = $1
+              AND employee_user_id IS NOT NULL
               AND ($2::bigint IS NULL OR seq > $2)
             ORDER BY seq ASC
             LIMIT COALESCE($3, 9223372036854775807)
@@ -574,6 +578,7 @@ impl SummaryDb {
                 })
             }
             SummaryTool::SetEmployeeBluf {
+                employee_user_id,
                 employee_name,
                 markdown,
                 ..
@@ -582,6 +587,7 @@ impl SummaryDb {
                 let mut snapshot = self.get_room_summary(&normalized_room_id).await?;
                 upsert_employee_bluf(
                     &mut snapshot.employees,
+                    employee_user_id.trim(),
                     employee_name.trim(),
                     vec![normalized_room_id.clone()],
                     markdown.trim(),
@@ -597,10 +603,17 @@ impl SummaryDb {
                     ),
                 })
             }
-            SummaryTool::RemoveEmployeeBluf { employee_name } => {
+            SummaryTool::RemoveEmployeeBluf {
+                employee_user_id,
+                employee_name,
+            } => {
                 let normalized_room_id = normalize_room_id(room_id);
                 let mut snapshot = self.get_room_summary(&normalized_room_id).await?;
-                let result = remove_employee_bluf(&mut snapshot, employee_name.trim());
+                let result = remove_employee_bluf(
+                    &mut snapshot,
+                    employee_user_id.trim(),
+                    employee_name.trim(),
+                );
                 if result.changed {
                     self.set_room_summary(&normalized_room_id, &snapshot)
                         .await?;
@@ -641,6 +654,7 @@ impl SummaryDb {
                 })
             }
             SummaryTool::SetEmployeeBluf {
+                employee_user_id,
                 employee_name,
                 room_ids,
                 markdown,
@@ -668,6 +682,7 @@ impl SummaryDb {
                 let mut snapshot = self.get_organization_summary(organization_id).await?;
                 upsert_employee_bluf(
                     &mut snapshot.employees,
+                    employee_user_id.trim(),
                     employee_name.trim(),
                     valid_room_ids,
                     markdown.trim(),
@@ -680,9 +695,16 @@ impl SummaryDb {
                     message: format!("updated employee BLUF for {}", employee_name.trim()),
                 })
             }
-            SummaryTool::RemoveEmployeeBluf { employee_name } => {
+            SummaryTool::RemoveEmployeeBluf {
+                employee_user_id,
+                employee_name,
+            } => {
                 let mut snapshot = self.get_organization_summary(organization_id).await?;
-                let result = remove_employee_bluf(&mut snapshot, employee_name.trim());
+                let result = remove_employee_bluf(
+                    &mut snapshot,
+                    employee_user_id.trim(),
+                    employee_name.trim(),
+                );
                 if result.changed {
                     self.set_organization_summary(organization_id, &snapshot)
                         .await?;
@@ -783,6 +805,9 @@ fn map_stored_hook_event(row: &sqlx::postgres::PgRow) -> Result<StoredHookEvent>
             row.try_get::<OffsetDateTime, _>("received_at")
                 .context("failed to decode received_at")?,
         )?,
+        employee_user_id: row
+            .try_get("employee_user_id")
+            .context("failed to decode employee_user_id")?,
         employee_name: row
             .try_get("employee_name")
             .context("failed to decode employee_name")?,
@@ -814,16 +839,9 @@ fn normalize_room_ids(room_ids: Vec<String>) -> Vec<String> {
     normalized
 }
 
-fn normalize_employee_name(value: &str) -> String {
-    value
-        .split_whitespace()
-        .map(|part| part.to_ascii_lowercase())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn normalize_employee_snapshot(snapshot: EmployeeSnapshot) -> EmployeeSnapshot {
     EmployeeSnapshot {
+        employee_user_id: snapshot.employee_user_id.trim().to_owned(),
         employee_name: snapshot.employee_name,
         room_ids: normalize_room_ids(snapshot.room_ids),
         bluf_markdown: snapshot.bluf_markdown,
@@ -839,6 +857,7 @@ fn normalize_room_snapshot(snapshot: RoomSnapshot) -> RoomSnapshot {
             .employees
             .into_iter()
             .map(normalize_employee_snapshot)
+            .filter(|employee| !employee.employee_user_id.is_empty())
             .collect(),
     }
 }
@@ -851,6 +870,7 @@ fn normalize_organization_snapshot(snapshot: OrganizationSnapshot) -> Organizati
             .employees
             .into_iter()
             .map(normalize_employee_snapshot)
+            .filter(|employee| !employee.employee_user_id.is_empty())
             .collect(),
     }
 }
@@ -863,16 +883,21 @@ fn stored_organization_snapshot(snapshot: OrganizationSnapshot) -> OrganizationS
 
 fn upsert_employee_bluf(
     employees: &mut Vec<EmployeeSnapshot>,
+    employee_user_id: &str,
     employee_name: &str,
     room_ids: Vec<String>,
     markdown: &str,
     updated_at: String,
 ) {
-    let employee_key = normalize_employee_name(employee_name);
+    let normalized_employee_user_id = employee_user_id.trim();
+    if normalized_employee_user_id.is_empty() {
+        return;
+    }
     if let Some(existing) = employees
         .iter_mut()
-        .find(|employee| normalize_employee_name(&employee.employee_name) == employee_key)
+        .find(|employee| employee_snapshot_matches(employee, normalized_employee_user_id))
     {
+        existing.employee_user_id = normalized_employee_user_id.to_owned();
         existing.employee_name = employee_name.to_owned();
         existing.room_ids = room_ids;
         existing.bluf_markdown = markdown.to_owned();
@@ -881,6 +906,7 @@ fn upsert_employee_bluf(
     }
 
     employees.push(EmployeeSnapshot {
+        employee_user_id: normalized_employee_user_id.to_owned(),
         employee_name: employee_name.to_owned(),
         room_ids,
         bluf_markdown: markdown.to_owned(),
@@ -888,14 +914,24 @@ fn upsert_employee_bluf(
     });
 }
 
-fn remove_employee_bluf<T>(snapshot: &mut T, employee_name: &str) -> RemoveEmployeeResult
+fn remove_employee_bluf<T>(
+    snapshot: &mut T,
+    employee_user_id: &str,
+    employee_name: &str,
+) -> RemoveEmployeeResult
 where
     T: EmployeeSnapshotContainer,
 {
-    let employee_key = normalize_employee_name(employee_name);
+    let normalized_employee_user_id = employee_user_id.trim();
+    if normalized_employee_user_id.is_empty() {
+        return RemoveEmployeeResult {
+            changed: false,
+            message: format!("employee BLUF already absent for {employee_name}"),
+        };
+    }
     let employees = snapshot.employees_mut();
     let before = employees.len();
-    employees.retain(|employee| normalize_employee_name(&employee.employee_name) != employee_key);
+    employees.retain(|employee| !employee_snapshot_matches(employee, normalized_employee_user_id));
 
     let changed = employees.len() != before;
     RemoveEmployeeResult {
@@ -906,6 +942,10 @@ where
             format!("employee BLUF already absent for {employee_name}")
         },
     }
+}
+
+fn employee_snapshot_matches(employee: &EmployeeSnapshot, employee_user_id: &str) -> bool {
+    employee.employee_user_id == employee_user_id
 }
 
 trait EmployeeSnapshotContainer {

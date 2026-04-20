@@ -85,7 +85,7 @@ export function OrganizationInsightsPanel({
                     <EmployeeBlufCard
                       clock={clock}
                       employee={employee}
-                      key={employee.employee_name}
+                      key={employeeCardKey(employee)}
                       roomNames={roomNames}
                     />
                   ))}
@@ -139,7 +139,7 @@ function EmployeeBlufCard({
       <div className="mb-3.5 flex flex-col gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
           <h3 className="m-0 text-[1.05rem] font-semibold text-ink">
-            {employee.employee_name}
+            {displayEmployeeName(employee.employee_name)}
           </h3>
           <time
             className="font-mono text-[0.72rem] text-ink-muted"
@@ -210,4 +210,16 @@ function RoomBlufCard({
       <MarkdownBlock markdown={roomBluf.bluf_markdown} />
     </article>
   );
+}
+
+function employeeCardKey(employee: {
+  employee_name: string;
+  employee_user_id: string;
+}) {
+  return employee.employee_user_id;
+}
+
+function displayEmployeeName(value: string) {
+  const trimmed = value.trim();
+  return trimmed || "Unknown member";
 }

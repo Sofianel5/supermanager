@@ -15,6 +15,8 @@ pub struct RoomSnapshot {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export, export_to = "../../../packages/common/summary-protocol/")]
 pub struct EmployeeSnapshot {
+    #[serde(default)]
+    pub employee_user_id: String,
     pub employee_name: String,
     #[serde(default)]
     pub room_ids: Vec<String>,

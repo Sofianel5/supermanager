@@ -426,6 +426,7 @@ mod tests {
                 seq: 1,
                 event_id: Uuid::nil(),
                 received_at: received_at.to_owned(),
+                employee_user_id: "user_123".to_owned(),
                 employee_name: "Dana".to_owned(),
                 client: "codex".to_owned(),
                 repo_root: "/tmp/repo".to_owned(),
