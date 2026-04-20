@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { formatCount } from "../../lib/format-count";
+import { displayEmployeeName } from "../../lib/display-employee-name";
 import { formatRelativeTime } from "../../lib/format-relative-time";
 import type {
   EmployeeSnapshot,
@@ -217,9 +218,4 @@ function employeeCardKey(employee: {
   employee_user_id: string;
 }) {
   return employee.employee_user_id;
-}
-
-function displayEmployeeName(value: string) {
-  const trimmed = value.trim();
-  return trimmed || "Unknown member";
 }

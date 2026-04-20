@@ -2,6 +2,7 @@ import { type InfiniteData, useQuery, useQueryClient } from "@tanstack/react-que
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { MarkdownBlock } from "../components/markdown-block";
+import { displayEmployeeName } from "../lib/display-employee-name";
 import { formatRelativeTime } from "../lib/format-relative-time";
 import {
   buildOrganizationHref,
@@ -1010,9 +1011,4 @@ function summaryToneClass(status: UiSummaryStatus) {
     return "border-red-400/30 text-danger";
   }
   return "border-border text-ink-dim";
-}
-
-function displayEmployeeName(value: string) {
-  const trimmed = value.trim();
-  return trimmed || "Unknown member";
 }
