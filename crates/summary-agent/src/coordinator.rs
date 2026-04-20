@@ -10,31 +10,40 @@ use tokio::{
 };
 
 use crate::{
-    agent::{AgentCommand, AgentEvent, SummaryScope},
-    db::{OrganizationSummaryQueryOptions, ProjectSummaryQueryOptions, SummaryDb},
+    agent::{AgentCommand, AgentEvent},
+    db::{OrganizationSummaryQueryOptions, OrganizationWorkflowQueryOptions, SummaryDb},
+    event::{
+        format_organization_memory_request, format_organization_skills_request,
+        format_organization_summary_request, format_project_event,
+    },
+    workflow::{WorkflowCursor, WorkflowDispatch, WorkflowKind, WorkflowTarget},
 };
 
-const ORGANIZATION_HEARTBEAT_EVENT_LIMIT: i64 = 500;
+const ORGANIZATION_SUMMARY_EVENT_LIMIT: i64 = 500;
+const ORGANIZATION_TRANSCRIPT_LIMIT: i64 = 24;
 const PROJECT_SUMMARY_EVENT_LIMIT: i64 = 200;
 const PROJECT_SUMMARY_SWEEP_LIMIT: i64 = 50;
 
-pub(crate) struct SummaryCoordinator {
+pub(crate) struct WorkflowCoordinator {
     db: SummaryDb,
     command_tx: mpsc::Sender<AgentCommand>,
     event_rx: mpsc::Receiver<AgentEvent>,
     organization_summary_refresh_interval: Duration,
     project_summary_poll_interval: Duration,
-    pending_organization_heartbeat_cutoff: HashMap<String, String>,
-    pending_project_summary_seq: HashMap<String, i64>,
+    organization_memory_refresh_interval: Duration,
+    organization_skills_refresh_interval: Duration,
+    pending_workflow_cursor: HashMap<WorkflowTarget, WorkflowCursor>,
 }
 
-impl SummaryCoordinator {
+impl WorkflowCoordinator {
     pub(crate) fn new(
         db: SummaryDb,
         command_tx: mpsc::Sender<AgentCommand>,
         event_rx: mpsc::Receiver<AgentEvent>,
         organization_summary_refresh_interval: Duration,
         project_summary_poll_interval: Duration,
+        organization_memory_refresh_interval: Duration,
+        organization_skills_refresh_interval: Duration,
     ) -> Self {
         Self {
             db,
@@ -42,8 +51,9 @@ impl SummaryCoordinator {
             event_rx,
             organization_summary_refresh_interval,
             project_summary_poll_interval,
-            pending_organization_heartbeat_cutoff: HashMap::new(),
-            pending_project_summary_seq: HashMap::new(),
+            organization_memory_refresh_interval,
+            organization_skills_refresh_interval,
+            pending_workflow_cursor: HashMap::new(),
         }
     }
 
@@ -51,13 +61,23 @@ impl SummaryCoordinator {
         tokio::try_join!(
             self.db.reset_generating_organization_summaries(),
             self.db.reset_generating_project_summaries(),
+            self.db.reset_generating_organization_workflows(),
         )?;
 
-        self.run_heartbeat_sweep().await?;
-        self.run_project_sweep().await?;
+        self.run_organization_summary_sweep().await?;
+        self.run_project_summary_sweep().await?;
+        self.run_organization_transcript_sweep(WorkflowKind::OrganizationMemories)
+            .await?;
+        self.run_organization_transcript_sweep(WorkflowKind::OrganizationSkills)
+            .await?;
 
-        let mut organization_interval = create_interval(self.organization_summary_refresh_interval);
-        let mut project_interval = create_interval(self.project_summary_poll_interval);
+        let mut organization_summary_interval =
+            create_interval(self.organization_summary_refresh_interval);
+        let mut project_summary_interval = create_interval(self.project_summary_poll_interval);
+        let mut organization_memory_interval =
+            create_interval(self.organization_memory_refresh_interval);
+        let mut organization_skills_interval =
+            create_interval(self.organization_skills_refresh_interval);
         let mut shutdown = Box::pin(shutdown_signal());
 
         loop {
@@ -66,11 +86,17 @@ impl SummaryCoordinator {
                     let event = maybe_event.context("summary agent loop exited unexpectedly")?;
                     self.handle_agent_event(event).await?;
                 }
-                _ = wait_for_interval(&mut organization_interval) => {
-                    self.run_heartbeat_sweep().await?;
+                _ = wait_for_interval(&mut organization_summary_interval) => {
+                    self.run_organization_summary_sweep().await?;
                 }
-                _ = wait_for_interval(&mut project_interval) => {
-                    self.run_project_sweep().await?;
+                _ = wait_for_interval(&mut project_summary_interval) => {
+                    self.run_project_summary_sweep().await?;
+                }
+                _ = wait_for_interval(&mut organization_memory_interval) => {
+                    self.run_organization_transcript_sweep(WorkflowKind::OrganizationMemories).await?;
+                }
+                _ = wait_for_interval(&mut organization_skills_interval) => {
+                    self.run_organization_transcript_sweep(WorkflowKind::OrganizationSkills).await?;
                 }
                 _ = &mut shutdown => break,
             }
@@ -81,242 +107,173 @@ impl SummaryCoordinator {
 
     async fn handle_agent_event(&mut self, event: AgentEvent) -> Result<()> {
         match event {
-            AgentEvent::SummaryStatus {
-                scope,
-                target_id,
-                status,
-            } => match scope {
-                SummaryScope::Organization => {
-                    self.persist_organization_status(&target_id, status).await?;
-                }
-                SummaryScope::Project => {
-                    self.persist_project_status(&target_id, status).await?;
-                }
-            },
+            AgentEvent::WorkflowStatus { target, status } => {
+                self.persist_workflow_status(&target, status).await?;
+            }
         }
 
         Ok(())
     }
 
-    async fn persist_organization_status(
+    async fn persist_workflow_status(
         &mut self,
-        organization_id: &str,
+        target: &WorkflowTarget,
         status: SummaryStatus,
     ) -> Result<()> {
-        if status == SummaryStatus::Ready {
-            if let Some(updated_at) = self
-                .pending_organization_heartbeat_cutoff
-                .get(organization_id)
-                .cloned()
-            {
+        if status == SummaryStatus::Ready
+            && let Some(cursor) = self.pending_workflow_cursor.get(target).cloned()
+        {
+            match (target.kind, cursor) {
+                (WorkflowKind::OrganizationSummary, WorkflowCursor::ReceivedAt(updated_at)) => {
+                    self.db
+                        .set_organization_summary_updated_at(&target.id, &updated_at)
+                        .await?;
+                }
+                (
+                    WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills,
+                    WorkflowCursor::ReceivedAt(updated_at),
+                ) => {
+                    self.db
+                        .set_organization_workflow_updated_at(&target.id, target.kind, &updated_at)
+                        .await?;
+                }
+                (WorkflowKind::ProjectSummary, WorkflowCursor::Seq(last_processed_seq)) => {
+                    self.db
+                        .set_project_summary_last_processed_seq(&target.id, last_processed_seq)
+                        .await?;
+                }
+                _ => {}
+            }
+        }
+
+        match target.kind {
+            WorkflowKind::OrganizationSummary => {
                 self.db
-                    .set_organization_summary_updated_at(organization_id, &updated_at)
+                    .set_organization_summary_status(&target.id, status)
+                    .await?;
+            }
+            WorkflowKind::ProjectSummary => {
+                self.db
+                    .set_project_summary_status(&target.id, status)
+                    .await?;
+            }
+            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => {
+                self.db
+                    .set_organization_workflow_status(&target.id, target.kind, status)
                     .await?;
             }
         }
 
-        self.db
-            .set_organization_summary_status(organization_id, status)
-            .await?;
-
         if matches!(status, SummaryStatus::Ready | SummaryStatus::Error) {
-            self.pending_organization_heartbeat_cutoff
-                .remove(organization_id);
+            self.pending_workflow_cursor.remove(target);
         }
 
         Ok(())
     }
 
-    async fn persist_project_status(
-        &mut self,
-        project_id: &str,
-        status: SummaryStatus,
-    ) -> Result<()> {
-        if status == SummaryStatus::Ready {
-            if let Some(last_processed_seq) =
-                self.pending_project_summary_seq.get(project_id).copied()
-            {
-                self.db
-                    .set_project_summary_last_processed_seq(project_id, last_processed_seq)
-                    .await?;
-            }
-        }
-
-        self.db
-            .set_project_summary_status(project_id, status)
-            .await?;
-
-        if matches!(status, SummaryStatus::Ready | SummaryStatus::Error) {
-            self.pending_project_summary_seq.remove(project_id);
-        }
-
-        Ok(())
-    }
-
-    async fn run_heartbeat_sweep(&mut self) -> Result<()> {
+    async fn run_organization_summary_sweep(&mut self) -> Result<()> {
         let organization_ids = self.db.list_organizations_with_projects().await?;
 
         for organization_id in organization_ids {
-            if self
-                .pending_organization_heartbeat_cutoff
-                .contains_key(&organization_id)
-            {
+            let target = WorkflowTarget::new(WorkflowKind::OrganizationSummary, organization_id);
+            if self.pending_workflow_cursor.contains_key(&target) {
                 continue;
             }
 
-            let claim = match self
-                .db
-                .try_start_organization_summary(&organization_id)
-                .await
-            {
+            let claim = match self.db.try_start_organization_summary(&target.id).await {
                 Ok(Some(claim)) => claim,
                 Ok(None) => continue,
                 Err(error) => {
-                    self.mark_error(
-                        SummaryScope::Organization,
-                        &organization_id,
-                        "claim",
-                        &error,
-                    )
-                    .await;
+                    self.mark_error(&target, "claim", &error).await;
                     continue;
                 }
             };
 
             if let Err(error) = self
-                .enqueue_organization_heartbeat(&organization_id, claim.previous_summary_updated_at)
+                .enqueue_organization_summary(&target, claim.previous_summary_updated_at)
                 .await
             {
-                self.mark_error(
-                    SummaryScope::Organization,
-                    &organization_id,
-                    "enqueue heartbeat",
-                    &error,
-                )
-                .await;
-                self.pending_organization_heartbeat_cutoff
-                    .remove(&organization_id);
+                self.mark_error(&target, "enqueue", &error).await;
+                self.pending_workflow_cursor.remove(&target);
             }
         }
 
         Ok(())
     }
 
-    async fn mark_error(
-        &self,
-        scope: SummaryScope,
-        target_id: &str,
-        action: &str,
-        error: &anyhow::Error,
-    ) {
-        let scope_label = scope.as_str();
-        eprintln!(
-            "[summary-agent] failed to {action} {scope_label} summary for {target_id}: {error:#}"
-        );
-        let result = match scope {
-            SummaryScope::Organization => {
-                self.db
-                    .set_organization_summary_status(target_id, SummaryStatus::Error)
-                    .await
-            }
-            SummaryScope::Project => {
-                self.db
-                    .set_project_summary_status(target_id, SummaryStatus::Error)
-                    .await
-            }
-        };
-        if let Err(persist_error) = result {
-            eprintln!(
-                "[summary-agent] failed to persist error status for {scope_label} {target_id}: {persist_error:#}"
-            );
-        }
-    }
-
-    async fn enqueue_organization_heartbeat(
+    async fn enqueue_organization_summary(
         &mut self,
-        organization_id: &str,
+        target: &WorkflowTarget,
         previous_summary_updated_at: Option<String>,
     ) -> Result<()> {
-        let heartbeat_cutoff = OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .context("failed to format organization heartbeat cutoff")?;
+        let heartbeat_cutoff = now_rfc3339()?;
         let events = self
             .db
             .query_organization_events_for_summary(
-                organization_id,
+                &target.id,
                 OrganizationSummaryQueryOptions {
                     after_received_at: previous_summary_updated_at,
                     before_received_at: Some(heartbeat_cutoff.clone()),
-                    limit: Some(ORGANIZATION_HEARTBEAT_EVENT_LIMIT),
+                    limit: Some(ORGANIZATION_SUMMARY_EVENT_LIMIT),
                 },
             )
             .await?;
 
-        let summary_updated_at = organization_heartbeat_cutoff(&events, &heartbeat_cutoff);
-        self.pending_organization_heartbeat_cutoff
-            .insert(organization_id.to_owned(), summary_updated_at.to_owned());
+        let summary_updated_at = received_at_workflow_cutoff(
+            &events
+                .iter()
+                .map(|event| event.event.received_at.as_str())
+                .collect::<Vec<_>>(),
+            ORGANIZATION_SUMMARY_EVENT_LIMIT,
+            &heartbeat_cutoff,
+        );
+        self.pending_workflow_cursor.insert(
+            target.clone(),
+            WorkflowCursor::ReceivedAt(summary_updated_at.to_owned()),
+        );
 
         if events.is_empty() {
-            self.persist_organization_status(organization_id, SummaryStatus::Ready)
+            self.persist_workflow_status(target, SummaryStatus::Ready)
                 .await?;
             return Ok(());
         }
 
-        let projects = self.db.list_projects_for_summary(organization_id).await?;
-        self.command_tx
-            .send(AgentCommand::OrganizationHeartbeat {
-                organization_id: organization_id.to_owned(),
-                events,
-                projects,
-            })
-            .await
-            .with_context(|| {
-                format!("failed to send organization heartbeat for {organization_id} to agent")
-            })?;
-
-        Ok(())
+        let projects = self.db.list_projects_for_summary(&target.id).await?;
+        self.dispatch_workflow(WorkflowDispatch {
+            target: target.clone(),
+            input: format_organization_summary_request(&projects, &events)?,
+        })
+        .await
     }
 
-    async fn run_project_sweep(&mut self) -> Result<()> {
+    async fn run_project_summary_sweep(&mut self) -> Result<()> {
         let projects = self
             .db
             .list_projects_needing_summary(PROJECT_SUMMARY_SWEEP_LIMIT)
             .await?;
 
         for project in projects {
-            if self
-                .pending_project_summary_seq
-                .contains_key(&project.project_id)
-            {
+            let target =
+                WorkflowTarget::new(WorkflowKind::ProjectSummary, project.project_id.clone());
+            if self.pending_workflow_cursor.contains_key(&target) {
                 continue;
             }
 
-            let claim = match self.db.try_start_project_summary(&project.project_id).await {
+            let claim = match self.db.try_start_project_summary(&target.id).await {
                 Ok(Some(claim)) => claim,
                 Ok(None) => continue,
                 Err(error) => {
-                    self.mark_error(SummaryScope::Project, &project.project_id, "claim", &error)
-                        .await;
+                    self.mark_error(&target, "claim", &error).await;
                     continue;
                 }
             };
 
             if let Err(error) = self
-                .enqueue_project_summary(
-                    &project.project_id,
-                    &project.name,
-                    claim.last_processed_seq,
-                )
+                .enqueue_project_summary(&target, &project.name, claim.last_processed_seq)
                 .await
             {
-                self.mark_error(
-                    SummaryScope::Project,
-                    &project.project_id,
-                    "enqueue summary",
-                    &error,
-                )
-                .await;
-                self.pending_project_summary_seq.remove(&project.project_id);
+                self.mark_error(&target, "enqueue", &error).await;
+                self.pending_workflow_cursor.remove(&target);
             }
         }
 
@@ -325,15 +282,15 @@ impl SummaryCoordinator {
 
     async fn enqueue_project_summary(
         &mut self,
-        project_id: &str,
+        target: &WorkflowTarget,
         project_name: &str,
         last_processed_seq: i64,
     ) -> Result<()> {
         let events = self
             .db
             .query_project_events_for_summary(
-                project_id,
-                ProjectSummaryQueryOptions {
+                &target.id,
+                crate::db::ProjectSummaryQueryOptions {
                     after_seq: Some(last_processed_seq),
                     limit: Some(PROJECT_SUMMARY_EVENT_LIMIT),
                 },
@@ -342,28 +299,160 @@ impl SummaryCoordinator {
 
         let Some(last_seq) = events.last().map(|event| event.seq) else {
             self.db
-                .set_project_summary_status(project_id, SummaryStatus::Ready)
+                .set_project_summary_status(&target.id, SummaryStatus::Ready)
                 .await?;
             return Ok(());
         };
 
-        self.pending_project_summary_seq
-            .insert(project_id.to_owned(), last_seq);
+        self.pending_workflow_cursor
+            .insert(target.clone(), WorkflowCursor::Seq(last_seq));
 
         for event in events {
-            self.command_tx
-                .send(AgentCommand::EnqueueProjectEvent {
-                    project_id: project_id.to_owned(),
-                    project_name: project_name.to_owned(),
-                    event,
-                })
-                .await
-                .with_context(|| {
-                    format!("failed to send project event for {project_id} to agent")
-                })?;
+            self.dispatch_workflow(WorkflowDispatch {
+                target: target.clone(),
+                input: format_project_event(&target.id, project_name, &event)?,
+            })
+            .await?;
         }
 
         Ok(())
+    }
+
+    async fn run_organization_transcript_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
+        debug_assert!(matches!(
+            kind,
+            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills
+        ));
+
+        let organization_ids = self.db.list_organizations_with_transcripts().await?;
+
+        for organization_id in organization_ids {
+            let target = WorkflowTarget::new(kind, organization_id);
+            if self.pending_workflow_cursor.contains_key(&target) {
+                continue;
+            }
+
+            let claim = match self
+                .db
+                .try_start_organization_workflow(&target.id, kind)
+                .await
+            {
+                Ok(Some(claim)) => claim,
+                Ok(None) => continue,
+                Err(error) => {
+                    self.mark_error(&target, "claim", &error).await;
+                    continue;
+                }
+            };
+
+            if let Err(error) = self
+                .enqueue_organization_transcript_workflow(
+                    &target,
+                    claim.previous_processed_received_at,
+                )
+                .await
+            {
+                self.mark_error(&target, "enqueue", &error).await;
+                self.pending_workflow_cursor.remove(&target);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn enqueue_organization_transcript_workflow(
+        &mut self,
+        target: &WorkflowTarget,
+        previous_processed_received_at: Option<String>,
+    ) -> Result<()> {
+        let heartbeat_cutoff = now_rfc3339()?;
+        let transcripts = self
+            .db
+            .query_organization_transcripts_for_workflow(
+                &target.id,
+                OrganizationWorkflowQueryOptions {
+                    after_received_at: previous_processed_received_at,
+                    before_received_at: Some(heartbeat_cutoff.clone()),
+                    limit: Some(ORGANIZATION_TRANSCRIPT_LIMIT),
+                },
+            )
+            .await?;
+
+        let updated_at = received_at_workflow_cutoff(
+            &transcripts
+                .iter()
+                .map(|transcript| transcript.event.received_at.as_str())
+                .collect::<Vec<_>>(),
+            ORGANIZATION_TRANSCRIPT_LIMIT,
+            &heartbeat_cutoff,
+        );
+        self.pending_workflow_cursor.insert(
+            target.clone(),
+            WorkflowCursor::ReceivedAt(updated_at.to_owned()),
+        );
+
+        if transcripts.is_empty() {
+            self.persist_workflow_status(target, SummaryStatus::Ready)
+                .await?;
+            return Ok(());
+        }
+
+        let projects = self.db.list_projects_for_summary(&target.id).await?;
+        let input = match target.kind {
+            WorkflowKind::OrganizationMemories => {
+                format_organization_memory_request(&projects, &transcripts)?
+            }
+            WorkflowKind::OrganizationSkills => {
+                format_organization_skills_request(&projects, &transcripts)?
+            }
+            _ => unreachable!(),
+        };
+
+        self.dispatch_workflow(WorkflowDispatch {
+            target: target.clone(),
+            input,
+        })
+        .await
+    }
+
+    async fn dispatch_workflow(&mut self, dispatch: WorkflowDispatch) -> Result<()> {
+        let target = dispatch.target.clone();
+        self.command_tx
+            .send(AgentCommand::DispatchWorkflow(dispatch))
+            .await
+            .with_context(|| format!("failed to dispatch workflow {}", target.label()))
+    }
+
+    async fn mark_error(&self, target: &WorkflowTarget, action: &str, error: &anyhow::Error) {
+        eprintln!(
+            "[summary-agent] failed to {action} workflow {}: {error:#}",
+            target.label()
+        );
+
+        let result = match target.kind {
+            WorkflowKind::OrganizationSummary => {
+                self.db
+                    .set_organization_summary_status(&target.id, SummaryStatus::Error)
+                    .await
+            }
+            WorkflowKind::ProjectSummary => {
+                self.db
+                    .set_project_summary_status(&target.id, SummaryStatus::Error)
+                    .await
+            }
+            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => {
+                self.db
+                    .set_organization_workflow_status(&target.id, target.kind, SummaryStatus::Error)
+                    .await
+            }
+        };
+
+        if let Err(persist_error) = result {
+            eprintln!(
+                "[summary-agent] failed to persist error status for {}: {persist_error:#}",
+                target.label()
+            );
+        }
     }
 }
 
@@ -386,76 +475,54 @@ async fn wait_for_interval(interval: &mut Option<Interval>) {
     }
 }
 
-fn organization_heartbeat_cutoff<'a>(
-    events: &'a [crate::event::OrganizationHeartbeatEvent],
+fn received_at_workflow_cutoff<'a>(
+    received_ats: &[&'a str],
+    limit: i64,
     heartbeat_cutoff: &'a str,
 ) -> &'a str {
-    if events.len() as i64 == ORGANIZATION_HEARTBEAT_EVENT_LIMIT {
-        events
-            .last()
-            .map(|event| event.event.received_at.as_str())
-            .unwrap_or(heartbeat_cutoff)
+    if received_ats.len() as i64 == limit {
+        received_ats.last().copied().unwrap_or(heartbeat_cutoff)
     } else {
         heartbeat_cutoff
     }
+}
+
+fn now_rfc3339() -> Result<String> {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .context("failed to format workflow cutoff")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use reporter_protocol::StoredHookEvent;
-    use serde_json::json;
-    use uuid::Uuid;
-
-    use crate::event::OrganizationHeartbeatEvent;
-
     #[test]
-    fn empty_events_use_heartbeat_cutoff() {
+    fn empty_received_at_batch_uses_heartbeat_cutoff() {
         assert_eq!(
-            organization_heartbeat_cutoff(&[], "2026-04-17T12:00:00Z"),
+            received_at_workflow_cutoff(&[], 10, "2026-04-17T12:00:00Z"),
             "2026-04-17T12:00:00Z"
         );
     }
 
     #[test]
-    fn at_limit_uses_last_event_received_at() {
-        let events = (0..ORGANIZATION_HEARTBEAT_EVENT_LIMIT)
-            .map(|_| heartbeat_event("2026-04-17T11:59:58Z"))
-            .collect::<Vec<_>>();
-
+    fn batch_at_limit_uses_last_item_received_at() {
         assert_eq!(
-            organization_heartbeat_cutoff(&events, "2026-04-17T12:00:00Z"),
-            "2026-04-17T11:59:58Z"
+            received_at_workflow_cutoff(
+                &["2026-04-17T11:59:58Z", "2026-04-17T11:59:59Z"],
+                2,
+                "2026-04-17T12:00:00Z",
+            ),
+            "2026-04-17T11:59:59Z"
         );
     }
 
     #[test]
-    fn below_limit_uses_heartbeat_cutoff() {
-        let events = vec![heartbeat_event("2026-04-17T11:59:58Z")];
-
+    fn batch_below_limit_uses_heartbeat_cutoff() {
         assert_eq!(
-            organization_heartbeat_cutoff(&events, "2026-04-17T12:00:00Z"),
+            received_at_workflow_cutoff(&["2026-04-17T11:59:58Z"], 2, "2026-04-17T12:00:00Z",),
             "2026-04-17T12:00:00Z"
         );
-    }
-
-    fn heartbeat_event(received_at: &str) -> OrganizationHeartbeatEvent {
-        OrganizationHeartbeatEvent {
-            project_id: "PROJECT42".to_owned(),
-            project_name: "Operations".to_owned(),
-            event: StoredHookEvent {
-                seq: 1,
-                event_id: Uuid::nil(),
-                received_at: received_at.to_owned(),
-                member_user_id: "user_123".to_owned(),
-                member_name: "Dana".to_owned(),
-                client: "codex".to_owned(),
-                repo_root: "/tmp/repo".to_owned(),
-                branch: None,
-                payload: json!({ "hook_event_name": "Stop" }),
-            },
-        }
     }
 }
 

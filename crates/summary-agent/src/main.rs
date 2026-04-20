@@ -4,6 +4,7 @@ mod db;
 mod event;
 mod prompt;
 mod tools;
+mod workflow;
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -23,8 +24,9 @@ use tokio::sync::mpsc;
 
 use crate::{
     agent::{AgentCommand, AgentLoop},
-    coordinator::SummaryCoordinator,
+    coordinator::WorkflowCoordinator,
     db::SummaryDb,
+    workflow::WorkflowPaths,
 };
 
 const CLIENT_NAME: &str = "supermanager_summary_agent";
@@ -48,18 +50,30 @@ struct Cli {
         default_value_t = 5
     )]
     project_summary_poll_interval_seconds: u64,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_ORGANIZATION_MEMORY_REFRESH_INTERVAL_SECONDS",
+        default_value_t = 86_400
+    )]
+    organization_memory_refresh_interval_seconds: u64,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_ORGANIZATION_SKILLS_REFRESH_INTERVAL_SECONDS",
+        default_value_t = 86_400
+    )]
+    organization_skills_refresh_interval_seconds: u64,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let paths = SummaryPaths::new(cli.data_dir);
-    paths.initialize().await?;
+    let workflow_paths = WorkflowPaths::new(cli.data_dir);
+    workflow_paths.initialize().await?;
 
     let db = SummaryDb::connect(&cli.database_url).await?;
 
     let config = Config::load_default_with_cli_overrides_for_codex_home(
-        paths.codex_home.clone(),
+        workflow_paths.codex_home.clone(),
         Vec::new(),
     )
     .context("failed to load default Codex config")?;
@@ -87,20 +101,22 @@ async fn main() -> Result<()> {
 
     let agent_task = tokio::spawn({
         let db = db.clone();
-        let summary_threads_dir = paths.summary_threads_dir.clone();
+        let workflow_paths = workflow_paths;
         async move {
-            AgentLoop::new(client, command_rx, event_tx, db, summary_threads_dir)
+            AgentLoop::new(client, command_rx, event_tx, db, workflow_paths)
                 .run()
                 .await
         }
     });
 
-    let mut coordinator = SummaryCoordinator::new(
+    let mut coordinator = WorkflowCoordinator::new(
         db.clone(),
         command_tx.clone(),
         event_rx,
         Duration::from_secs(cli.organization_summary_refresh_interval_seconds),
         Duration::from_secs(cli.project_summary_poll_interval_seconds),
+        Duration::from_secs(cli.organization_memory_refresh_interval_seconds),
+        Duration::from_secs(cli.organization_skills_refresh_interval_seconds),
     );
     let coordinator_result = coordinator.run().await;
 
@@ -113,27 +129,4 @@ async fn main() -> Result<()> {
     agent_result?;
 
     Ok(())
-}
-
-struct SummaryPaths {
-    codex_home: PathBuf,
-    summary_threads_dir: PathBuf,
-}
-
-impl SummaryPaths {
-    fn new(data_dir: PathBuf) -> Self {
-        Self {
-            codex_home: data_dir.join("codex"),
-            summary_threads_dir: data_dir.join("summary-threads"),
-        }
-    }
-
-    async fn initialize(&self) -> Result<()> {
-        for path in [&self.codex_home, &self.summary_threads_dir] {
-            tokio::fs::create_dir_all(path)
-                .await
-                .with_context(|| format!("failed to create {}", path.display()))?;
-        }
-        Ok(())
-    }
 }

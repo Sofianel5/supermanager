@@ -40,6 +40,8 @@ export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanage
 export SUPERMANAGER_DATA_DIR='../../.supermanager-data'
 export SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS='300'
 export SUPERMANAGER_PROJECT_SUMMARY_POLL_INTERVAL_SECONDS='5'
+export SUPERMANAGER_ORGANIZATION_MEMORY_REFRESH_INTERVAL_SECONDS='86400'
+export SUPERMANAGER_ORGANIZATION_SKILLS_REFRESH_INTERVAL_SECONDS='86400'
 export CODEX_API_KEY='replace-me'
 cargo run -- --database-url "$DATABASE_URL" --data-dir "$SUPERMANAGER_DATA_DIR"
 ```
@@ -50,6 +52,8 @@ The summary worker reads these runtime config values:
 - `SUPERMANAGER_DATA_DIR`
 - `SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS`
 - `SUPERMANAGER_PROJECT_SUMMARY_POLL_INTERVAL_SECONDS`
+- `SUPERMANAGER_ORGANIZATION_MEMORY_REFRESH_INTERVAL_SECONDS`
+- `SUPERMANAGER_ORGANIZATION_SKILLS_REFRESH_INTERVAL_SECONDS`
 - `CODEX_API_KEY`
 
 For production packaging, compile the server to a standalone Bun executable:
@@ -222,9 +226,11 @@ infra/aws/                # Terraform for the AWS backend
 
 ## Notes
 
-- Summary generation runs on the server after new hook turns arrive and on a periodic timer.
-- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps thread state under `<data-dir>/summary-threads/{organizations|projects}/<ID>/`.
-- The stored org summary is structured JSON. The model receives the current snapshot plus fresh updates and can return partial section updates instead of rewriting the whole summary each time.
+- Workflow generation runs on the server after new hook turns arrive and on periodic timers. The current workflows are project summaries, organization summaries, organization memories, and organization skills.
+- Stop-hook reports can embed a bounded transcript excerpt. The server stores that attachment separately from the hook event body so transcript-driven workflows can process it later without inflating the core event record.
+- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, workflow threads live under `<data-dir>/workflow-threads/{project-summary|organization-summary|organization-memories|organization-skills}/<ID>/`, and organization-scoped writable workspaces live under `<data-dir>/organization-workspaces/<org-id>/`.
+- Organization memory workflows write only under `<data-dir>/organization-workspaces/<org-id>/memories/`. Organization skills workflows write only under `<data-dir>/organization-workspaces/<org-id>/.codex/skills/`.
+- The stored org summary is structured JSON. Summary workflows receive the current snapshot plus fresh updates and can return partial section updates instead of rewriting the whole summary each time.
 
 ## Licensing
 
