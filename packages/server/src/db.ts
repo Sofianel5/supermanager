@@ -45,10 +45,6 @@ interface CliAuthRow {
   has_cli_auth: boolean;
 }
 
-interface UserDisplayRow {
-  employee_name: unknown;
-}
-
 interface InsertHookEventRow {
   seq: unknown;
   received_at: unknown;
@@ -92,6 +88,11 @@ interface HookEventInsert {
   repo_root: string;
   branch: string | null;
   payload: unknown;
+}
+
+interface HookEventWriteContextRow extends RoomRow {
+  has_access: unknown;
+  employee_name: unknown;
 }
 export interface RoomRecord extends RoomListEntry {
   created_by_user_id: string;
@@ -341,14 +342,39 @@ export class Db {
     return row ? mapRoom(row) : null;
   }
 
-  async getUserDisplayName(userId: string): Promise<string | null> {
-    const [row] = await this.client<UserDisplayRow[]>`
-      SELECT COALESCE(NULLIF(BTRIM(name), ''), email) AS employee_name
-      FROM "user"
-      WHERE id = ${userId}
+  async getHookEventWriteContext(
+    roomId: string,
+    userId: string,
+  ): Promise<{
+    room: RoomRecord | null;
+    hasAccess: boolean;
+    employeeName: string | null;
+  }> {
+    const [row] = await this.client<HookEventWriteContextRow[]>`
+      SELECT
+        rooms.room_id,
+        rooms.name,
+        rooms.created_at,
+        rooms.organization_id,
+        organization.slug AS organization_slug,
+        rooms.created_by_user_id,
+        (member."userId" IS NOT NULL) AS has_access,
+        COALESCE(NULLIF(BTRIM("user".name), ''), "user".email) AS employee_name
+      FROM rooms
+      INNER JOIN organization ON organization.id = rooms.organization_id
+      LEFT JOIN member ON member."organizationId" = rooms.organization_id AND member."userId" = ${userId}
+      LEFT JOIN "user" ON "user".id = ${userId}
+      WHERE rooms.room_id = ${normalizeRoomId(roomId)}
     `;
 
-    return row ? readString(row.employee_name, "employee_name") : null;
+    return {
+      room: row ? mapRoom(row) : null,
+      hasAccess: row ? readBoolean(row.has_access, "has_access") : false,
+      employeeName:
+        row?.employee_name == null
+          ? null
+          : readString(row.employee_name, "employee_name"),
+    };
   }
 
   async getUserDisplayNames(userIds: string[]): Promise<Map<string, string>> {
@@ -767,6 +793,13 @@ function generateRoomCode(): string {
 
 function readString(value: unknown, key: string): string {
   if (typeof value !== "string") {
+    throw new Error(`failed to decode ${key}`);
+  }
+  return value;
+}
+
+function readBoolean(value: unknown, key: string): boolean {
+  if (typeof value !== "boolean") {
     throw new Error(`failed to decode ${key}`);
   }
   return value;

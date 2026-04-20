@@ -374,21 +374,21 @@ export function createApp(context: AppContext) {
         if (!employeeUserId) {
           throw httpError(401, "api key user is invalid");
         }
-        const [room, employeeName] = await Promise.all([
-          context.db.getRoom(metadata.roomId),
-          context.db.getUserDisplayName(employeeUserId),
-        ]);
-        if (!room) {
+        const hookTarget = await context.db.getHookEventWriteContext(
+          metadata.roomId,
+          employeeUserId,
+        );
+        if (!hookTarget.room) {
           throw httpError(404, `room not found: ${metadata.roomId}`);
         }
-        if (
-          !(await context.db.getRoomWithAccessCheck(metadata.roomId, employeeUserId))
-        ) {
+        if (!hookTarget.hasAccess) {
           throw httpError(403, "api key user no longer has room access");
         }
-        if (!employeeName) {
+        if (!hookTarget.employeeName) {
           throw httpError(401, "api key user is invalid");
         }
+        const room = hookTarget.room;
+        const employeeName = hookTarget.employeeName;
 
         const client = body.client.trim();
         if (!client) {
