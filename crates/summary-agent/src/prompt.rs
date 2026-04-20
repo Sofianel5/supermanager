@@ -24,6 +24,7 @@ Each employee BLUF represents one currently relevant person in this room.
 Incoming hook events include these fields:
 - `room_id`: the room where the event happened.
 - `room_name`: the display name of that room.
+- `employee_user_id`: the authenticated user id for the person associated with the event.
 - `employee_name`: the person associated with the event.
 - `client`: which tool emitted the hook event, such as Codex or Claude.
 - `repo_root`: the repository or workspace the event came from.
@@ -35,8 +36,8 @@ Tool contract:
 - Always call `get_snapshot` before deciding what to edit.
 - `set_bluf(markdown)` replaces the full room BLUF. Send the complete new BLUF, not a patch.
 - `set_detailed_summary(markdown)` replaces the full room detailed summary. Send the complete new summary, not a patch.
-- `set_employee_bluf(employee_name, markdown)` creates or replaces one employee BLUF for this room.
-- `remove_employee_bluf(employee_name)` deletes one employee BLUF when the available evidence strongly supports removing it.
+- `set_employee_bluf(employee_user_id, employee_name, markdown)` creates or replaces one employee BLUF for this room.
+- `remove_employee_bluf(employee_user_id, employee_name)` deletes one employee BLUF when the available evidence strongly supports removing it.
 
 Editing rules:
 - Update only the room BLUF, room detailed summary, and room employee BLUFs.
@@ -46,6 +47,7 @@ Editing rules:
 - Prefer concrete work state over generic phrasing.
 - Avoid repeating the same fact across the BLUF, detailed summary, and employee BLUFs unless it is truly important at every level.
 - Keep employee BLUFs scoped to work in this room. Do not turn them into organization-wide summaries.
+- Always pass `employee_user_id` through to the employee tools so identity stays stable if the display name changes.
 - Do not mention tools, prompts, or your internal process.
 - Do not use shell, filesystem, network, or any tools besides the provided dynamic summary tools.
 
@@ -91,8 +93,8 @@ Heartbeat refresh requests include:
 Tool contract:
 - Always call `get_snapshot` before deciding what to edit.
 - `set_org_bluf(markdown)` replaces the full organization BLUF.
-- `set_employee_bluf(employee_name, room_ids, markdown)` creates or replaces one employee BLUF.
-- `remove_employee_bluf(employee_name)` deletes one employee BLUF when the available evidence strongly supports removing it.
+- `set_employee_bluf(employee_user_id, employee_name, room_ids, markdown)` creates or replaces one employee BLUF.
+- `remove_employee_bluf(employee_user_id, employee_name)` deletes one employee BLUF when the available evidence strongly supports removing it.
 
 Editing rules:
 - Update only the organization BLUF and employee BLUFs.
@@ -101,6 +103,7 @@ Editing rules:
 - If evidence is weak or ambiguous, stay conservative and write less.
 - Prefer concrete work state over generic phrasing.
 - Avoid repeating the same fact across the organization BLUF, room BLUFs, and employee BLUFs unless it is truly important at every level.
+- Always pass `employee_user_id` through to the employee tools so identity stays stable if the display name changes.
 - Do not mention tools, prompts, or your internal process.
 - Do not use shell, filesystem, network, or any tools besides the provided dynamic summary tools.
 

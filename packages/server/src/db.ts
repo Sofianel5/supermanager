@@ -1,6 +1,5 @@
 import {
   type EmployeeSnapshot,
-  type HookTurnReport,
   type OrganizationMembership,
   type OrganizationSummaryResponse,
   type OrganizationSnapshot,
@@ -46,6 +45,10 @@ interface CliAuthRow {
   has_cli_auth: boolean;
 }
 
+interface UserDisplayRow {
+  employee_name: unknown;
+}
+
 interface InsertHookEventRow {
   seq: unknown;
   received_at: unknown;
@@ -55,6 +58,7 @@ interface HookEventRow {
   seq: unknown;
   event_id: unknown;
   room_id?: unknown;
+  employee_user_id: unknown;
   employee_name: unknown;
   client: unknown;
   repo_root: unknown;
@@ -81,6 +85,14 @@ interface RoomSummaryRow {
   updated_at?: unknown;
 }
 
+interface HookEventInsert {
+  employee_user_id: string;
+  employee_name: string;
+  client: string;
+  repo_root: string;
+  branch: string | null;
+  payload: unknown;
+}
 export interface RoomRecord extends RoomListEntry {
   created_by_user_id: string;
   organization_id: string;
@@ -329,9 +341,45 @@ export class Db {
     return row ? mapRoom(row) : null;
   }
 
+  async getUserDisplayName(userId: string): Promise<string | null> {
+    const [row] = await this.client<UserDisplayRow[]>`
+      SELECT COALESCE(NULLIF(BTRIM(name), ''), email) AS employee_name
+      FROM "user"
+      WHERE id = ${userId}
+    `;
+
+    return row ? readString(row.employee_name, "employee_name") : null;
+  }
+
+  async getUserDisplayNames(userIds: string[]): Promise<Map<string, string>> {
+    const normalizedUserIds = Array.from(
+      new Set(userIds.map((userId) => userId.trim()).filter(Boolean)),
+    );
+    if (normalizedUserIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.client<
+      Array<{ user_id: unknown; employee_name: unknown }>
+    >`
+      SELECT
+        id AS user_id,
+        COALESCE(NULLIF(BTRIM(name), ''), email) AS employee_name
+      FROM "user"
+      WHERE id = ANY(${normalizedUserIds}::text[])
+    `;
+
+    return new Map(
+      rows.map((row) => [
+        readString(row.user_id, "user_id"),
+        readString(row.employee_name, "employee_name"),
+      ]),
+    );
+  }
+
   async insertHookEvent(
     roomId: string,
-    report: HookTurnReport,
+    report: HookEventInsert,
   ): Promise<StoredHookEvent> {
     const normalizedRoomId = normalizeRoomId(roomId);
     const eventId = crypto.randomUUID();
@@ -339,6 +387,7 @@ export class Db {
       INSERT INTO hook_events (
         event_id,
         room_id,
+        employee_user_id,
         employee_name,
         client,
         repo_root,
@@ -348,6 +397,7 @@ export class Db {
       VALUES (
         ${eventId},
         ${normalizedRoomId},
+        ${report.employee_user_id},
         ${report.employee_name},
         ${report.client},
         ${report.repo_root},
@@ -361,6 +411,7 @@ export class Db {
       seq: toNumber(row?.seq),
       event_id: eventId,
       received_at: toRfc3339(row?.received_at),
+      employee_user_id: report.employee_user_id,
       employee_name: report.employee_name,
       client: report.client,
       repo_root: report.repo_root,
@@ -378,19 +429,22 @@ export class Db {
     const effectiveLimit = limit ?? Number.MAX_SAFE_INTEGER;
     const rows = await this.client<HookEventRow[]>`
       SELECT
-        seq,
-        event_id,
-        employee_name,
-        client,
-        repo_root,
-        branch,
-        payload_json,
-        received_at
-      FROM hook_events
-      WHERE room_id = ${normalizeRoomId(roomId)}
-        AND (${before ?? null}::bigint IS NULL OR seq < ${before ?? null})
-        AND (${after ?? null}::bigint IS NULL OR seq > ${after ?? null})
-      ORDER BY seq DESC
+        h.seq,
+        h.event_id,
+        h.employee_user_id,
+        COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) AS employee_name,
+        h.client,
+        h.repo_root,
+        h.branch,
+        h.payload_json,
+        h.received_at
+      FROM hook_events AS h
+      LEFT JOIN "user" AS u ON u.id = h.employee_user_id
+      WHERE h.room_id = ${normalizeRoomId(roomId)}
+        AND h.employee_user_id IS NOT NULL
+        AND (${before ?? null}::bigint IS NULL OR h.seq < ${before ?? null})
+        AND (${after ?? null}::bigint IS NULL OR h.seq > ${after ?? null})
+      ORDER BY h.seq DESC
       LIMIT ${effectiveLimit}
     `;
 
@@ -402,6 +456,7 @@ export class Db {
       SELECT COUNT(*)::INT AS count
       FROM hook_events
       WHERE room_id = ${normalizeRoomId(roomId)}
+        AND employee_user_id IS NOT NULL
     `;
 
     return row == null ? 0 : toNumber(row.count);
@@ -414,19 +469,22 @@ export class Db {
       this.getStoredOrganizationSummaryRow(organizationId),
       this.listRoomBlufsForOrganization(organizationId),
     ]);
+    const snapshot = normalizeStoredOrganizationSummary(row?.content_json);
 
     return {
       status: row ? parseSummaryStatus(row.status) : "ready",
       updated_at: toOptionalRfc3339(row?.updated_at),
       summary: {
-        ...normalizeStoredOrganizationSummary(row?.content_json),
+        ...(await this.resolveSnapshotEmployeeNames(snapshot)),
         rooms,
       },
     };
   }
 
   async getRoomSummary(roomId: string): Promise<RoomSnapshot> {
-    return this.getStoredRoomSummary(normalizeRoomId(roomId));
+    return this.resolveSnapshotEmployeeNames(
+      await this.getStoredRoomSummary(normalizeRoomId(roomId)),
+    );
   }
 
   async getRoomSummaryResponse(roomId: string): Promise<RoomSummaryResponse> {
@@ -441,7 +499,9 @@ export class Db {
       last_processed_seq:
         row?.last_processed_seq == null ? 0 : toNumber(row.last_processed_seq),
       status: row ? parseSummaryStatus(row.status) : "ready",
-      summary: normalizeStoredRoomSummary(row?.content_json),
+      summary: await this.resolveSnapshotEmployeeNames(
+        normalizeStoredRoomSummary(row?.content_json),
+      ),
     };
   }
 
@@ -515,6 +575,23 @@ export class Db {
       updated_at: toOptionalRfc3339(row.updated_at),
     }));
   }
+
+  private async resolveSnapshotEmployeeNames<T extends OrganizationSnapshot | RoomSnapshot>(
+    snapshot: T,
+  ): Promise<T> {
+    const userNames = await this.getUserDisplayNames(
+      snapshot.employees.map((employee) => employee.employee_user_id),
+    );
+
+    return {
+      ...snapshot,
+      employees: snapshot.employees.map((employee) => ({
+        ...employee,
+        employee_name:
+          userNames.get(employee.employee_user_id) ?? employee.employee_name,
+      })),
+    };
+  }
 }
 
 export function normalizeRoomId(roomId: string): string {
@@ -562,6 +639,7 @@ function mapStoredHookEvent(row: HookEventRow): StoredHookEvent {
     seq: toNumber(row.seq),
     event_id: readString(row.event_id, "event_id"),
     received_at: toRfc3339(row.received_at),
+    employee_user_id: readString(row.employee_user_id, "employee_user_id"),
     employee_name: readString(row.employee_name, "employee_name"),
     client: readString(row.client, "client"),
     repo_root: readString(row.repo_root, "repo_root"),
@@ -581,7 +659,9 @@ function normalizeOrganizationSnapshot(
       ? base.rooms.map((room) => normalizeOrganizationRoomBlufSnapshot(room))
       : [],
     employees: Array.isArray(base.employees)
-      ? base.employees.map(normalizeEmployeeSnapshot)
+      ? base.employees
+          .map(normalizeEmployeeSnapshot)
+          .filter((employee): employee is EmployeeSnapshot => employee != null)
       : [],
   };
 }
@@ -608,7 +688,9 @@ function normalizeRoomSnapshot(
         ? base.detailed_summary_markdown
         : "",
     employees: Array.isArray(base.employees)
-      ? base.employees.map(normalizeEmployeeSnapshot)
+      ? base.employees
+          .map(normalizeEmployeeSnapshot)
+          .filter((employee): employee is EmployeeSnapshot => employee != null)
       : [],
   };
 }
@@ -648,8 +730,17 @@ function toRoomBlufSnapshot(
 
 function normalizeEmployeeSnapshot(
   snapshot: EmployeeSnapshot,
-): EmployeeSnapshot {
+): EmployeeSnapshot | null {
+  const employeeUserId =
+    typeof snapshot.employee_user_id === "string"
+      ? snapshot.employee_user_id.trim()
+      : "";
+  if (!employeeUserId) {
+    return null;
+  }
+
   return {
+    employee_user_id: employeeUserId,
     employee_name:
       typeof snapshot.employee_name === "string" ? snapshot.employee_name : "",
     room_ids: Array.isArray(snapshot.room_ids)

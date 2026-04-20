@@ -172,10 +172,8 @@ fn build_hook_report(client: &str, payload: &Value) -> Result<Option<(PathBuf, H
         .map(PathBuf::from)
         .unwrap_or(env::current_dir().context("failed to resolve current directory")?);
     let repo_dir = resolve_repo_root(&cwd)?;
-    let employee_name = detect_employee_name(&repo_dir)?;
 
     let report = HookTurnReport {
-        employee_name,
         client: client.to_owned(),
         repo_root: repo_dir.display().to_string(),
         branch: git_command_value(&repo_dir, &["branch", "--show-current"])?,
@@ -198,36 +196,6 @@ fn read_hook_payload() -> Result<Value> {
     let value =
         serde_json::from_str(&raw).context("failed to parse hook payload JSON from stdin")?;
     Ok(value)
-}
-
-pub(crate) fn detect_employee_name(repo_dir: &Path) -> Result<String> {
-    if let Some(name) = git_command_value(repo_dir, &["config", "user.name"])? {
-        return Ok(name);
-    }
-    if let Some(name) = git_command_value(repo_dir, &["config", "--global", "user.name"])? {
-        return Ok(name);
-    }
-    if let Some(name) = env::var_os("USER")
-        .or_else(|| env::var_os("USERNAME"))
-        .and_then(|value| {
-            let text = value.to_string_lossy().trim().to_owned();
-            if text.is_empty() { None } else { Some(text) }
-        })
-    {
-        return Ok(name);
-    }
-
-    let whoami = Command::new("whoami").current_dir(repo_dir).output();
-    if let Ok(output) = whoami
-        && output.status.success()
-    {
-        let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        if !text.is_empty() {
-            return Ok(text);
-        }
-    }
-
-    bail!("could not detect employee name; set git user.name first")
 }
 
 pub(crate) fn resolve_repo_root(cwd: &Path) -> Result<PathBuf> {
@@ -653,6 +621,32 @@ mod tests {
             canonicalize_best_effort(&repo_dir).display().to_string()
         );
         assert_eq!(report.payload, payload);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn build_hook_report_does_not_require_git_user_name() {
+        let root = test_dir("hook-report-no-git-user");
+        let repo_dir = root.join("repo");
+        fs::create_dir_all(&repo_dir).unwrap();
+
+        let init = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo_dir)
+            .status()
+            .unwrap();
+        assert!(init.success());
+
+        let payload = json!({
+            "hook_event_name": "Stop",
+            "cwd": repo_dir.display().to_string(),
+        });
+
+        let (resolved_repo, report) = build_hook_report("codex", &payload).unwrap().unwrap();
+
+        assert_eq!(resolved_repo, canonicalize_best_effort(&repo_dir));
+        assert_eq!(report.client, "codex");
 
         fs::remove_dir_all(root).unwrap();
     }

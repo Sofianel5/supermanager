@@ -13,6 +13,7 @@ struct SetMarkdownArgs {
 
 #[derive(Debug, Deserialize)]
 struct SetEmployeeBlufArgs {
+    employee_user_id: String,
     employee_name: String,
     room_ids: Vec<String>,
     markdown: String,
@@ -20,12 +21,14 @@ struct SetEmployeeBlufArgs {
 
 #[derive(Debug, Deserialize)]
 struct SetRoomEmployeeBlufArgs {
+    employee_user_id: String,
     employee_name: String,
     markdown: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct RemoveEmployeeBlufArgs {
+    employee_user_id: String,
     employee_name: String,
 }
 
@@ -42,11 +45,13 @@ pub(crate) enum SummaryTool {
         markdown: String,
     },
     SetEmployeeBluf {
+        employee_user_id: String,
         employee_name: String,
         room_ids: Vec<String>,
         markdown: String,
     },
     RemoveEmployeeBluf {
+        employee_user_id: String,
         employee_name: String,
     },
 }
@@ -75,8 +80,9 @@ impl SummaryTool {
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_name", "markdown"],
+                    "required": ["employee_user_id", "employee_name", "markdown"],
                     "properties": {
+                        "employee_user_id": { "type": "string" },
                         "employee_name": { "type": "string" },
                         "markdown": { "type": "string" }
                     }
@@ -88,8 +94,11 @@ impl SummaryTool {
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_name"],
-                    "properties": { "employee_name": { "type": "string" } }
+                    "required": ["employee_user_id", "employee_name"],
+                    "properties": {
+                        "employee_user_id": { "type": "string" },
+                        "employee_name": { "type": "string" }
+                    }
                 }),
             ),
         ]
@@ -113,8 +122,9 @@ impl SummaryTool {
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_name", "room_ids", "markdown"],
+                    "required": ["employee_user_id", "employee_name", "room_ids", "markdown"],
                     "properties": {
+                        "employee_user_id": { "type": "string" },
                         "employee_name": { "type": "string" },
                         "room_ids": {
                             "type": "array",
@@ -130,8 +140,11 @@ impl SummaryTool {
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_name"],
-                    "properties": { "employee_name": { "type": "string" } }
+                    "required": ["employee_user_id", "employee_name"],
+                    "properties": {
+                        "employee_user_id": { "type": "string" },
+                        "employee_name": { "type": "string" }
+                    }
                 }),
             ),
         ]
@@ -159,6 +172,7 @@ impl SummaryTool {
                     serde_json::from_value(params.arguments.clone())
                         .context("invalid set_employee_bluf arguments")?;
                 Ok(Self::SetEmployeeBluf {
+                    employee_user_id: args.employee_user_id,
                     employee_name: args.employee_name,
                     room_ids: Vec::new(),
                     markdown: args.markdown,
@@ -168,6 +182,7 @@ impl SummaryTool {
                 let args: RemoveEmployeeBlufArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid remove_employee_bluf arguments")?;
                 Ok(Self::RemoveEmployeeBluf {
+                    employee_user_id: args.employee_user_id,
                     employee_name: args.employee_name,
                 })
             }
@@ -189,6 +204,7 @@ impl SummaryTool {
                 let args: SetEmployeeBlufArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid set_employee_bluf arguments")?;
                 Ok(Self::SetEmployeeBluf {
+                    employee_user_id: args.employee_user_id,
                     employee_name: args.employee_name,
                     room_ids: args.room_ids,
                     markdown: args.markdown,
@@ -198,6 +214,7 @@ impl SummaryTool {
                 let args: RemoveEmployeeBlufArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid remove_employee_bluf arguments")?;
                 Ok(Self::RemoveEmployeeBluf {
+                    employee_user_id: args.employee_user_id,
                     employee_name: args.employee_name,
                 })
             }

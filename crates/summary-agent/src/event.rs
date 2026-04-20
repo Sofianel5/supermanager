@@ -32,6 +32,7 @@ pub(crate) fn format_room_event(
         "A new room hook event arrived.\n\
 room_id: {room_id}\n\
 room_name: {room_name}\n\
+employee_user_id: {employee_user_id}\n\
 employee_name: {employee_name}\n\
 client: {client}\n\
 repo_root: {repo_root}\n\
@@ -40,6 +41,7 @@ received_at: {received_at}\n\
 payload_json:\n{payload}",
         room_id = room_id,
         room_name = room_name,
+        employee_user_id = event.employee_user_id,
         employee_name = event.employee_name,
         client = event.client,
         repo_root = event.repo_root,
@@ -100,6 +102,7 @@ mod tests {
             seq: 0,
             event_id: Uuid::nil(),
             received_at: "2026-04-03T12:00:00Z".to_owned(),
+            employee_user_id: "user_123".to_owned(),
             employee_name: "Dana".to_owned(),
             client: "codex".to_owned(),
             repo_root: "/tmp/repo".to_owned(),
@@ -111,6 +114,7 @@ mod tests {
 
         assert!(rendered.contains("room_id: ROOM42"));
         assert!(rendered.contains("room_name: Operations"));
+        assert!(rendered.contains("employee_user_id: user_123"));
         assert!(rendered.contains("employee_name: Dana"));
         assert!(rendered.contains("branch: feature/agent"));
         assert!(rendered.contains("\"hook_event_name\": \"Stop\""));
@@ -122,6 +126,7 @@ mod tests {
             seq: 0,
             event_id: Uuid::nil(),
             received_at: "2026-04-03T12:00:00Z".to_owned(),
+            employee_user_id: "user_123".to_owned(),
             employee_name: "Dana".to_owned(),
             client: "codex".to_owned(),
             repo_root: "/tmp/repo".to_owned(),

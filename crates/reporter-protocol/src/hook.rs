@@ -21,7 +21,6 @@ pub struct FeedResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../packages/common/api-protocol/")]
 pub struct HookTurnReport {
-    pub employee_name: String,
     pub client: String,
     pub repo_root: String,
     #[serde(default)]
@@ -38,6 +37,7 @@ pub struct StoredHookEvent {
     #[ts(type = "string")]
     pub event_id: Uuid,
     pub received_at: String,
+    pub employee_user_id: String,
     pub employee_name: String,
     pub client: String,
     pub repo_root: String,

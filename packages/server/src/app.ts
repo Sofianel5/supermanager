@@ -56,7 +56,6 @@ const feedStreamHeaders = t.Object({
 });
 
 const hookTurnBody = t.Object({
-  employee_name: t.String(),
   client: t.String(),
   repo_root: t.String(),
   branch: t.Optional(t.Nullable(t.String())),
@@ -371,14 +370,24 @@ export function createApp(context: AppContext) {
         }
 
         const metadata = parseConnectionMetadata(verification.key.metadata);
-        const room = await context.db.getRoom(metadata.roomId);
+        const employeeUserId = verification.key.referenceId.trim();
+        if (!employeeUserId) {
+          throw httpError(401, "api key user is invalid");
+        }
+        const [room, employeeName] = await Promise.all([
+          context.db.getRoom(metadata.roomId),
+          context.db.getUserDisplayName(employeeUserId),
+        ]);
         if (!room) {
           throw httpError(404, `room not found: ${metadata.roomId}`);
         }
-
-        const employeeName = body.employee_name.trim();
+        if (
+          !(await context.db.getRoomWithAccessCheck(metadata.roomId, employeeUserId))
+        ) {
+          throw httpError(403, "api key user no longer has room access");
+        }
         if (!employeeName) {
-          return status(400, "employee_name must be a non-empty string");
+          throw httpError(401, "api key user is invalid");
         }
 
         const client = body.client.trim();
@@ -395,6 +404,7 @@ export function createApp(context: AppContext) {
         }
 
         const stored = await context.db.insertHookEvent(room.room_id, {
+          employee_user_id: employeeUserId,
           employee_name: employeeName,
           client,
           repo_root: repoRoot,
