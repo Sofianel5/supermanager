@@ -1,9 +1,7 @@
 use std::{collections::HashMap, future::pending, time::Duration};
 
-use ::time::format_description::well_known::Rfc3339;
 use anyhow::{Context, Result};
 use reporter_protocol::SummaryStatus;
-use sqlx::types::time::OffsetDateTime;
 use tokio::{
     sync::mpsc,
     time::{self, Instant, Interval, MissedTickBehavior},
@@ -11,7 +9,9 @@ use tokio::{
 
 use crate::{
     agent::{AgentCommand, AgentEvent},
-    db::{OrganizationSummaryQueryOptions, OrganizationWorkflowQueryOptions, SummaryDb},
+    db::{
+        OrganizationSummaryQueryOptions, ProjectSummaryQueryOptions, SummaryDb, now_rfc3339,
+    },
     event::{
         format_organization_memory_request, format_organization_skills_request,
         format_organization_summary_request, format_project_event,
@@ -290,7 +290,7 @@ impl WorkflowCoordinator {
             .db
             .query_project_events_for_summary(
                 &target.id,
-                crate::db::ProjectSummaryQueryOptions {
+                ProjectSummaryQueryOptions {
                     after_seq: Some(last_processed_seq),
                     limit: Some(PROJECT_SUMMARY_EVENT_LIMIT),
                 },
@@ -370,7 +370,7 @@ impl WorkflowCoordinator {
             .db
             .query_organization_transcripts_for_workflow(
                 &target.id,
-                OrganizationWorkflowQueryOptions {
+                OrganizationSummaryQueryOptions {
                     after_received_at: previous_processed_received_at,
                     before_received_at: Some(heartbeat_cutoff.clone()),
                     limit: Some(ORGANIZATION_TRANSCRIPT_LIMIT),
@@ -485,12 +485,6 @@ fn received_at_workflow_cutoff<'a>(
     } else {
         heartbeat_cutoff
     }
-}
-
-fn now_rfc3339() -> Result<String> {
-    OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .context("failed to format workflow cutoff")
 }
 
 #[cfg(test)]
