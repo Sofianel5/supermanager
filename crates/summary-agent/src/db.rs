@@ -53,8 +53,6 @@ pub(crate) struct OrganizationSummaryQueryOptions {
     pub(crate) limit: Option<i64>,
 }
 
-pub(crate) type OrganizationWorkflowQueryOptions = OrganizationSummaryQueryOptions;
-
 pub(crate) struct ProjectSummaryQueryOptions {
     pub(crate) after_seq: Option<i64>,
     pub(crate) limit: Option<i64>,
@@ -188,7 +186,7 @@ impl SummaryDb {
             "#,
         )
         .bind(organization_id)
-        .bind(workflow_kind_db_str(workflow_kind))
+        .bind(workflow_kind.as_str())
         .fetch_optional(&self.pool)
         .await
         .with_context(|| {
@@ -297,7 +295,7 @@ impl SummaryDb {
             "#,
         )
         .bind(organization_id)
-        .bind(workflow_kind_db_str(workflow_kind))
+        .bind(workflow_kind.as_str())
         .bind(status.as_db_str())
         .execute(&self.pool)
         .await
@@ -335,7 +333,7 @@ impl SummaryDb {
             "#,
         )
         .bind(organization_id)
-        .bind(workflow_kind_db_str(workflow_kind))
+        .bind(workflow_kind.as_str())
         .bind(updated_at)
         .execute(&self.pool)
         .await
@@ -435,7 +433,7 @@ impl SummaryDb {
     pub(crate) async fn query_organization_transcripts_for_workflow(
         &self,
         organization_id: &str,
-        options: OrganizationWorkflowQueryOptions,
+        options: OrganizationSummaryQueryOptions,
     ) -> Result<Vec<OrganizationTranscript>> {
         let rows = sqlx::query(
             r#"
@@ -1193,22 +1191,12 @@ impl MemberSnapshotContainer for OrganizationSnapshot {
     }
 }
 
-fn workflow_kind_db_str(workflow_kind: WorkflowKind) -> &'static str {
-    match workflow_kind {
-        WorkflowKind::OrganizationMemories => "organization_memories",
-        WorkflowKind::OrganizationSkills => "organization_skills",
-        WorkflowKind::OrganizationSummary | WorkflowKind::ProjectSummary => {
-            panic!("unexpected workflow kind for organization_workflows table")
-        }
-    }
-}
-
 fn format_timestamp(timestamp: OffsetDateTime) -> Result<String> {
     timestamp
         .format(&Rfc3339)
         .context("failed to format timestamp as RFC3339")
 }
 
-fn now_rfc3339() -> Result<String> {
+pub(crate) fn now_rfc3339() -> Result<String> {
     format_timestamp(OffsetDateTime::now_utc())
 }

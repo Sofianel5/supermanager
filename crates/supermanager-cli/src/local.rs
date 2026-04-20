@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
-    env, fs,
+    env,
+    fs::{self, File},
     io::{self, Read},
     path::{Path, PathBuf},
     process::Command,
@@ -201,14 +202,15 @@ fn load_transcript_attachment(payload: &Value) -> Option<UploadedTranscript> {
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
     let transcript_path = PathBuf::from(transcript_path);
-    if !transcript_path.is_file() {
-        return None;
-    }
 
-    let bytes = fs::read(&transcript_path).ok()?;
+    let file = File::open(&transcript_path).ok()?;
+    let mut bytes = Vec::with_capacity(MAX_TRANSCRIPT_BYTES + 1);
+    file.take((MAX_TRANSCRIPT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
     let truncated_to_bytes = bytes.len() > MAX_TRANSCRIPT_BYTES;
-    let mut text: String =
-        String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_TRANSCRIPT_BYTES)]).into();
+    bytes.truncate(MAX_TRANSCRIPT_BYTES);
+    let mut text: String = String::from_utf8_lossy(&bytes).into();
     let truncated_to_chars = text.chars().count() > MAX_EMBEDDED_TRANSCRIPT_CHARS;
 
     if truncated_to_chars {
