@@ -11,8 +11,9 @@ use crate::{
     agent::{AgentCommand, AgentEvent},
     db::{OrganizationSummaryQueryOptions, ProjectSummaryQueryOptions, SummaryDb, now_rfc3339},
     event::{
-        format_organization_memory_request, format_organization_skills_request,
-        format_organization_summary_request, format_project_event,
+        OrganizationTranscriptRequest, format_organization_memory_request,
+        format_organization_skills_request, format_organization_summary_request,
+        format_project_event,
     },
     workflow::{WorkflowCursor, WorkflowDispatch, WorkflowKind, WorkflowTarget},
 };
@@ -369,7 +370,7 @@ impl WorkflowCoordinator {
             .query_organization_transcripts_for_workflow(
                 &target.id,
                 OrganizationSummaryQueryOptions {
-                    after_received_at: previous_processed_received_at,
+                    after_received_at: previous_processed_received_at.clone(),
                     before_received_at: Some(heartbeat_cutoff.clone()),
                     limit: Some(ORGANIZATION_TRANSCRIPT_LIMIT),
                 },
@@ -396,13 +397,15 @@ impl WorkflowCoordinator {
         }
 
         let projects = self.db.list_projects_for_summary(&target.id).await?;
+        let request = OrganizationTranscriptRequest {
+            projects: &projects,
+            transcripts: &transcripts,
+            previous_processed_received_at: previous_processed_received_at.as_deref(),
+            heartbeat_cutoff: &heartbeat_cutoff,
+        };
         let input = match target.kind {
-            WorkflowKind::OrganizationMemories => {
-                format_organization_memory_request(&projects, &transcripts)?
-            }
-            WorkflowKind::OrganizationSkills => {
-                format_organization_skills_request(&projects, &transcripts)?
-            }
+            WorkflowKind::OrganizationMemories => format_organization_memory_request(request)?,
+            WorkflowKind::OrganizationSkills => format_organization_skills_request(request)?,
             _ => unreachable!(),
         };
 
