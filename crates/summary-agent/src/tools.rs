@@ -15,12 +15,12 @@ struct SetMarkdownArgs {
 struct SetEmployeeBlufArgs {
     employee_user_id: String,
     employee_name: String,
-    room_ids: Vec<String>,
+    project_ids: Vec<String>,
     markdown: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct SetRoomEmployeeBlufArgs {
+struct SetProjectEmployeeBlufArgs {
     employee_user_id: String,
     employee_name: String,
     markdown: String,
@@ -33,11 +33,11 @@ struct RemoveEmployeeBlufArgs {
 }
 
 pub(crate) enum SummaryTool {
-    RoomGetSnapshot,
-    SetRoomBluf {
+    ProjectGetSnapshot,
+    SetProjectBluf {
         markdown: String,
     },
-    SetRoomDetailedSummary {
+    SetProjectDetailedSummary {
         markdown: String,
     },
     OrganizationGetSnapshot,
@@ -47,7 +47,7 @@ pub(crate) enum SummaryTool {
     SetEmployeeBluf {
         employee_user_id: String,
         employee_name: String,
-        room_ids: Vec<String>,
+        project_ids: Vec<String>,
         markdown: String,
     },
     RemoveEmployeeBluf {
@@ -57,26 +57,26 @@ pub(crate) enum SummaryTool {
 }
 
 impl SummaryTool {
-    pub(crate) fn room_specs() -> Vec<DynamicToolSpec> {
+    pub(crate) fn project_specs() -> Vec<DynamicToolSpec> {
         vec![
             spec(
                 "get_snapshot",
-                "Read the current room snapshot before deciding what to edit.",
+                "Read the current project snapshot before deciding what to edit.",
                 empty_schema(),
             ),
             spec(
                 "set_bluf",
-                "Replace the room BLUF markdown.",
+                "Replace the project BLUF markdown.",
                 markdown_only_schema(),
             ),
             spec(
                 "set_detailed_summary",
-                "Replace the room detailed summary markdown.",
+                "Replace the project detailed summary markdown.",
                 markdown_only_schema(),
             ),
             spec(
                 "set_employee_bluf",
-                "Create or update a single employee BLUF scoped to this room.",
+                "Create or update a single employee BLUF scoped to this project.",
                 json!({
                     "type": "object",
                     "additionalProperties": false,
@@ -90,7 +90,7 @@ impl SummaryTool {
             ),
             spec(
                 "remove_employee_bluf",
-                "Remove an employee BLUF that should no longer appear in this room snapshot.",
+                "Remove an employee BLUF that should no longer appear in this project snapshot.",
                 json!({
                     "type": "object",
                     "additionalProperties": false,
@@ -122,11 +122,11 @@ impl SummaryTool {
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_user_id", "employee_name", "room_ids", "markdown"],
+                    "required": ["employee_user_id", "employee_name", "project_ids", "markdown"],
                     "properties": {
                         "employee_user_id": { "type": "string" },
                         "employee_name": { "type": "string" },
-                        "room_ids": {
+                        "project_ids": {
                             "type": "array",
                             "items": { "type": "string" }
                         },
@@ -150,31 +150,31 @@ impl SummaryTool {
         ]
     }
 
-    pub(crate) fn parse_room(params: &DynamicToolCallParams) -> Result<Self> {
+    pub(crate) fn parse_project(params: &DynamicToolCallParams) -> Result<Self> {
         match params.tool.as_str() {
-            "get_snapshot" => Ok(Self::RoomGetSnapshot),
+            "get_snapshot" => Ok(Self::ProjectGetSnapshot),
             "set_bluf" => {
                 let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid set_bluf arguments")?;
-                Ok(Self::SetRoomBluf {
+                Ok(Self::SetProjectBluf {
                     markdown: args.markdown,
                 })
             }
             "set_detailed_summary" => {
                 let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid set_detailed_summary arguments")?;
-                Ok(Self::SetRoomDetailedSummary {
+                Ok(Self::SetProjectDetailedSummary {
                     markdown: args.markdown,
                 })
             }
             "set_employee_bluf" => {
-                let args: SetRoomEmployeeBlufArgs =
+                let args: SetProjectEmployeeBlufArgs =
                     serde_json::from_value(params.arguments.clone())
                         .context("invalid set_employee_bluf arguments")?;
                 Ok(Self::SetEmployeeBluf {
                     employee_user_id: args.employee_user_id,
                     employee_name: args.employee_name,
-                    room_ids: Vec::new(),
+                    project_ids: Vec::new(),
                     markdown: args.markdown,
                 })
             }
@@ -186,7 +186,7 @@ impl SummaryTool {
                     employee_name: args.employee_name,
                 })
             }
-            other => anyhow::bail!("unknown room summary tool: {other}"),
+            other => anyhow::bail!("unknown project summary tool: {other}"),
         }
     }
 
@@ -206,7 +206,7 @@ impl SummaryTool {
                 Ok(Self::SetEmployeeBluf {
                     employee_user_id: args.employee_user_id,
                     employee_name: args.employee_name,
-                    room_ids: args.room_ids,
+                    project_ids: args.project_ids,
                     markdown: args.markdown,
                 })
             }

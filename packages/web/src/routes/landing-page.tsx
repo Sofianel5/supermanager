@@ -31,13 +31,13 @@ export function LandingPage() {
           <div className={sectionLabelClass}>How it works</div>
           <ol className="mt-4 grid list-inside list-decimal gap-4 pl-0 text-ink leading-7 marker:text-ink">
             <li>Sign in from the browser.</li>
-            <li>Create your organization and first room.</li>
+            <li>Create your organization and first project.</li>
             <li>
-              Run `supermanager login`, then create or join rooms inside each
+              Run `supermanager login`, then create or join projects inside each
               repo.
             </li>
             <li>
-              Claude Code and Codex hook turns flow into the private room
+              Claude Code and Codex hook turns flow into the private project
               dashboard.
             </li>
           </ol>
@@ -46,7 +46,7 @@ export function LandingPage() {
         <div className={cx(strongSurfaceClass, "p-[22px]")}>
           <div className={sectionLabelClass}>Start</div>
           <p className={messageClass}>
-            Rooms are private to your organization. Sign in to manage rooms and
+            Projects are private to your organization. Sign in to manage projects and
             approve CLI logins.
           </p>
           <div className="mt-[18px] grid gap-3">

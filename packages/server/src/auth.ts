@@ -12,7 +12,7 @@ import { trimUrl, type ApiConfig } from "./config";
 export const AUTH_BASE_PATH = "/api/auth";
 export const CLI_DEVICE_CLIENT_ID = "supermanager-cli";
 export const CLI_USER_AGENT_PREFIX = "supermanager-cli/";
-export const ROOM_CONNECTION_KEY_CONFIG = "room-connection";
+export const PROJECT_CONNECTION_KEY_CONFIG = "project-connection";
 const RDS_CA_BUNDLE_PATH = "/etc/ssl/certs/rds-global-bundle.pem";
 export const HOOK_WRITE_PERMISSIONS: Record<string, string[]> = {
   hook: ["write"],
@@ -102,7 +102,7 @@ function createAuth(config: ApiConfig, db: Kysely<Record<string, never>>) {
       apiKey([
         {
           apiKeyHeaders: "x-api-key",
-          configId: ROOM_CONNECTION_KEY_CONFIG,
+          configId: PROJECT_CONNECTION_KEY_CONFIG,
           defaultKeyLength: 48,
           defaultPrefix: "smrk_",
           enableMetadata: true,

@@ -3,22 +3,22 @@ use reporter_protocol::StoredHookEvent;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct OrganizationHeartbeatRoom {
-    pub(crate) room_id: String,
+pub(crate) struct OrganizationHeartbeatProject {
+    pub(crate) project_id: String,
     pub(crate) name: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct OrganizationHeartbeatEvent {
-    pub(crate) room_id: String,
-    pub(crate) room_name: String,
+    pub(crate) project_id: String,
+    pub(crate) project_name: String,
     #[serde(flatten)]
     pub(crate) event: StoredHookEvent,
 }
 
-pub(crate) fn format_room_event(
-    room_id: &str,
-    room_name: &str,
+pub(crate) fn format_project_event(
+    project_id: &str,
+    project_name: &str,
     event: &StoredHookEvent,
 ) -> Result<String> {
     let payload = serde_json::to_string_pretty(&event.payload)?;
@@ -29,9 +29,9 @@ pub(crate) fn format_room_event(
         .unwrap_or("(none)");
 
     Ok(format!(
-        "A new room hook event arrived.\n\
-room_id: {room_id}\n\
-room_name: {room_name}\n\
+        "A new project hook event arrived.\n\
+project_id: {project_id}\n\
+project_name: {project_name}\n\
 employee_user_id: {employee_user_id}\n\
 employee_name: {employee_name}\n\
 client: {client}\n\
@@ -39,8 +39,8 @@ repo_root: {repo_root}\n\
 branch: {branch}\n\
 received_at: {received_at}\n\
 payload_json:\n{payload}",
-        room_id = room_id,
-        room_name = room_name,
+        project_id = project_id,
+        project_name = project_name,
         employee_user_id = event.employee_user_id,
         employee_name = event.employee_name,
         client = event.client,
@@ -52,15 +52,15 @@ payload_json:\n{payload}",
 }
 
 pub(crate) fn format_organization_heartbeat_request(
-    rooms: &[OrganizationHeartbeatRoom],
+    projects: &[OrganizationHeartbeatProject],
     events: &[OrganizationHeartbeatEvent],
 ) -> Result<String> {
-    let rooms_text = if rooms.is_empty() {
+    let projects_text = if projects.is_empty() {
         "(none)".to_owned()
     } else {
-        rooms
+        projects
             .iter()
-            .map(|room| format!("- {}: {}", room.room_id, room.name))
+            .map(|project| format!("- {}: {}", project.project_id, project.name))
             .collect::<Vec<_>>()
             .join("\n")
     };
@@ -70,9 +70,9 @@ pub(crate) fn format_organization_heartbeat_request(
     } else {
         let mut rendered = Vec::with_capacity(events.len());
         for heartbeat_event in events {
-            rendered.push(format_room_event(
-                &heartbeat_event.room_id,
-                &heartbeat_event.room_name,
+            rendered.push(format_project_event(
+                &heartbeat_event.project_id,
+                &heartbeat_event.project_name,
                 &heartbeat_event.event,
             )?);
         }
@@ -81,10 +81,10 @@ pub(crate) fn format_organization_heartbeat_request(
 
     Ok(format!(
         "Organization summary heartbeat fired.\n\
-current_rooms:\n{rooms}\n\
+current_projects:\n{projects}\n\
 org_events_since_previous_heartbeat:\n{events}\n\
-Tighten the organization BLUF and employee BLUFs. Room BLUFs are maintained separately and should be treated as read-only context from get_snapshot.",
-        rooms = rooms_text,
+Tighten the organization BLUF and employee BLUFs. Project BLUFs are maintained separately and should be treated as read-only context from get_snapshot.",
+        projects = projects_text,
         events = events_text,
     ))
 }
@@ -97,7 +97,7 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn format_room_event_includes_snapshot_fields() {
+    fn format_project_event_includes_snapshot_fields() {
         let event = StoredHookEvent {
             seq: 0,
             event_id: Uuid::nil(),
@@ -110,10 +110,10 @@ mod tests {
             payload: json!({ "hook_event_name": "Stop" }),
         };
 
-        let rendered = format_room_event("ROOM42", "Operations", &event).unwrap();
+        let rendered = format_project_event("PROJECT42", "Operations", &event).unwrap();
 
-        assert!(rendered.contains("room_id: ROOM42"));
-        assert!(rendered.contains("room_name: Operations"));
+        assert!(rendered.contains("project_id: PROJECT42"));
+        assert!(rendered.contains("project_name: Operations"));
         assert!(rendered.contains("employee_user_id: user_123"));
         assert!(rendered.contains("employee_name: Dana"));
         assert!(rendered.contains("branch: feature/agent"));
@@ -121,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn format_organization_heartbeat_request_includes_rooms_and_events() {
+    fn format_organization_heartbeat_request_includes_projects_and_events() {
         let event = StoredHookEvent {
             seq: 0,
             event_id: Uuid::nil(),
@@ -135,21 +135,21 @@ mod tests {
         };
 
         let rendered = format_organization_heartbeat_request(
-            &[OrganizationHeartbeatRoom {
-                room_id: "ROOM42".to_owned(),
+            &[OrganizationHeartbeatProject {
+                project_id: "PROJECT42".to_owned(),
                 name: "Operations".to_owned(),
             }],
             &[OrganizationHeartbeatEvent {
-                room_id: "ROOM42".to_owned(),
-                room_name: "Operations".to_owned(),
+                project_id: "PROJECT42".to_owned(),
+                project_name: "Operations".to_owned(),
                 event,
             }],
         )
         .unwrap();
 
         assert!(rendered.contains("Organization summary heartbeat fired."));
-        assert!(rendered.contains("- ROOM42: Operations"));
-        assert!(rendered.contains("room_name: Operations"));
-        assert!(rendered.contains("Room BLUFs are maintained separately"));
+        assert!(rendered.contains("- PROJECT42: Operations"));
+        assert!(rendered.contains("project_name: Operations"));
+        assert!(rendered.contains("Project BLUFs are maintained separately"));
     }
 }

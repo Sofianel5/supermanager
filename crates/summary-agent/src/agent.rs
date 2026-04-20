@@ -16,10 +16,10 @@ use tokio::sync::mpsc;
 use crate::{
     db::SummaryDb,
     event::{
-        OrganizationHeartbeatEvent, OrganizationHeartbeatRoom,
-        format_organization_heartbeat_request, format_room_event,
+        OrganizationHeartbeatEvent, OrganizationHeartbeatProject,
+        format_organization_heartbeat_request, format_project_event,
     },
-    prompt::{ORGANIZATION_SYSTEM_PROMPT, ROOM_SYSTEM_PROMPT},
+    prompt::{ORGANIZATION_SYSTEM_PROMPT, PROJECT_SYSTEM_PROMPT},
     tools::{SummaryTool, tool_failure},
 };
 
@@ -27,15 +27,15 @@ const SUMMARY_MODEL: &str = "gpt-5.4-mini";
 const NO_ACTIVE_TURN_TO_STEER_ERROR: &str = "no active turn to steer";
 
 pub(crate) enum AgentCommand {
-    EnqueueRoomEvent {
-        room_id: String,
-        room_name: String,
+    EnqueueProjectEvent {
+        project_id: String,
+        project_name: String,
         event: StoredHookEvent,
     },
     OrganizationHeartbeat {
         organization_id: String,
         events: Vec<OrganizationHeartbeatEvent>,
-        rooms: Vec<OrganizationHeartbeatRoom>,
+        projects: Vec<OrganizationHeartbeatProject>,
     },
     Shutdown,
 }
@@ -48,28 +48,28 @@ enum LoopInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SummaryScope {
     Organization,
-    Room,
+    Project,
 }
 
 impl SummaryScope {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Organization => "organization",
-            Self::Room => "room",
+            Self::Project => "project",
         }
     }
 
     fn directory_name(self) -> &'static str {
         match self {
             Self::Organization => "organizations",
-            Self::Room => "rooms",
+            Self::Project => "projects",
         }
     }
 
     fn system_prompt(self) -> &'static str {
         match self {
             Self::Organization => ORGANIZATION_SYSTEM_PROMPT,
-            Self::Room => ROOM_SYSTEM_PROMPT,
+            Self::Project => PROJECT_SYSTEM_PROMPT,
         }
     }
 }
@@ -97,10 +97,10 @@ impl SummaryTarget {
         }
     }
 
-    fn room(room_id: impl Into<String>) -> Self {
+    fn project(project_id: impl Into<String>) -> Self {
         Self {
-            scope: SummaryScope::Room,
-            id: room_id.into(),
+            scope: SummaryScope::Project,
+            id: project_id.into(),
         }
     }
 }
@@ -153,19 +153,19 @@ impl AgentLoop {
             };
 
             match input {
-                LoopInput::Command(Some(AgentCommand::EnqueueRoomEvent {
-                    room_id,
-                    room_name,
+                LoopInput::Command(Some(AgentCommand::EnqueueProjectEvent {
+                    project_id,
+                    project_name,
                     event,
                 })) => {
-                    self.send_room_event(&room_id, &room_name, &event).await?;
+                    self.send_project_event(&project_id, &project_name, &event).await?;
                 }
                 LoopInput::Command(Some(AgentCommand::OrganizationHeartbeat {
                     organization_id,
                     events,
-                    rooms,
+                    projects,
                 })) => {
-                    self.handle_organization_heartbeat(&organization_id, &rooms, &events)
+                    self.handle_organization_heartbeat(&organization_id, &projects, &events)
                         .await?;
                 }
                 LoopInput::Command(Some(AgentCommand::Shutdown)) => break,
@@ -251,16 +251,16 @@ impl AgentLoop {
         Ok(())
     }
 
-    async fn send_room_event(
+    async fn send_project_event(
         &mut self,
-        room_id: &str,
-        room_name: &str,
+        project_id: &str,
+        project_name: &str,
         event: &StoredHookEvent,
     ) -> Result<()> {
-        let target = SummaryTarget::room(room_id.to_owned());
+        let target = SummaryTarget::project(project_id.to_owned());
         let thread_id = self.ensure_thread(&target).await?;
         let input = vec![UserInput::Text {
-            text: format_room_event(room_id, room_name, event)?,
+            text: format_project_event(project_id, project_name, event)?,
             text_elements: Vec::new(),
         }];
 
@@ -270,13 +270,13 @@ impl AgentLoop {
     async fn handle_organization_heartbeat(
         &mut self,
         organization_id: &str,
-        rooms: &[OrganizationHeartbeatRoom],
+        projects: &[OrganizationHeartbeatProject],
         events: &[OrganizationHeartbeatEvent],
     ) -> Result<()> {
         let target = SummaryTarget::organization(organization_id.to_owned());
         let thread_id = self.ensure_thread(&target).await?;
         let input = vec![UserInput::Text {
-            text: format_organization_heartbeat_request(rooms, events)?,
+            text: format_organization_heartbeat_request(projects, events)?,
             text_elements: Vec::new(),
         }];
 
@@ -425,7 +425,7 @@ impl AgentLoop {
         let request_id = self.next_request_id();
         let dynamic_tools = match scope {
             SummaryScope::Organization => SummaryTool::organization_specs(),
-            SummaryScope::Room => SummaryTool::room_specs(),
+            SummaryScope::Project => SummaryTool::project_specs(),
         };
 
         let response = self
@@ -482,7 +482,7 @@ impl AgentLoop {
 
         let tool = match target.scope {
             SummaryScope::Organization => SummaryTool::parse_organization(params),
-            SummaryScope::Room => SummaryTool::parse_room(params),
+            SummaryScope::Project => SummaryTool::parse_project(params),
         };
         let tool = match tool {
             Ok(tool) => tool,
@@ -495,7 +495,7 @@ impl AgentLoop {
                     .execute_organization_tool_call(&target.id, tool)
                     .await
             }
-            SummaryScope::Room => self.db.execute_room_tool_call(&target.id, tool).await,
+            SummaryScope::Project => self.db.execute_project_tool_call(&target.id, tool).await,
         };
 
         let result = match result {

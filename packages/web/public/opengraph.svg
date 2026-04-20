@@ -57,7 +57,7 @@
   </text>
 
   <text x="92" y="482" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="24">
-    Install the CLI, create a room from the terminal, connect the repos
+    Install the CLI, create a project from the terminal, connect the repos
   </text>
   <text x="92" y="514" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="24">
     that matter, and watch a live feed and manager summary update as work lands.

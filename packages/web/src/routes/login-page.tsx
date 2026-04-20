@@ -85,7 +85,7 @@ export function LoginPage() {
             Sign in
           </h1>
           <p className={`${messageClass} mt-4`}>
-            Continue with Google or GitHub to manage rooms and approve CLI logins.
+            Continue with Google or GitHub to manage projects and approve CLI logins.
           </p>
         </div>
 

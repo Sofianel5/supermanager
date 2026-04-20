@@ -1,13 +1,17 @@
 use anyhow::{Context, Result, bail};
-use reporter_protocol::{CreateRoomRequest, CreateRoomResponse};
+use reporter_protocol::{CreateProjectRequest, CreateProjectResponse};
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
-    auth::{authed, fetch_room, get_viewer, require_auth_state, resolve_active_org_interactive},
-    local::{default_room_name, install_repo_hooks, resolve_repo_root, upsert_repo_room_config},
+    auth::{authed, fetch_project, get_viewer, require_auth_state, resolve_active_org_interactive},
+    local::{
+        default_project_name, install_repo_hooks, resolve_repo_root, upsert_repo_project_config,
+    },
     support::{API_TIMEOUT_SECONDS, build_http_client, ensure_success, normalize_url},
-    types::{CreateRoomConfig, CreateRoomOutcome, JoinConfig, JoinOutcome, RepoRoomConfig},
+    types::{
+        CreateProjectConfig, CreateProjectOutcome, JoinConfig, JoinOutcome, RepoProjectConfig,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -15,19 +19,19 @@ struct ConnectionResponse {
     api_key: String,
     api_key_id: String,
     dashboard_url: String,
-    room_id: String,
+    project_id: String,
 }
 
-pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
+pub fn create_project(config: CreateProjectConfig) -> Result<CreateProjectOutcome> {
     let repo_dir = resolve_repo_root(&config.cwd)?;
     let server_url = normalize_url(&config.server_url);
-    let room_name = config
+    let project_name = config
         .name
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| default_room_name(&repo_dir));
+        .unwrap_or_else(|| default_project_name(&repo_dir));
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
     let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
@@ -38,24 +42,24 @@ pub fn create_room(config: CreateRoomConfig) -> Result<CreateRoomOutcome> {
         &config.home_dir,
         &viewer,
         config.organization_slug.as_deref(),
-        &format!("supermanager create room --server {server_url}"),
+        &format!("supermanager create project --server {server_url}"),
     )?;
     let response = authed(&http, &auth_state.access_token)
-        .post(format!("{server_url}/v1/rooms"))
-        .json(&CreateRoomRequest {
-            name: room_name.clone(),
+        .post(format!("{server_url}/v1/projects"))
+        .json(&CreateProjectRequest {
+            name: project_name.clone(),
             organization_slug: Some(active_org.organization_slug.clone()),
         })
         .send()
-        .context("failed to create room")?;
-    let response = ensure_success(response, "create room")?;
-    let payload: CreateRoomResponse = response
+        .context("failed to create project")?;
+    let response = ensure_success(response, "create project")?;
+    let payload: CreateProjectResponse = response
         .json()
-        .context("failed to parse create-room response JSON")?;
+        .context("failed to parse create-project response JSON")?;
 
-    Ok(CreateRoomOutcome {
-        room_id: payload.room_id,
-        room_name,
+    Ok(CreateProjectOutcome {
+        project_id: payload.project_id,
+        project_name,
         dashboard_url: payload.dashboard_url,
         join_command: payload.join_command,
         repo_dir,
@@ -68,7 +72,7 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
     let http = build_http_client(API_TIMEOUT_SECONDS)?;
     let mut auth_state = require_auth_state(&config.home_dir, &server_url)?;
     let viewer = get_viewer(&http, &server_url, &auth_state.access_token)?;
-    let display_name = viewer.user.name.clone();
+    let employee_name = viewer.user.name.clone();
     let active_org = resolve_active_org_interactive(
         &http,
         &server_url,
@@ -76,28 +80,31 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
         &config.home_dir,
         &viewer,
         config.organization_slug.as_deref(),
-        &format!("supermanager join {} --server {server_url}", config.room_id),
+        &format!(
+            "supermanager join {} --server {server_url}",
+            config.project_id
+        ),
     )?;
-    let room = fetch_room(
+    let project = fetch_project(
         &http,
         &server_url,
         &auth_state.access_token,
-        &config.room_id,
+        &config.project_id,
     )?;
 
-    if room.organization_slug != active_org.organization_slug {
+    if project.organization_slug != active_org.organization_slug {
         bail!(
-            "room {} belongs to organization {}, but the active organization is {}",
-            room.room_id,
-            room.organization_slug,
+            "project {} belongs to organization {}, but the active organization is {}",
+            project.project_id,
+            project.organization_slug,
             active_org.organization_slug
         );
     }
 
     let connection = authed(&http, &auth_state.access_token)
         .post(format!(
-            "{server_url}/v1/rooms/{}/connections",
-            room.room_id
+            "{server_url}/v1/projects/{}/connections",
+            project.project_id
         ))
         .json(&json!({
             "repo_root": repo_dir.display().to_string()
@@ -109,20 +116,20 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
         .json()
         .context("failed to parse repo-connection response JSON")?;
 
-    let room_config = RepoRoomConfig {
+    let project_config = RepoProjectConfig {
         api_key: connection.api_key,
         api_key_id: connection.api_key_id,
-        organization_slug: room.organization_slug.clone(),
+        organization_slug: project.organization_slug.clone(),
         server_url,
-        room_id: room.room_id.clone(),
+        project_id: project.project_id.clone(),
     };
 
-    upsert_repo_room_config(&config.home_dir, &repo_dir, room_config)?;
+    upsert_repo_project_config(&config.home_dir, &repo_dir, project_config)?;
     install_repo_hooks(&repo_dir)?;
 
     Ok(JoinOutcome {
-        room_id: connection.room_id,
-        display_name,
+        project_id: connection.project_id,
+        employee_name,
         dashboard_url: connection.dashboard_url,
         repo_dir,
     })

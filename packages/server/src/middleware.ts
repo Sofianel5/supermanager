@@ -33,13 +33,13 @@ export async function resolveOrganizationMembership(
   throw httpError(400, "select an organization first");
 }
 
-export async function requireRoomAccess(db: Db, userId: string, roomId: string) {
-  const room = await db.getRoomWithAccessCheck(roomId, userId);
-  if (!room) {
-    throw httpError(404, `room not found: ${roomId}`);
+export async function requireProjectAccess(db: Db, userId: string, projectId: string) {
+  const project = await db.getProjectWithAccessCheck(projectId, userId);
+  if (!project) {
+    throw httpError(404, `project not found: ${projectId}`);
   }
 
-  return room;
+  return project;
 }
 
 export function httpError(statusCode: number, message: string) {

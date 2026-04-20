@@ -4,7 +4,7 @@ import {
   messageClass,
   pillBaseClass,
   primaryButtonClass,
-  roomMetaClass,
+  projectMetaClass,
   secondaryButtonClass,
   sectionLabelClass,
 } from "../../ui";
@@ -44,7 +44,7 @@ export function DeviceApprovalDialog({
           <p className={`${messageClass} mt-3`}>
             The CLI is requesting access to your session.
           </p>
-          <p className={roomMetaClass}>
+          <p className={projectMetaClass}>
             <span>{userCode}</span>
             {status && (
               <span className={`${pillBaseClass} ${toneClass}`}>

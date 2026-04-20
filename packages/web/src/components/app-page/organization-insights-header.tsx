@@ -7,7 +7,7 @@ import {
   formatOrganizationLabel,
 } from "../../lib/organization";
 import { formatRelativeTime } from "../../lib/format-relative-time";
-import { cx, roomMetaClass, sectionLabelClass } from "../../ui";
+import { cx, projectMetaClass, sectionLabelClass } from "../../ui";
 
 interface OrganizationInsightsHeaderProps {
   organizationName: string | null;
@@ -60,7 +60,7 @@ export function OrganizationInsightsHeader({
         <h1 className="mt-4 max-w-full text-4xl font-semibold leading-none text-ink sm:text-5xl lg:text-6xl">
           {label}
         </h1>
-        <p className={roomMetaClass}>
+        <p className={projectMetaClass}>
           {summaryMeta.map((item) => (
             <span key={item}>{item}</span>
           ))}
@@ -116,12 +116,12 @@ function buildSummaryMeta(
   summaryStatus: SummaryStatus,
 ) {
   const employees = organizationSummary?.employees ?? [];
-  const rooms = organizationSummary?.rooms ?? [];
+  const projects = organizationSummary?.projects ?? [];
   return [
     organizationSummaryUpdatedAt
       ? `updated ${formatRelativeTime(organizationSummaryUpdatedAt)}`
       : describePendingSummary(summaryStatus),
-    formatCount(rooms.length, "room summary", "room summaries"),
+    formatCount(projects.length, "project summary", "project summaries"),
     formatCount(employees.length, "employee summary", "employee summaries"),
   ];
 }

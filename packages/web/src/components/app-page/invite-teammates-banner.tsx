@@ -26,7 +26,7 @@ export function InviteTeammatesBanner({
           Add teammates so this workspace is shared.
         </h2>
         <p className={messageClass}>
-          Invite the rest of the organization so rooms and updates reach the people
+          Invite the rest of the organization so projects and updates reach the people
           who need them.
         </p>
       </div>

@@ -1,36 +1,36 @@
 import type {
-  CreateRoomResponse,
+  CreateProjectResponse,
   FeedResponse,
-  RoomMetadataResponse,
+  ProjectMetadataResponse,
 } from "@supermanager/common/api-protocol";
 import type {
   OrganizationSummaryResponse,
-  RoomListResponse,
-  RoomSummaryResponse,
+  ProjectListResponse,
+  ProjectSummaryResponse,
   ViewerResponse,
 } from "@supermanager/common/http-types";
 
 export type {
-  CreateRoomRequest,
-  CreateRoomResponse,
+  CreateProjectRequest,
+  CreateProjectResponse,
   FeedResponse,
-  RoomMetadataResponse,
+  ProjectMetadataResponse,
   StoredHookEvent,
 } from "@supermanager/common/api-protocol";
 export type {
   OrganizationMembership,
   OrganizationSummaryResponse,
-  RoomListEntry,
-  RoomListResponse,
-  RoomSummaryResponse,
+  ProjectListEntry,
+  ProjectListResponse,
+  ProjectSummaryResponse,
   ViewerResponse,
   ViewerUser,
 } from "@supermanager/common/http-types";
 export type {
   EmployeeSnapshot,
   OrganizationSnapshot,
-  RoomBlufSnapshot,
-  RoomSnapshot,
+  ProjectBlufSnapshot,
+  ProjectSnapshot,
   SummaryStatus,
 } from "@supermanager/common/summary-protocol";
 
@@ -67,8 +67,8 @@ export function getApiBaseUrl() {
 }
 
 export const api = {
-  createRoom(input: { name: string; organizationSlug?: string | null }) {
-    return requestJson<CreateRoomResponse>("/v1/rooms", {
+  createProject(input: { name: string; organizationSlug?: string | null }) {
+    return requestJson<CreateProjectResponse>("/v1/projects", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -79,27 +79,27 @@ export const api = {
       }),
     });
   },
-  getFeed(roomId: string, opts: { limit?: number; before?: number } = {}) {
+  getFeed(projectId: string, opts: { limit?: number; before?: number } = {}) {
     const params = new URLSearchParams();
     if (opts.limit != null) params.set("limit", String(opts.limit));
     if (opts.before != null) params.set("before", String(opts.before));
     const qs = params.toString();
     const suffix = qs ? `?${qs}` : "";
     return requestJson<FeedResponse>(
-      `/v1/rooms/${encodeURIComponent(roomId)}/feed${suffix}`,
+      `/v1/projects/${encodeURIComponent(projectId)}/feed${suffix}`,
     );
   },
   getMe() {
     return requestJson<ViewerResponse>("/v1/me");
   },
-  getRoom(roomId: string) {
-    return requestJson<RoomMetadataResponse>(
-      `/v1/rooms/${encodeURIComponent(roomId)}`,
+  getProject(projectId: string) {
+    return requestJson<ProjectMetadataResponse>(
+      `/v1/projects/${encodeURIComponent(projectId)}`,
     );
   },
-  getSummary(roomId: string) {
-    return requestJson<RoomSummaryResponse>(
-      `/v1/rooms/${encodeURIComponent(roomId)}/summary`,
+  getSummary(projectId: string) {
+    return requestJson<ProjectSummaryResponse>(
+      `/v1/projects/${encodeURIComponent(projectId)}/summary`,
     );
   },
   getOrganizationSummary(organizationSlug: string) {
@@ -107,17 +107,17 @@ export const api = {
       `/v1/organizations/${encodeURIComponent(organizationSlug)}/summary`,
     );
   },
-  listRooms(organizationSlug?: string) {
+  listProjects(organizationSlug?: string) {
     const params = new URLSearchParams();
     if (organizationSlug) {
       params.set("organization_slug", organizationSlug);
     }
     const qs = params.toString();
-    return requestJson<RoomListResponse>(`/v1/rooms${qs ? `?${qs}` : ""}`);
+    return requestJson<ProjectListResponse>(`/v1/projects${qs ? `?${qs}` : ""}`);
   },
-  openRoomStream(roomId: string) {
+  openProjectStream(projectId: string) {
     return new EventSource(
-      apiUrl(`/v1/rooms/${encodeURIComponent(roomId)}/feed/stream`),
+      apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/feed/stream`),
       { withCredentials: true },
     );
   },

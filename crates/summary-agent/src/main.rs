@@ -44,10 +44,10 @@ struct Cli {
     organization_summary_refresh_interval_seconds: u64,
     #[arg(
         long,
-        env = "SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS",
+        env = "SUPERMANAGER_PROJECT_SUMMARY_POLL_INTERVAL_SECONDS",
         default_value_t = 5
     )]
-    room_summary_poll_interval_seconds: u64,
+    project_summary_poll_interval_seconds: u64,
 }
 
 #[tokio::main]
@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
         command_tx.clone(),
         event_rx,
         Duration::from_secs(cli.organization_summary_refresh_interval_seconds),
-        Duration::from_secs(cli.room_summary_poll_interval_seconds),
+        Duration::from_secs(cli.project_summary_poll_interval_seconds),
     );
     let coordinator_result = coordinator.run().await;
 

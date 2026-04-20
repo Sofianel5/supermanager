@@ -54,7 +54,7 @@ export const copyLabelClass =
 export const pillBaseClass =
   "inline-flex min-h-[30px] items-center border px-3 font-mono text-[11px] uppercase";
 
-export const roomMetaClass =
+export const projectMetaClass =
   "mt-3.5 flex flex-wrap items-center gap-3 font-mono text-[0.8rem] text-ink-dim";
 
 export const statusBlockClass = `${surfaceClass} w-full max-w-[420px] p-[22px]`;

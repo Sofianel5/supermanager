@@ -11,21 +11,21 @@ use tokio::{
 
 use crate::{
     agent::{AgentCommand, AgentEvent, SummaryScope},
-    db::{OrganizationSummaryQueryOptions, RoomSummaryQueryOptions, SummaryDb},
+    db::{OrganizationSummaryQueryOptions, ProjectSummaryQueryOptions, SummaryDb},
 };
 
 const ORGANIZATION_HEARTBEAT_EVENT_LIMIT: i64 = 500;
-const ROOM_SUMMARY_EVENT_LIMIT: i64 = 200;
-const ROOM_SUMMARY_SWEEP_LIMIT: i64 = 50;
+const PROJECT_SUMMARY_EVENT_LIMIT: i64 = 200;
+const PROJECT_SUMMARY_SWEEP_LIMIT: i64 = 50;
 
 pub(crate) struct SummaryCoordinator {
     db: SummaryDb,
     command_tx: mpsc::Sender<AgentCommand>,
     event_rx: mpsc::Receiver<AgentEvent>,
     organization_summary_refresh_interval: Duration,
-    room_summary_poll_interval: Duration,
+    project_summary_poll_interval: Duration,
     pending_organization_heartbeat_cutoff: HashMap<String, String>,
-    pending_room_summary_seq: HashMap<String, i64>,
+    pending_project_summary_seq: HashMap<String, i64>,
 }
 
 impl SummaryCoordinator {
@@ -34,30 +34,30 @@ impl SummaryCoordinator {
         command_tx: mpsc::Sender<AgentCommand>,
         event_rx: mpsc::Receiver<AgentEvent>,
         organization_summary_refresh_interval: Duration,
-        room_summary_poll_interval: Duration,
+        project_summary_poll_interval: Duration,
     ) -> Self {
         Self {
             db,
             command_tx,
             event_rx,
             organization_summary_refresh_interval,
-            room_summary_poll_interval,
+            project_summary_poll_interval,
             pending_organization_heartbeat_cutoff: HashMap::new(),
-            pending_room_summary_seq: HashMap::new(),
+            pending_project_summary_seq: HashMap::new(),
         }
     }
 
     pub(crate) async fn run(&mut self) -> Result<()> {
         tokio::try_join!(
             self.db.reset_generating_organization_summaries(),
-            self.db.reset_generating_room_summaries(),
+            self.db.reset_generating_project_summaries(),
         )?;
 
         self.run_heartbeat_sweep().await?;
-        self.run_room_sweep().await?;
+        self.run_project_sweep().await?;
 
         let mut organization_interval = create_interval(self.organization_summary_refresh_interval);
-        let mut room_interval = create_interval(self.room_summary_poll_interval);
+        let mut project_interval = create_interval(self.project_summary_poll_interval);
         let mut shutdown = Box::pin(shutdown_signal());
 
         loop {
@@ -69,8 +69,8 @@ impl SummaryCoordinator {
                 _ = wait_for_interval(&mut organization_interval) => {
                     self.run_heartbeat_sweep().await?;
                 }
-                _ = wait_for_interval(&mut room_interval) => {
-                    self.run_room_sweep().await?;
+                _ = wait_for_interval(&mut project_interval) => {
+                    self.run_project_sweep().await?;
                 }
                 _ = &mut shutdown => break,
             }
@@ -89,8 +89,8 @@ impl SummaryCoordinator {
                 SummaryScope::Organization => {
                     self.persist_organization_status(&target_id, status).await?;
                 }
-                SummaryScope::Room => {
-                    self.persist_room_status(&target_id, status).await?;
+                SummaryScope::Project => {
+                    self.persist_project_status(&target_id, status).await?;
                 }
             },
         }
@@ -127,26 +127,26 @@ impl SummaryCoordinator {
         Ok(())
     }
 
-    async fn persist_room_status(&mut self, room_id: &str, status: SummaryStatus) -> Result<()> {
+    async fn persist_project_status(&mut self, project_id: &str, status: SummaryStatus) -> Result<()> {
         if status == SummaryStatus::Ready {
-            if let Some(last_processed_seq) = self.pending_room_summary_seq.get(room_id).copied() {
+            if let Some(last_processed_seq) = self.pending_project_summary_seq.get(project_id).copied() {
                 self.db
-                    .set_room_summary_last_processed_seq(room_id, last_processed_seq)
+                    .set_project_summary_last_processed_seq(project_id, last_processed_seq)
                     .await?;
             }
         }
 
-        self.db.set_room_summary_status(room_id, status).await?;
+        self.db.set_project_summary_status(project_id, status).await?;
 
         if matches!(status, SummaryStatus::Ready | SummaryStatus::Error) {
-            self.pending_room_summary_seq.remove(room_id);
+            self.pending_project_summary_seq.remove(project_id);
         }
 
         Ok(())
     }
 
     async fn run_heartbeat_sweep(&mut self) -> Result<()> {
-        let organization_ids = self.db.list_organizations_with_rooms().await?;
+        let organization_ids = self.db.list_organizations_with_projects().await?;
 
         for organization_id in organization_ids {
             if self
@@ -211,9 +211,9 @@ impl SummaryCoordinator {
                     .set_organization_summary_status(target_id, SummaryStatus::Error)
                     .await
             }
-            SummaryScope::Room => {
+            SummaryScope::Project => {
                 self.db
-                    .set_room_summary_status(target_id, SummaryStatus::Error)
+                    .set_project_summary_status(target_id, SummaryStatus::Error)
                     .await
             }
         };
@@ -254,12 +254,12 @@ impl SummaryCoordinator {
             return Ok(());
         }
 
-        let rooms = self.db.list_rooms_for_summary(organization_id).await?;
+        let projects = self.db.list_projects_for_summary(organization_id).await?;
         self.command_tx
             .send(AgentCommand::OrganizationHeartbeat {
                 organization_id: organization_id.to_owned(),
                 events,
-                rooms,
+                projects,
             })
             .await
             .with_context(|| {
@@ -269,76 +269,76 @@ impl SummaryCoordinator {
         Ok(())
     }
 
-    async fn run_room_sweep(&mut self) -> Result<()> {
-        let rooms = self
+    async fn run_project_sweep(&mut self) -> Result<()> {
+        let projects = self
             .db
-            .list_rooms_needing_summary(ROOM_SUMMARY_SWEEP_LIMIT)
+            .list_projects_needing_summary(PROJECT_SUMMARY_SWEEP_LIMIT)
             .await?;
 
-        for room in rooms {
-            if self.pending_room_summary_seq.contains_key(&room.room_id) {
+        for project in projects {
+            if self.pending_project_summary_seq.contains_key(&project.project_id) {
                 continue;
             }
 
-            let claim = match self.db.try_start_room_summary(&room.room_id).await {
+            let claim = match self.db.try_start_project_summary(&project.project_id).await {
                 Ok(Some(claim)) => claim,
                 Ok(None) => continue,
                 Err(error) => {
-                    self.mark_error(SummaryScope::Room, &room.room_id, "claim", &error)
+                    self.mark_error(SummaryScope::Project, &project.project_id, "claim", &error)
                         .await;
                     continue;
                 }
             };
 
             if let Err(error) = self
-                .enqueue_room_summary(&room.room_id, &room.name, claim.last_processed_seq)
+                .enqueue_project_summary(&project.project_id, &project.name, claim.last_processed_seq)
                 .await
             {
-                self.mark_error(SummaryScope::Room, &room.room_id, "enqueue summary", &error)
+                self.mark_error(SummaryScope::Project, &project.project_id, "enqueue summary", &error)
                     .await;
-                self.pending_room_summary_seq.remove(&room.room_id);
+                self.pending_project_summary_seq.remove(&project.project_id);
             }
         }
 
         Ok(())
     }
 
-    async fn enqueue_room_summary(
+    async fn enqueue_project_summary(
         &mut self,
-        room_id: &str,
-        room_name: &str,
+        project_id: &str,
+        project_name: &str,
         last_processed_seq: i64,
     ) -> Result<()> {
         let events = self
             .db
-            .query_room_events_for_summary(
-                room_id,
-                RoomSummaryQueryOptions {
+            .query_project_events_for_summary(
+                project_id,
+                ProjectSummaryQueryOptions {
                     after_seq: Some(last_processed_seq),
-                    limit: Some(ROOM_SUMMARY_EVENT_LIMIT),
+                    limit: Some(PROJECT_SUMMARY_EVENT_LIMIT),
                 },
             )
             .await?;
 
         let Some(last_seq) = events.last().map(|event| event.seq) else {
             self.db
-                .set_room_summary_status(room_id, SummaryStatus::Ready)
+                .set_project_summary_status(project_id, SummaryStatus::Ready)
                 .await?;
             return Ok(());
         };
 
-        self.pending_room_summary_seq
-            .insert(room_id.to_owned(), last_seq);
+        self.pending_project_summary_seq
+            .insert(project_id.to_owned(), last_seq);
 
         for event in events {
             self.command_tx
-                .send(AgentCommand::EnqueueRoomEvent {
-                    room_id: room_id.to_owned(),
-                    room_name: room_name.to_owned(),
+                .send(AgentCommand::EnqueueProjectEvent {
+                    project_id: project_id.to_owned(),
+                    project_name: project_name.to_owned(),
                     event,
                 })
                 .await
-                .with_context(|| format!("failed to send room event for {room_id} to agent"))?;
+                .with_context(|| format!("failed to send project event for {project_id} to agent"))?;
         }
 
         Ok(())
@@ -420,8 +420,8 @@ mod tests {
 
     fn heartbeat_event(received_at: &str) -> OrganizationHeartbeatEvent {
         OrganizationHeartbeatEvent {
-            room_id: "ROOM42".to_owned(),
-            room_name: "Operations".to_owned(),
+            project_id: "PROJECT42".to_owned(),
+            project_name: "Operations".to_owned(),
             event: StoredHookEvent {
                 seq: 1,
                 event_id: Uuid::nil(),

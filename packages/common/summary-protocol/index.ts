@@ -2,6 +2,6 @@
 // Re-run `cargo test -p reporter-protocol` to regenerate.
 export type { EmployeeSnapshot } from "./EmployeeSnapshot";
 export type { OrganizationSnapshot } from "./OrganizationSnapshot";
-export type { RoomBlufSnapshot } from "./RoomBlufSnapshot";
-export type { RoomSnapshot } from "./RoomSnapshot";
+export type { ProjectBlufSnapshot } from "./ProjectBlufSnapshot";
+export type { ProjectSnapshot } from "./ProjectSnapshot";
 export type { SummaryStatus } from "./SummaryStatus";

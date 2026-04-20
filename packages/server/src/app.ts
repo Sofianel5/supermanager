@@ -3,7 +3,7 @@ import { Elysia, status, t } from "elysia";
 
 import {
   HOOK_WRITE_PERMISSIONS,
-  ROOM_CONNECTION_KEY_CONFIG,
+  PROJECT_CONNECTION_KEY_CONFIG,
   type SupermanagerAuth,
 } from "./auth";
 import { trimUrl, type ApiConfig } from "./config";
@@ -11,7 +11,7 @@ import { Db } from "./db";
 import {
   httpError,
   readRequiredHeader,
-  requireRoomAccess,
+  requireProjectAccess,
   requireViewer,
   resolveOrganizationMembership,
 } from "./middleware";
@@ -24,15 +24,15 @@ const DEFAULT_PUBLIC_API_URL = "https://api.supermanager.dev";
 const FEED_PAGE_DEFAULT = 10;
 const FEED_PAGE_MAX = 100;
 
-const roomParams = t.Object({
-  roomId: t.String(),
+const projectParams = t.Object({
+  projectId: t.String(),
 });
 
 const organizationParams = t.Object({
   organizationSlug: t.String(),
 });
 
-const createRoomBody = t.Object({
+const createProjectBody = t.Object({
   name: t.String(),
   organization_slug: t.Optional(t.Nullable(t.String())),
 });
@@ -42,7 +42,7 @@ const createConnectionBody = t.Object({
   repo_root: t.String(),
 });
 
-const listRoomsQuery = t.Object({
+const listProjectsQuery = t.Object({
   organization_slug: t.Optional(t.String()),
 });
 
@@ -147,7 +147,7 @@ export function createApp(context: AppContext) {
       };
     })
     .get(
-      "/v1/rooms",
+      "/v1/projects",
       async ({ query, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
         const membership = await resolveOrganizationMembership(
@@ -159,17 +159,17 @@ export function createApp(context: AppContext) {
 
         return {
           organization_slug: membership.organization_slug,
-          rooms: await context.db.listRoomsForOrganization(
+          projects: await context.db.listProjectsForOrganization(
             membership.organization_id,
           ),
         };
       },
       {
-        query: listRoomsQuery,
+        query: listProjectsQuery,
       },
     )
     .post(
-      "/v1/rooms",
+      "/v1/projects",
       async ({ body, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
         const name = body.name.trim();
@@ -183,28 +183,28 @@ export function createApp(context: AppContext) {
           body.organization_slug ?? undefined,
           viewer.session.activeOrganizationId ?? null,
         );
-        const room = await context.db.createRoom(
+        const project = await context.db.createProject(
           membership.organization_id,
           viewer.user.id,
           name,
         );
 
         return status(201, {
-          room_id: room.room_id,
+          project_id: project.project_id,
           organization_slug: membership.organization_slug,
           dashboard_url: dashboardUrl(
             context.config.publicAppUrl,
-            room.room_id,
+            project.project_id,
           ),
           join_command: cliJoinCommand(
             context.config.publicApiUrl,
-            room.room_id,
+            project.project_id,
             membership.organization_slug,
           ),
         });
       },
       {
-        body: createRoomBody,
+        body: createProjectBody,
       },
     )
     .get(
@@ -227,69 +227,69 @@ export function createApp(context: AppContext) {
       },
     )
     .get(
-      "/v1/rooms/:roomId",
+      "/v1/projects/:projectId",
       async ({ params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(
+        const project = await requireProjectAccess(
           context.db,
           viewer.user.id,
-          params.roomId,
+          params.projectId,
         );
 
         return {
-          room_id: room.room_id,
-          name: room.name,
-          created_at: room.created_at,
-          organization_slug: room.organization_slug,
+          project_id: project.project_id,
+          name: project.name,
+          created_at: project.created_at,
+          organization_slug: project.organization_slug,
           join_command: cliJoinCommand(
             context.config.publicApiUrl,
-            room.room_id,
-            room.organization_slug,
+            project.project_id,
+            project.organization_slug,
           ),
         };
       },
       {
-        params: roomParams,
+        params: projectParams,
       },
     )
     .get(
-      "/v1/rooms/:roomId/feed",
+      "/v1/projects/:projectId/feed",
       async ({ params, query, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(
+        const project = await requireProjectAccess(
           context.db,
           viewer.user.id,
-          params.roomId,
+          params.projectId,
         );
 
         const before = query.before;
         const limit = clampLimit(query.limit);
         const [events, totalCount] = await Promise.all([
-          context.db.getHookEvents(room.room_id, before, undefined, limit),
-          context.db.countHookEvents(room.room_id),
+          context.db.getHookEvents(project.project_id, before, undefined, limit),
+          context.db.countHookEvents(project.project_id),
         ]);
         return { events, total_count: totalCount };
       },
       {
-        params: roomParams,
+        params: projectParams,
         query: feedQuery,
       },
     )
     .get(
-      "/v1/rooms/:roomId/feed/stream",
+      "/v1/projects/:projectId/feed/stream",
       async ({ headers, params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(
+        const project = await requireProjectAccess(
           context.db,
           viewer.user.id,
-          params.roomId,
+          params.projectId,
         );
 
         const replay =
           headers["last-event-id"] == null
             ? []
             : await context.db.getHookEvents(
-                room.room_id,
+                project.project_id,
                 undefined,
                 headers["last-event-id"],
                 undefined,
@@ -297,7 +297,7 @@ export function createApp(context: AppContext) {
 
         replay.reverse();
         const client = context.feedHub.register(
-          room.room_id,
+          project.project_id,
           request.headers.get("origin"),
         );
 
@@ -309,17 +309,17 @@ export function createApp(context: AppContext) {
       },
       {
         headers: feedStreamHeaders,
-        params: roomParams,
+        params: projectParams,
       },
     )
     .post(
-      "/v1/rooms/:roomId/connections",
+      "/v1/projects/:projectId/connections",
       async ({ body, params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(
+        const project = await requireProjectAccess(
           context.db,
           viewer.user.id,
-          params.roomId,
+          params.projectId,
         );
 
         const repoRoot = body.repo_root.trim();
@@ -330,10 +330,10 @@ export function createApp(context: AppContext) {
         const created = await context.auth.api.createApiKey({
           headers: request.headers,
           body: {
-            configId: ROOM_CONNECTION_KEY_CONFIG,
+            configId: PROJECT_CONNECTION_KEY_CONFIG,
             metadata: {
               repoRoot,
-              roomId: room.room_id,
+              projectId: project.project_id,
             },
             name: buildConnectionName(body.name, repoRoot),
           },
@@ -344,14 +344,14 @@ export function createApp(context: AppContext) {
           api_key_id: created.id,
           dashboard_url: dashboardUrl(
             context.config.publicAppUrl,
-            room.room_id,
+            project.project_id,
           ),
-          room_id: room.room_id,
+          project_id: project.project_id,
         });
       },
       {
         body: createConnectionBody,
-        params: roomParams,
+        params: projectParams,
       },
     )
     .post(
@@ -359,7 +359,7 @@ export function createApp(context: AppContext) {
       async ({ body, request }) => {
         const verification = await context.auth.api.verifyApiKey({
           body: {
-            configId: ROOM_CONNECTION_KEY_CONFIG,
+            configId: PROJECT_CONNECTION_KEY_CONFIG,
             key: readRequiredHeader(request.headers, "x-api-key"),
             permissions: HOOK_WRITE_PERMISSIONS,
           },
@@ -375,19 +375,19 @@ export function createApp(context: AppContext) {
           throw httpError(401, "api key user is invalid");
         }
         const hookTarget = await context.db.getHookEventWriteContext(
-          metadata.roomId,
+          metadata.projectId,
           employeeUserId,
         );
-        if (!hookTarget.room) {
-          throw httpError(404, `room not found: ${metadata.roomId}`);
-        }
-        if (!hookTarget.hasAccess) {
-          throw httpError(403, "api key user no longer has room access");
+        if (!hookTarget.project) {
+          throw httpError(404, `project not found: ${metadata.projectId}`);
         }
         if (!hookTarget.userExists) {
           throw httpError(401, "api key user is invalid");
         }
-        const room = hookTarget.room;
+        if (!hookTarget.hasAccess) {
+          throw httpError(403, "api key user no longer has project access");
+        }
+        const project = hookTarget.project;
         const employeeName = hookTarget.employeeName ?? "Unknown member";
 
         const client = body.client.trim();
@@ -403,7 +403,7 @@ export function createApp(context: AppContext) {
           throw httpError(403, "api key repo mismatch");
         }
 
-        const stored = await context.db.insertHookEvent(room.room_id, {
+        const stored = await context.db.insertHookEvent(project.project_id, {
           employee_user_id: employeeUserId,
           employee_name: employeeName,
           client,
@@ -412,7 +412,7 @@ export function createApp(context: AppContext) {
           payload: body.payload,
         });
 
-        context.feedHub.publishHookEvent(room.room_id, stored);
+        context.feedHub.publishHookEvent(project.project_id, stored);
         void indexEventById(context.db, stored.event_id).catch((error) => {
           console.error(
             `[search] failed to index hook event ${stored.event_id}: ${formatError(error)}`,
@@ -429,19 +429,19 @@ export function createApp(context: AppContext) {
       },
     )
     .get(
-      "/v1/rooms/:roomId/summary",
+      "/v1/projects/:projectId/summary",
       async ({ params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
-        const room = await requireRoomAccess(
+        const project = await requireProjectAccess(
           context.db,
           viewer.user.id,
-          params.roomId,
+          params.projectId,
         );
 
-        return context.db.getRoomSummaryResponse(room.room_id);
+        return context.db.getProjectSummaryResponse(project.project_id);
       },
       {
-        params: roomParams,
+        params: projectParams,
       },
     );
 }
@@ -451,20 +451,20 @@ function clampLimit(value: number | undefined): number {
   return Math.min(Math.max(limit, 1), FEED_PAGE_MAX);
 }
 
-function dashboardUrl(appUrl: string, roomId: string): string {
-  return `${trimUrl(appUrl)}/r/${roomId}`;
+function dashboardUrl(appUrl: string, projectId: string): string {
+  return `${trimUrl(appUrl)}/p/${projectId}`;
 }
 
 function cliJoinCommand(
   apiUrl: string,
-  roomId: string,
+  projectId: string,
   organizationSlug: string,
 ): string {
   const normalizedApiUrl = trimUrl(apiUrl);
   const parts = [
     "supermanager",
     "join",
-    roomId,
+    projectId,
     "--org",
     shellQuote(organizationSlug),
   ];
@@ -478,23 +478,23 @@ function cliJoinCommand(
 
 function parseConnectionMetadata(metadata: unknown): {
   repoRoot: string;
-  roomId: string;
+  projectId: string;
 } {
   if (
     metadata &&
     typeof metadata === "object" &&
     "repoRoot" in metadata &&
-    "roomId" in metadata
+    "projectId" in metadata
   ) {
-    const roomId = (metadata as { roomId?: unknown }).roomId;
+    const projectId = (metadata as { projectId?: unknown }).projectId;
     const repoRoot = (metadata as { repoRoot?: unknown }).repoRoot;
     if (
-      typeof roomId === "string" &&
-      roomId.trim() &&
+      typeof projectId === "string" &&
+      projectId.trim() &&
       typeof repoRoot === "string" &&
       repoRoot.trim()
     ) {
-      return { repoRoot, roomId };
+      return { repoRoot, projectId };
     }
   }
 
