@@ -95,7 +95,7 @@ function readBlufPreview(markdown: string) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return preview || "No BLUF yet.";
+  return preview || "No TLDR yet.";
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {

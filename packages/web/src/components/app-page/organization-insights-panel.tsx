@@ -67,11 +67,11 @@ export function OrganizationInsightsPanel({
         <div className="grid gap-6">
           <div className="flex flex-wrap gap-3">
             <span className={`${pillBaseClass} border-border text-ink-dim`}>
-              {employees.length} employee BLUF
+              {employees.length} employee TLDR
               {employees.length === 1 ? "" : "s"}
             </span>
             <span className={`${pillBaseClass} border-border text-ink-dim`}>
-              {roomBlufs.length} room BLUF
+              {roomBlufs.length} room TLDR
               {roomBlufs.length === 1 ? "" : "s"}
             </span>
           </div>
@@ -91,7 +91,7 @@ export function OrganizationInsightsPanel({
               <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <span className={sectionLabelClass}>Employees</span>
                 <span className={`${pillBaseClass} border-border text-ink-dim`}>
-                  {employees.length} BLUF{employees.length === 1 ? "" : "s"}
+                  {employees.length} TLDR{employees.length === 1 ? "" : "s"}
                 </span>
               </div>
 
@@ -107,7 +107,7 @@ export function OrganizationInsightsPanel({
                   ))}
                 </div>
               ) : (
-                <p className={messageClass}>No employee BLUFs yet.</p>
+                <p className={messageClass}>No employee TLDRs yet.</p>
               )}
             </section>
 
@@ -115,7 +115,7 @@ export function OrganizationInsightsPanel({
               <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <span className={sectionLabelClass}>Rooms</span>
                 <span className={`${pillBaseClass} border-border text-ink-dim`}>
-                  {roomBlufs.length} BLUF{roomBlufs.length === 1 ? "" : "s"}
+                  {roomBlufs.length} TLDR{roomBlufs.length === 1 ? "" : "s"}
                 </span>
               </div>
 
@@ -131,7 +131,7 @@ export function OrganizationInsightsPanel({
                   ))}
                 </div>
               ) : (
-                <p className={messageClass}>No room BLUFs yet.</p>
+                <p className={messageClass}>No room TLDRs yet.</p>
               )}
             </section>
           </div>

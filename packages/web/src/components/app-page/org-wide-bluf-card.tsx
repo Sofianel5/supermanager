@@ -25,14 +25,14 @@ export function OrgWideBlufCard({
   return (
     <section className={cx(accentSurfaceClass, "grid gap-4 p-[18px]")}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <span className={sectionLabelClass}>Org-wide BLUF</span>
+        <span className={sectionLabelClass}>Org-wide TLDR</span>
       </div>
 
       {hasBluf ? (
         <MarkdownBlock markdown={organizationSummary!.bluf_markdown} />
       ) : (
         <p className={messageClass}>
-          No organization BLUF yet. New hook activity will build it here.
+          No organization TLDR yet. New hook activity will build it here.
         </p>
       )}
 
