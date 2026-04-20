@@ -199,10 +199,10 @@ impl SummaryDb {
     ) -> Result<Vec<OrganizationHeartbeatProject>> {
         let rows = sqlx::query(
             r#"
-            SELECT project_id, name
+            SELECT id AS project_id, name
             FROM projects
             WHERE organization_id = $1
-            ORDER BY created_at DESC, project_id DESC
+            ORDER BY created_at DESC, id DESC
             "#,
         )
         .bind(organization_id)
@@ -244,7 +244,7 @@ impl SummaryDb {
               h.payload_json,
               h.received_at
             FROM hook_events AS h
-            INNER JOIN projects AS r ON r.project_id = h.project_id
+            INNER JOIN projects AS r ON r.id = h.project_id
             WHERE r.organization_id = $1
               AND ($2::timestamptz IS NULL OR h.received_at > $2::timestamptz)
               AND ($3::timestamptz IS NULL OR h.received_at <= $3::timestamptz)
@@ -294,10 +294,10 @@ impl SummaryDb {
     ) -> Result<Vec<String>> {
         sqlx::query_scalar::<_, String>(
             r#"
-            SELECT project_id
+            SELECT id
             FROM projects
             WHERE organization_id = $1
-            ORDER BY created_at DESC, project_id DESC
+            ORDER BY created_at DESC, id DESC
             "#,
         )
         .bind(organization_id)
@@ -334,14 +334,14 @@ impl SummaryDb {
         let rows = sqlx::query(
             r#"
             SELECT
-              projects.project_id,
+              projects.id AS project_id,
               projects.name
             FROM projects
-            INNER JOIN hook_events ON hook_events.project_id = projects.project_id
-            LEFT JOIN project_summaries ON project_summaries.project_id = projects.project_id
-            GROUP BY projects.project_id, projects.name, project_summaries.last_processed_seq
+            INNER JOIN hook_events ON hook_events.project_id = projects.id
+            LEFT JOIN project_summaries ON project_summaries.project_id = projects.id
+            GROUP BY projects.id, projects.name, project_summaries.last_processed_seq
             HAVING MAX(hook_events.seq) > COALESCE(project_summaries.last_processed_seq, 0)
-            ORDER BY MAX(hook_events.received_at) ASC, projects.project_id ASC
+            ORDER BY MAX(hook_events.received_at) ASC, projects.id ASC
             LIMIT $1
             "#,
         )
@@ -763,13 +763,13 @@ impl SummaryDb {
         let rows = sqlx::query(
             r#"
             SELECT
-              projects.project_id,
+              projects.id AS project_id,
               project_summaries.content_json,
               project_summaries.updated_at
             FROM projects
-            LEFT JOIN project_summaries ON project_summaries.project_id = projects.project_id
+            LEFT JOIN project_summaries ON project_summaries.project_id = projects.id
             WHERE projects.organization_id = $1
-            ORDER BY projects.created_at DESC, projects.project_id DESC
+            ORDER BY projects.created_at DESC, projects.id DESC
             "#,
         )
         .bind(organization_id)
