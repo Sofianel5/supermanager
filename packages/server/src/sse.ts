@@ -34,6 +34,7 @@ export class FeedStreamClient {
     }
 
     this.response = new Response(stream, { headers });
+    this.enqueue(": stream-open\n\n");
     this.keepAliveTimer = setInterval(() => {
       this.enqueue(": keep-alive\n\n");
     }, 15_000);
