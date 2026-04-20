@@ -379,9 +379,11 @@ impl AgentLoop {
         let tool = match target.kind {
             WorkflowKind::OrganizationSummary => SummaryTool::parse_organization(params),
             WorkflowKind::ProjectSummary => SummaryTool::parse_project(params),
-            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => {
-                SummaryTool::parse_organization_workflow_documents(params)
-            }
+            WorkflowKind::ProjectMemoryExtract
+            | WorkflowKind::ProjectMemoryConsolidate
+            | WorkflowKind::ProjectSkills
+            | WorkflowKind::OrganizationMemoryConsolidate
+            | WorkflowKind::OrganizationSkills => SummaryTool::parse_workflow_documents(params),
         };
         let tool = match tool {
             Ok(tool) => tool,
@@ -397,9 +399,9 @@ impl AgentLoop {
             WorkflowKind::ProjectSummary => {
                 self.db.execute_project_tool_call(&target.id, tool).await
             }
-            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => {
+            kind => {
                 self.db
-                    .execute_organization_workflow_tool_call(&target.id, target.kind, tool)
+                    .execute_workflow_tool_call(&target.id, kind, tool)
                     .await
             }
         };

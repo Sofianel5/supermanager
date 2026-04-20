@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::{
     event::{OrganizationEvent, OrganizationProject, OrganizationTranscript},
     tools::SummaryTool,
-    workflow::WorkflowKind,
+    workflow::{WorkflowKind, WorkflowScope},
 };
 
 #[derive(Clone)]
@@ -38,7 +38,7 @@ pub(crate) struct OrganizationSummaryClaim {
     pub(crate) previous_summary_updated_at: Option<String>,
 }
 
-pub(crate) struct OrganizationWorkflowClaim {
+pub(crate) struct WorkflowClaim {
     pub(crate) previous_processed_received_at: Option<String>,
 }
 
@@ -47,7 +47,7 @@ pub(crate) struct ProjectSummaryClaim {
 }
 
 #[derive(Serialize)]
-struct OrganizationWorkflowDocumentRecord {
+struct WorkflowDocumentRecord {
     path: String,
     content: String,
     updated_at: String,
@@ -119,6 +119,14 @@ impl SummaryDb {
         Ok(())
     }
 
+    pub(crate) async fn reset_generating_project_workflows(&self) -> Result<()> {
+        sqlx::query("UPDATE project_workflows SET status = 'error' WHERE status = 'generating'")
+            .execute(&self.pool)
+            .await
+            .context("failed to reset generating project workflows")?;
+        Ok(())
+    }
+
     pub(crate) async fn list_organizations_with_projects(&self) -> Result<Vec<String>> {
         sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT organization_id FROM projects ORDER BY organization_id ASC",
@@ -128,18 +136,21 @@ impl SummaryDb {
         .context("failed to list organizations with projects")
     }
 
-    pub(crate) async fn list_organizations_with_transcripts(&self) -> Result<Vec<String>> {
-        sqlx::query_scalar::<_, String>(
+    pub(crate) async fn list_projects_with_transcripts(&self) -> Result<Vec<OrganizationProject>> {
+        let rows = sqlx::query(
             r#"
-            SELECT DISTINCT projects.organization_id
-            FROM hook_event_transcripts
-            INNER JOIN projects ON projects.project_id = hook_event_transcripts.project_id
-            ORDER BY projects.organization_id ASC
+            SELECT DISTINCT projects.project_id, projects.name
+            FROM projects
+            INNER JOIN hook_event_transcripts
+              ON hook_event_transcripts.project_id = projects.project_id
+            ORDER BY projects.project_id ASC
             "#,
         )
         .fetch_all(&self.pool)
         .await
-        .context("failed to list organizations with transcripts")
+        .context("failed to list projects with transcripts")?;
+
+        rows.into_iter().map(decode_organization_project).collect()
     }
 
     pub(crate) async fn try_start_organization_summary(
@@ -176,52 +187,63 @@ impl SummaryDb {
         .transpose()
     }
 
-    pub(crate) async fn try_start_organization_workflow(
+    pub(crate) async fn try_start_workflow(
         &self,
-        organization_id: &str,
+        subject_id: &str,
         workflow_kind: WorkflowKind,
-    ) -> Result<Option<OrganizationWorkflowClaim>> {
-        let row = sqlx::query(
-            r#"
-            INSERT INTO organization_workflows (
-              organization_id,
-              workflow_kind,
-              status,
-              updated_at,
-              last_processed_received_at
-            )
-            VALUES ($1, $2, 'generating', TO_TIMESTAMP(0), TO_TIMESTAMP(0))
-            ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
-              status = 'generating'
-            WHERE organization_workflows.status <> 'generating'
-            RETURNING last_processed_received_at
-            "#,
-        )
-        .bind(organization_id)
-        .bind(workflow_kind.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to claim organization workflow {} for {organization_id}",
-                workflow_kind.as_str()
-            )
-        })?;
+    ) -> Result<Option<WorkflowClaim>> {
+        let (sql, normalized_id) = match workflow_kind.scope() {
+            WorkflowScope::Organization => (
+                r#"
+                INSERT INTO organization_workflows (
+                  organization_id,
+                  workflow_kind,
+                  status,
+                  updated_at,
+                  last_processed_received_at
+                )
+                VALUES ($1, $2, 'generating', TO_TIMESTAMP(0), TO_TIMESTAMP(0))
+                ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
+                  status = 'generating'
+                WHERE organization_workflows.status <> 'generating'
+                RETURNING last_processed_received_at
+                "#,
+                subject_id.to_owned(),
+            ),
+            WorkflowScope::Project => (
+                r#"
+                INSERT INTO project_workflows (
+                  project_id,
+                  workflow_kind,
+                  status,
+                  updated_at,
+                  last_processed_received_at
+                )
+                VALUES ($1, $2, 'generating', TO_TIMESTAMP(0), TO_TIMESTAMP(0))
+                ON CONFLICT(project_id, workflow_kind) DO UPDATE SET
+                  status = 'generating'
+                WHERE project_workflows.status <> 'generating'
+                RETURNING last_processed_received_at
+                "#,
+                normalize_project_id(subject_id),
+            ),
+        };
+
+        let row = sqlx::query(sql)
+            .bind(&normalized_id)
+            .bind(workflow_kind.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to claim workflow {} for {normalized_id}",
+                    workflow_kind.as_str()
+                )
+            })?;
 
         row.map(|row| {
-            Ok(OrganizationWorkflowClaim {
-                previous_processed_received_at: row
-                    .try_get::<Option<OffsetDateTime>, _>("last_processed_received_at")
-                    .context("failed to decode last_processed_received_at")?
-                    .map(format_timestamp)
-                    .transpose()?
-                    .and_then(|value| {
-                        if value == "1970-01-01T00:00:00Z" {
-                            None
-                        } else {
-                            Some(value)
-                        }
-                    }),
+            Ok(WorkflowClaim {
+                previous_processed_received_at: decode_last_processed_received_at(&row)?,
             })
         })
         .transpose()
@@ -286,189 +308,255 @@ impl SummaryDb {
         Ok(())
     }
 
-    pub(crate) async fn set_organization_workflow_status(
+    pub(crate) async fn set_workflow_status(
         &self,
-        organization_id: &str,
+        subject_id: &str,
         workflow_kind: WorkflowKind,
         status: SummaryStatus,
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO organization_workflows (
-              organization_id,
-              workflow_kind,
-              status,
-              updated_at,
-              last_processed_received_at
-            )
-            VALUES ($1, $2, $3, TO_TIMESTAMP(0), TO_TIMESTAMP(0))
-            ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
-              status = EXCLUDED.status
-            "#,
-        )
-        .bind(organization_id)
-        .bind(workflow_kind.as_str())
-        .bind(status.as_db_str())
-        .execute(&self.pool)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to persist organization workflow status {} for {organization_id}",
-                workflow_kind.as_str()
-            )
-        })?;
+        let (sql, normalized_id) = match workflow_kind.scope() {
+            WorkflowScope::Organization => (
+                r#"
+                INSERT INTO organization_workflows (
+                  organization_id,
+                  workflow_kind,
+                  status,
+                  updated_at,
+                  last_processed_received_at
+                )
+                VALUES ($1, $2, $3, TO_TIMESTAMP(0), TO_TIMESTAMP(0))
+                ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
+                  status = EXCLUDED.status
+                "#,
+                subject_id.to_owned(),
+            ),
+            WorkflowScope::Project => (
+                r#"
+                INSERT INTO project_workflows (
+                  project_id,
+                  workflow_kind,
+                  status,
+                  updated_at,
+                  last_processed_received_at
+                )
+                VALUES ($1, $2, $3, TO_TIMESTAMP(0), TO_TIMESTAMP(0))
+                ON CONFLICT(project_id, workflow_kind) DO UPDATE SET
+                  status = EXCLUDED.status
+                "#,
+                normalize_project_id(subject_id),
+            ),
+        };
+
+        sqlx::query(sql)
+            .bind(&normalized_id)
+            .bind(workflow_kind.as_str())
+            .bind(status.as_db_str())
+            .execute(&self.pool)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to persist workflow status {} for {normalized_id}",
+                    workflow_kind.as_str()
+                )
+            })?;
         Ok(())
     }
 
-    pub(crate) async fn set_organization_workflow_updated_at(
+    pub(crate) async fn set_workflow_updated_at(
         &self,
-        organization_id: &str,
+        subject_id: &str,
         workflow_kind: WorkflowKind,
         updated_at: &str,
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO organization_workflows (
-              organization_id,
-              workflow_kind,
-              status,
-              updated_at,
-              last_processed_received_at
-            )
-            VALUES ($1, $2, 'ready', NOW(), $3::timestamptz)
-            ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
-              updated_at = EXCLUDED.updated_at,
-              last_processed_received_at = GREATEST(
-                organization_workflows.last_processed_received_at,
-                EXCLUDED.last_processed_received_at
-              )
-            "#,
-        )
-        .bind(organization_id)
-        .bind(workflow_kind.as_str())
-        .bind(updated_at)
-        .execute(&self.pool)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to persist organization workflow updated_at {} for {organization_id}",
-                workflow_kind.as_str()
-            )
-        })?;
+        let (sql, normalized_id) = match workflow_kind.scope() {
+            WorkflowScope::Organization => (
+                r#"
+                INSERT INTO organization_workflows (
+                  organization_id,
+                  workflow_kind,
+                  status,
+                  updated_at,
+                  last_processed_received_at
+                )
+                VALUES ($1, $2, 'ready', NOW(), $3::timestamptz)
+                ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
+                  updated_at = EXCLUDED.updated_at,
+                  last_processed_received_at = GREATEST(
+                    organization_workflows.last_processed_received_at,
+                    EXCLUDED.last_processed_received_at
+                  )
+                "#,
+                subject_id.to_owned(),
+            ),
+            WorkflowScope::Project => (
+                r#"
+                INSERT INTO project_workflows (
+                  project_id,
+                  workflow_kind,
+                  status,
+                  updated_at,
+                  last_processed_received_at
+                )
+                VALUES ($1, $2, 'ready', NOW(), $3::timestamptz)
+                ON CONFLICT(project_id, workflow_kind) DO UPDATE SET
+                  updated_at = EXCLUDED.updated_at,
+                  last_processed_received_at = GREATEST(
+                    project_workflows.last_processed_received_at,
+                    EXCLUDED.last_processed_received_at
+                  )
+                "#,
+                normalize_project_id(subject_id),
+            ),
+        };
+
+        sqlx::query(sql)
+            .bind(&normalized_id)
+            .bind(workflow_kind.as_str())
+            .bind(updated_at)
+            .execute(&self.pool)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to persist workflow updated_at {} for {normalized_id}",
+                    workflow_kind.as_str()
+                )
+            })?;
         Ok(())
     }
 
-    async fn list_organization_workflow_documents(
+    async fn list_workflow_documents(
         &self,
-        organization_id: &str,
+        subject_id: &str,
         workflow_kind: WorkflowKind,
-    ) -> Result<Vec<OrganizationWorkflowDocumentRecord>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT document_path, content_text, updated_at
-            FROM organization_workflow_documents
-            WHERE organization_id = $1
-              AND workflow_kind = $2
-            ORDER BY document_path ASC
-            "#,
-        )
-        .bind(organization_id)
-        .bind(workflow_kind.as_str())
-        .fetch_all(&self.pool)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to list organization workflow documents {} for {organization_id}",
-                workflow_kind.as_str()
-            )
-        })?;
+    ) -> Result<Vec<WorkflowDocumentRecord>> {
+        let sql = match workflow_kind.scope() {
+            WorkflowScope::Organization => {
+                r#"
+                SELECT document_path, content_text, updated_at
+                FROM organization_workflow_documents
+                WHERE organization_id = $1
+                  AND workflow_kind = $2
+                ORDER BY document_path ASC
+                "#
+            }
+            WorkflowScope::Project => {
+                r#"
+                SELECT document_path, content_text, updated_at
+                FROM project_workflow_documents
+                WHERE project_id = $1
+                  AND workflow_kind = $2
+                ORDER BY document_path ASC
+                "#
+            }
+        };
 
-        rows.into_iter()
-            .map(|row| {
-                Ok(OrganizationWorkflowDocumentRecord {
-                    path: row
-                        .try_get("document_path")
-                        .context("failed to decode workflow document path")?,
-                    content: row
-                        .try_get("content_text")
-                        .context("failed to decode workflow document content")?,
-                    updated_at: row
-                        .try_get::<OffsetDateTime, _>("updated_at")
-                        .context("failed to decode workflow document updated_at")
-                        .and_then(format_timestamp)?,
-                })
-            })
-            .collect()
+        let rows = sqlx::query(sql)
+            .bind(subject_id)
+            .bind(workflow_kind.storage_kind())
+            .fetch_all(&self.pool)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to list workflow documents {} for {subject_id}",
+                    workflow_kind.as_str()
+                )
+            })?;
+
+        rows.into_iter().map(decode_workflow_document_row).collect()
     }
 
-    async fn upsert_organization_workflow_document(
+    async fn upsert_workflow_document(
         &self,
-        organization_id: &str,
+        subject_id: &str,
         workflow_kind: WorkflowKind,
-        path: &str,
+        normalized_path: &str,
         content: &str,
     ) -> Result<()> {
-        let normalized_path = normalize_workflow_document_path(workflow_kind, path)?;
+        let sql = match workflow_kind.scope() {
+            WorkflowScope::Organization => {
+                r#"
+                INSERT INTO organization_workflow_documents (
+                  organization_id,
+                  workflow_kind,
+                  document_path,
+                  content_text
+                )
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT(organization_id, workflow_kind, document_path) DO UPDATE SET
+                  content_text = EXCLUDED.content_text,
+                  updated_at = NOW()
+                "#
+            }
+            WorkflowScope::Project => {
+                r#"
+                INSERT INTO project_workflow_documents (
+                  project_id,
+                  workflow_kind,
+                  document_path,
+                  content_text
+                )
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT(project_id, workflow_kind, document_path) DO UPDATE SET
+                  content_text = EXCLUDED.content_text,
+                  updated_at = NOW()
+                "#
+            }
+        };
 
-        sqlx::query(
-            r#"
-            INSERT INTO organization_workflow_documents (
-              organization_id,
-              workflow_kind,
-              document_path,
-              content_text
-            )
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT(organization_id, workflow_kind, document_path) DO UPDATE SET
-              content_text = EXCLUDED.content_text,
-              updated_at = NOW()
-            "#,
-        )
-        .bind(organization_id)
-        .bind(workflow_kind.as_str())
-        .bind(&normalized_path)
-        .bind(content)
-        .execute(&self.pool)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to upsert organization workflow document {}:{} for {organization_id}",
-                workflow_kind.as_str(),
-                normalized_path
-            )
-        })?;
+        sqlx::query(sql)
+            .bind(subject_id)
+            .bind(workflow_kind.storage_kind())
+            .bind(normalized_path)
+            .bind(content)
+            .execute(&self.pool)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to upsert workflow document {}:{normalized_path} for {subject_id}",
+                    workflow_kind.as_str()
+                )
+            })?;
 
         Ok(())
     }
 
-    async fn delete_organization_workflow_document(
+    async fn delete_workflow_document(
         &self,
-        organization_id: &str,
+        subject_id: &str,
         workflow_kind: WorkflowKind,
-        path: &str,
+        normalized_path: &str,
     ) -> Result<bool> {
-        let normalized_path = normalize_workflow_document_path(workflow_kind, path)?;
+        let sql = match workflow_kind.scope() {
+            WorkflowScope::Organization => {
+                r#"
+                DELETE FROM organization_workflow_documents
+                WHERE organization_id = $1
+                  AND workflow_kind = $2
+                  AND document_path = $3
+                "#
+            }
+            WorkflowScope::Project => {
+                r#"
+                DELETE FROM project_workflow_documents
+                WHERE project_id = $1
+                  AND workflow_kind = $2
+                  AND document_path = $3
+                "#
+            }
+        };
 
-        let result = sqlx::query(
-            r#"
-            DELETE FROM organization_workflow_documents
-            WHERE organization_id = $1
-              AND workflow_kind = $2
-              AND document_path = $3
-            "#,
-        )
-        .bind(organization_id)
-        .bind(workflow_kind.as_str())
-        .bind(&normalized_path)
-        .execute(&self.pool)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to delete organization workflow document {}:{} for {organization_id}",
-                workflow_kind.as_str(),
-                normalized_path
-            )
-        })?;
+        let result = sqlx::query(sql)
+            .bind(subject_id)
+            .bind(workflow_kind.storage_kind())
+            .bind(normalized_path)
+            .execute(&self.pool)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to delete workflow document {}:{normalized_path} for {subject_id}",
+                    workflow_kind.as_str()
+                )
+            })?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -490,18 +578,7 @@ impl SummaryDb {
         .await
         .with_context(|| format!("failed to list projects for organization {organization_id}"))?;
 
-        rows.into_iter()
-            .map(|row| {
-                Ok(OrganizationProject {
-                    project_id: row
-                        .try_get("project_id")
-                        .context("failed to decode project_id")?,
-                    name: row
-                        .try_get("name")
-                        .context("failed to decode project name")?,
-                })
-            })
-            .collect()
+        rows.into_iter().map(decode_organization_project).collect()
     }
 
     pub(crate) async fn query_organization_events_for_summary(
@@ -557,11 +634,12 @@ impl SummaryDb {
             .collect()
     }
 
-    pub(crate) async fn query_organization_transcripts_for_workflow(
+    pub(crate) async fn query_project_transcripts_for_workflow(
         &self,
-        organization_id: &str,
+        project_id: &str,
         options: OrganizationWorkflowQueryOptions,
     ) -> Result<Vec<OrganizationTranscript>> {
+        let normalized_project_id = normalize_project_id(project_id);
         let rows = sqlx::query(
             r#"
             SELECT
@@ -578,59 +656,24 @@ impl SummaryDb {
               t.content_text
             FROM hook_event_transcripts AS t
             INNER JOIN projects AS r ON r.project_id = t.project_id
-            WHERE r.organization_id = $1
+            WHERE t.project_id = $1
               AND ($2::timestamptz IS NULL OR t.received_at > $2::timestamptz)
               AND ($3::timestamptz IS NULL OR t.received_at <= $3::timestamptz)
             ORDER BY t.received_at ASC, t.session_id ASC
             LIMIT COALESCE($4, 9223372036854775807)
             "#,
         )
-        .bind(organization_id)
+        .bind(&normalized_project_id)
         .bind(options.after_received_at)
         .bind(options.before_received_at)
         .bind(options.limit)
         .fetch_all(&self.pool)
         .await
         .with_context(|| {
-            format!("failed to query organization transcripts for workflow {organization_id}")
+            format!("failed to query project transcripts for workflow {normalized_project_id}")
         })?;
 
-        rows.into_iter()
-            .map(|row| {
-                Ok(OrganizationTranscript {
-                    session_id: row
-                        .try_get("session_id")
-                        .context("failed to decode session_id")?,
-                    project_id: row
-                        .try_get("project_id")
-                        .context("failed to decode project_id")?,
-                    project_name: row
-                        .try_get("project_name")
-                        .context("failed to decode project_name")?,
-                    member_user_id: row
-                        .try_get("member_user_id")
-                        .context("failed to decode member_user_id")?,
-                    member_name: row
-                        .try_get("member_name")
-                        .context("failed to decode member_name")?,
-                    client: row.try_get("client").context("failed to decode client")?,
-                    repo_root: row
-                        .try_get("repo_root")
-                        .context("failed to decode repo_root")?,
-                    branch: row.try_get("branch").context("failed to decode branch")?,
-                    received_at: format_timestamp(
-                        row.try_get::<OffsetDateTime, _>("received_at")
-                            .context("failed to decode received_at")?,
-                    )?,
-                    transcript_path: row
-                        .try_get("transcript_path")
-                        .context("failed to decode transcript_path")?,
-                    transcript_text: row
-                        .try_get("content_text")
-                        .context("failed to decode content_text")?,
-                })
-            })
-            .collect()
+        rows.into_iter().map(map_organization_transcript).collect()
     }
 
     pub(crate) async fn get_organization_summary(
@@ -1087,17 +1130,30 @@ impl SummaryDb {
         }
     }
 
-    pub(crate) async fn execute_organization_workflow_tool_call(
+    pub(crate) async fn execute_workflow_tool_call(
         &self,
-        organization_id: &str,
+        subject_id: &str,
         workflow_kind: WorkflowKind,
         tool: SummaryTool,
     ) -> Result<ToolExecutionResult> {
+        let normalized_id = match workflow_kind.scope() {
+            WorkflowScope::Organization => subject_id.to_owned(),
+            WorkflowScope::Project => normalize_project_id(subject_id),
+        };
         match tool {
-            SummaryTool::OrganizationWorkflowGetSnapshot => {
-                let documents = self
-                    .list_organization_workflow_documents(organization_id, workflow_kind)
-                    .await?;
+            SummaryTool::WorkflowGetSnapshot => {
+                let documents = if workflow_kind.scope() == WorkflowScope::Organization {
+                    let (own, project) = tokio::try_join!(
+                        self.list_workflow_documents(&normalized_id, workflow_kind),
+                        self.list_project_documents_for_organization(&normalized_id, workflow_kind),
+                    )?;
+                    let mut combined = own;
+                    combined.extend(project);
+                    combined
+                } else {
+                    self.list_workflow_documents(&normalized_id, workflow_kind)
+                        .await?
+                };
                 Ok(ToolExecutionResult {
                     success: true,
                     message: serde_json::to_string_pretty(&serde_json::json!({
@@ -1105,34 +1161,28 @@ impl SummaryDb {
                         "path_root": workflow_document_root_label(workflow_kind),
                         "files": documents,
                     }))
-                    .context("failed to serialize organization workflow snapshot")?,
+                    .context("failed to serialize workflow snapshot")?,
                 })
             }
-            SummaryTool::UpsertOrganizationWorkflowFile { path, content } => {
+            SummaryTool::UpsertWorkflowFile { path, content } => {
                 let normalized_path = normalize_workflow_document_path(workflow_kind, &path)?;
-                self.upsert_organization_workflow_document(
-                    organization_id,
+                self.upsert_workflow_document(
+                    &normalized_id,
                     workflow_kind,
                     &normalized_path,
                     &content,
                 )
                 .await?;
-
                 Ok(ToolExecutionResult {
                     success: true,
                     message: format!("upserted {}", normalized_path),
                 })
             }
-            SummaryTool::DeleteOrganizationWorkflowFile { path } => {
+            SummaryTool::DeleteWorkflowFile { path } => {
                 let normalized_path = normalize_workflow_document_path(workflow_kind, &path)?;
                 let deleted = self
-                    .delete_organization_workflow_document(
-                        organization_id,
-                        workflow_kind,
-                        &normalized_path,
-                    )
+                    .delete_workflow_document(&normalized_id, workflow_kind, &normalized_path)
                     .await?;
-
                 Ok(ToolExecutionResult {
                     success: true,
                     message: if deleted {
@@ -1144,9 +1194,63 @@ impl SummaryDb {
             }
             _ => Ok(ToolExecutionResult {
                 success: false,
-                message: "tool is not available for this organization workflow".to_owned(),
+                message: format!(
+                    "tool is not available for {} workflow",
+                    workflow_kind.as_str()
+                ),
             }),
         }
+    }
+
+    async fn list_project_documents_for_organization(
+        &self,
+        organization_id: &str,
+        workflow_kind: WorkflowKind,
+    ) -> Result<Vec<WorkflowDocumentRecord>> {
+        let mirror_kind = match workflow_kind {
+            WorkflowKind::OrganizationMemoryConsolidate => WorkflowKind::ProjectMemoryConsolidate,
+            WorkflowKind::OrganizationSkills => WorkflowKind::ProjectSkills,
+            _ => return Ok(Vec::new()),
+        };
+        let storage_kind = mirror_kind.storage_kind();
+        let exclude_raw = workflow_kind == WorkflowKind::OrganizationMemoryConsolidate;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              d.project_id,
+              d.document_path,
+              d.content_text,
+              d.updated_at
+            FROM project_workflow_documents AS d
+            INNER JOIN projects AS p ON p.project_id = d.project_id
+            WHERE p.organization_id = $1
+              AND d.workflow_kind = $2
+              AND (NOT $3::bool OR NOT starts_with(d.document_path, '_raw/'))
+            ORDER BY d.project_id ASC, d.document_path ASC
+            "#,
+        )
+        .bind(organization_id)
+        .bind(storage_kind)
+        .bind(exclude_raw)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to list cross-project workflow documents {storage_kind} for {organization_id}"
+            )
+        })?;
+
+        rows.into_iter()
+            .map(|row| {
+                let project_id: String = row
+                    .try_get("project_id")
+                    .context("failed to decode project_id")?;
+                let mut record = decode_workflow_document_row(row)?;
+                record.path = format!("projects/{project_id}/{}", record.path);
+                Ok(record)
+            })
+            .collect()
     }
 
     async fn get_stored_organization_summary(
@@ -1392,10 +1496,12 @@ impl MemberSnapshotContainer for OrganizationSnapshot {
 
 fn workflow_document_root_label(workflow_kind: WorkflowKind) -> &'static str {
     match workflow_kind {
-        WorkflowKind::OrganizationMemories => "memories",
-        WorkflowKind::OrganizationSkills => ".codex/skills",
+        WorkflowKind::OrganizationMemoryConsolidate
+        | WorkflowKind::ProjectMemoryExtract
+        | WorkflowKind::ProjectMemoryConsolidate => "memories",
+        WorkflowKind::OrganizationSkills | WorkflowKind::ProjectSkills => ".codex/skills",
         WorkflowKind::OrganizationSummary | WorkflowKind::ProjectSummary => {
-            panic!("workflow does not use organization workflow documents")
+            panic!("workflow does not use workflow documents")
         }
     }
 }
@@ -1421,7 +1527,7 @@ fn normalize_workflow_document_path(workflow_kind: WorkflowKind, path: &str) -> 
             }
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                anyhow::bail!("path must stay within the organization workflow root");
+                anyhow::bail!("path must stay within the workflow root");
             }
         }
     }
@@ -1430,11 +1536,106 @@ fn normalize_workflow_document_path(workflow_kind: WorkflowKind, path: &str) -> 
         anyhow::bail!("path must contain at least one normal path segment");
     }
 
-    if workflow_kind == WorkflowKind::OrganizationSkills && normalized_components.len() < 2 {
-        anyhow::bail!("organization skill files must live under <skill-name>/...");
+    match workflow_kind {
+        WorkflowKind::OrganizationSkills | WorkflowKind::ProjectSkills => {
+            if normalized_components.len() < 2 {
+                anyhow::bail!("skill files must live under <skill-name>/...");
+            }
+        }
+        WorkflowKind::ProjectMemoryExtract => {
+            if normalized_components.first().map(String::as_str) != Some("_raw") {
+                anyhow::bail!(
+                    "memory extract may only write under `_raw/<session_id>.md`"
+                );
+            }
+            if normalized_components.len() != 2 {
+                anyhow::bail!(
+                    "memory extract paths must be exactly `_raw/<session_id>.md`"
+                );
+            }
+        }
+        _ => {}
+    }
+
+    if workflow_kind.scope() == WorkflowScope::Organization
+        && normalized_components.first().map(String::as_str) == Some("projects")
+    {
+        anyhow::bail!(
+            "organization workflows must not write under `projects/<project_id>/...`; that namespace is read-only"
+        );
     }
 
     Ok(normalized_components.join("/"))
+}
+
+fn decode_organization_project(row: sqlx::postgres::PgRow) -> Result<OrganizationProject> {
+    Ok(OrganizationProject {
+        project_id: row
+            .try_get("project_id")
+            .context("failed to decode project_id")?,
+        name: row
+            .try_get("name")
+            .context("failed to decode project name")?,
+    })
+}
+
+fn decode_last_processed_received_at(row: &sqlx::postgres::PgRow) -> Result<Option<String>> {
+    Ok(row
+        .try_get::<Option<OffsetDateTime>, _>("last_processed_received_at")
+        .context("failed to decode last_processed_received_at")?
+        .map(format_timestamp)
+        .transpose()?
+        .filter(|value| value != "1970-01-01T00:00:00Z"))
+}
+
+fn decode_workflow_document_row(row: sqlx::postgres::PgRow) -> Result<WorkflowDocumentRecord> {
+    Ok(WorkflowDocumentRecord {
+        path: row
+            .try_get("document_path")
+            .context("failed to decode workflow document path")?,
+        content: row
+            .try_get("content_text")
+            .context("failed to decode workflow document content")?,
+        updated_at: row
+            .try_get::<OffsetDateTime, _>("updated_at")
+            .context("failed to decode workflow document updated_at")
+            .and_then(format_timestamp)?,
+    })
+}
+
+fn map_organization_transcript(row: sqlx::postgres::PgRow) -> Result<OrganizationTranscript> {
+    Ok(OrganizationTranscript {
+        session_id: row
+            .try_get("session_id")
+            .context("failed to decode session_id")?,
+        project_id: row
+            .try_get("project_id")
+            .context("failed to decode project_id")?,
+        project_name: row
+            .try_get("project_name")
+            .context("failed to decode project_name")?,
+        member_user_id: row
+            .try_get("member_user_id")
+            .context("failed to decode member_user_id")?,
+        member_name: row
+            .try_get("member_name")
+            .context("failed to decode member_name")?,
+        client: row.try_get("client").context("failed to decode client")?,
+        repo_root: row
+            .try_get("repo_root")
+            .context("failed to decode repo_root")?,
+        branch: row.try_get("branch").context("failed to decode branch")?,
+        received_at: format_timestamp(
+            row.try_get::<OffsetDateTime, _>("received_at")
+                .context("failed to decode received_at")?,
+        )?,
+        transcript_path: row
+            .try_get("transcript_path")
+            .context("failed to decode transcript_path")?,
+        transcript_text: row
+            .try_get("content_text")
+            .context("failed to decode content_text")?,
+    })
 }
 
 fn format_timestamp(timestamp: OffsetDateTime) -> Result<String> {
@@ -1454,18 +1655,22 @@ mod tests {
 
     #[test]
     fn memory_document_paths_are_normalized() {
-        let path =
-            normalize_workflow_document_path(WorkflowKind::OrganizationMemories, "./MEMORY.md")
-                .unwrap();
+        let path = normalize_workflow_document_path(
+            WorkflowKind::OrganizationMemoryConsolidate,
+            "./MEMORY.md",
+        )
+        .unwrap();
 
         assert_eq!(path, "MEMORY.md");
     }
 
     #[test]
     fn workflow_document_paths_reject_parent_segments() {
-        let error =
-            normalize_workflow_document_path(WorkflowKind::OrganizationMemories, "../MEMORY.md")
-                .unwrap_err();
+        let error = normalize_workflow_document_path(
+            WorkflowKind::OrganizationMemoryConsolidate,
+            "../MEMORY.md",
+        )
+        .unwrap_err();
 
         assert!(error.to_string().contains("workflow root"));
     }
@@ -1476,5 +1681,57 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("<skill-name>"));
+    }
+
+    #[test]
+    fn project_skill_documents_require_skill_subdirectories() {
+        let error = normalize_workflow_document_path(WorkflowKind::ProjectSkills, "SKILL.md")
+            .unwrap_err();
+
+        assert!(error.to_string().contains("<skill-name>"));
+    }
+
+    #[test]
+    fn project_memory_extract_requires_raw_prefix() {
+        let error = normalize_workflow_document_path(
+            WorkflowKind::ProjectMemoryExtract,
+            "MEMORY.md",
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("_raw"));
+    }
+
+    #[test]
+    fn project_memory_extract_accepts_raw_session_file() {
+        let path = normalize_workflow_document_path(
+            WorkflowKind::ProjectMemoryExtract,
+            "_raw/sess_abc.md",
+        )
+        .unwrap();
+
+        assert_eq!(path, "_raw/sess_abc.md");
+    }
+
+    #[test]
+    fn organization_workflows_reject_projects_prefix() {
+        let error = normalize_workflow_document_path(
+            WorkflowKind::OrganizationMemoryConsolidate,
+            "projects/PROJECT42/MEMORY.md",
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("projects/"));
+    }
+
+    #[test]
+    fn project_consolidate_allows_memory_summary() {
+        let path = normalize_workflow_document_path(
+            WorkflowKind::ProjectMemoryConsolidate,
+            "memory_summary.md",
+        )
+        .unwrap();
+
+        assert_eq!(path, "memory_summary.md");
     }
 }

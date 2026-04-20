@@ -52,16 +52,34 @@ struct Cli {
     project_summary_poll_interval_seconds: u64,
     #[arg(
         long,
-        env = "SUPERMANAGER_ORGANIZATION_MEMORY_REFRESH_INTERVAL_SECONDS",
-        default_value_t = 86_400
+        env = "SUPERMANAGER_PROJECT_MEMORY_EXTRACT_INTERVAL_SECONDS",
+        default_value_t = 60
     )]
-    organization_memory_refresh_interval_seconds: u64,
+    project_memory_extract_interval_seconds: u64,
     #[arg(
         long,
-        env = "SUPERMANAGER_ORGANIZATION_SKILLS_REFRESH_INTERVAL_SECONDS",
+        env = "SUPERMANAGER_PROJECT_MEMORY_CONSOLIDATE_INTERVAL_SECONDS",
+        default_value_t = 3_600
+    )]
+    project_memory_consolidate_interval_seconds: u64,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_PROJECT_SKILLS_INTERVAL_SECONDS",
         default_value_t = 86_400
     )]
-    organization_skills_refresh_interval_seconds: u64,
+    project_skills_interval_seconds: u64,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_ORGANIZATION_MEMORY_CONSOLIDATE_INTERVAL_SECONDS",
+        default_value_t = 86_400
+    )]
+    organization_memory_consolidate_interval_seconds: u64,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_ORGANIZATION_SKILLS_INTERVAL_SECONDS",
+        default_value_t = 86_400
+    )]
+    organization_skills_interval_seconds: u64,
 }
 
 #[tokio::main]
@@ -115,8 +133,11 @@ async fn main() -> Result<()> {
         event_rx,
         Duration::from_secs(cli.organization_summary_refresh_interval_seconds),
         Duration::from_secs(cli.project_summary_poll_interval_seconds),
-        Duration::from_secs(cli.organization_memory_refresh_interval_seconds),
-        Duration::from_secs(cli.organization_skills_refresh_interval_seconds),
+        Duration::from_secs(cli.project_memory_extract_interval_seconds),
+        Duration::from_secs(cli.project_memory_consolidate_interval_seconds),
+        Duration::from_secs(cli.project_skills_interval_seconds),
+        Duration::from_secs(cli.organization_memory_consolidate_interval_seconds),
+        Duration::from_secs(cli.organization_skills_interval_seconds),
     );
     let coordinator_result = coordinator.run().await;
 
