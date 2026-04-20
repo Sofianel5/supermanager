@@ -5,8 +5,10 @@ use codex_app_server_protocol::{AskForApproval, DynamicToolSpec, SandboxMode};
 
 use crate::{
     prompt::{
-        ORGANIZATION_MEMORY_SYSTEM_PROMPT, ORGANIZATION_SKILLS_SYSTEM_PROMPT,
-        ORGANIZATION_SUMMARY_SYSTEM_PROMPT, PROJECT_SUMMARY_SYSTEM_PROMPT,
+        ORGANIZATION_MEMORY_CONSOLIDATE_SYSTEM_PROMPT, ORGANIZATION_SKILLS_SYSTEM_PROMPT,
+        ORGANIZATION_SUMMARY_SYSTEM_PROMPT, PROJECT_MEMORY_CONSOLIDATE_SYSTEM_PROMPT,
+        PROJECT_MEMORY_EXTRACT_SYSTEM_PROMPT, PROJECT_SKILLS_SYSTEM_PROMPT,
+        PROJECT_SUMMARY_SYSTEM_PROMPT,
     },
     tools::SummaryTool,
 };
@@ -17,8 +19,17 @@ const SUMMARY_MODEL: &str = "gpt-5.4-mini";
 pub(crate) enum WorkflowKind {
     ProjectSummary,
     OrganizationSummary,
-    OrganizationMemories,
+    ProjectMemoryExtract,
+    ProjectMemoryConsolidate,
+    ProjectSkills,
+    OrganizationMemoryConsolidate,
     OrganizationSkills,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorkflowScope {
+    Project,
+    Organization,
 }
 
 impl WorkflowKind {
@@ -26,8 +37,39 @@ impl WorkflowKind {
         match self {
             Self::ProjectSummary => "project_summary",
             Self::OrganizationSummary => "organization_summary",
-            Self::OrganizationMemories => "organization_memories",
+            Self::ProjectMemoryExtract => "project_memory_extract",
+            Self::ProjectMemoryConsolidate => "project_memory_consolidate",
+            Self::ProjectSkills => "project_skills",
+            Self::OrganizationMemoryConsolidate => "organization_memory_consolidate",
             Self::OrganizationSkills => "organization_skills",
+        }
+    }
+
+    /// Whether the workflow is tracked per-project or per-organization.
+    pub(crate) fn scope(self) -> WorkflowScope {
+        match self {
+            Self::ProjectSummary
+            | Self::ProjectMemoryExtract
+            | Self::ProjectMemoryConsolidate
+            | Self::ProjectSkills => WorkflowScope::Project,
+            Self::OrganizationSummary
+            | Self::OrganizationMemoryConsolidate
+            | Self::OrganizationSkills => WorkflowScope::Organization,
+        }
+    }
+
+    /// Namespace used for shared document storage in {project,organization}_workflow_documents.
+    /// Memory extract + consolidate share one namespace so the consolidator can read
+    /// raw files written by the extractor.
+    pub(crate) fn storage_kind(self) -> &'static str {
+        match self {
+            Self::ProjectMemoryExtract | Self::ProjectMemoryConsolidate => "project_memories",
+            Self::ProjectSkills => "project_skills",
+            Self::OrganizationMemoryConsolidate => "organization_memories",
+            Self::OrganizationSkills => "organization_skills",
+            Self::ProjectSummary | Self::OrganizationSummary => {
+                panic!("workflow does not use workflow document storage")
+            }
         }
     }
 
@@ -35,7 +77,10 @@ impl WorkflowKind {
         match self {
             Self::ProjectSummary => "project-summary",
             Self::OrganizationSummary => "organization-summary",
-            Self::OrganizationMemories => "organization-memories",
+            Self::ProjectMemoryExtract => "project-memory-extract",
+            Self::ProjectMemoryConsolidate => "project-memory-consolidate",
+            Self::ProjectSkills => "project-skills",
+            Self::OrganizationMemoryConsolidate => "organization-memory-consolidate",
             Self::OrganizationSkills => "organization-skills",
         }
     }
@@ -44,7 +89,10 @@ impl WorkflowKind {
         match self {
             Self::ProjectSummary => PROJECT_SUMMARY_SYSTEM_PROMPT,
             Self::OrganizationSummary => ORGANIZATION_SUMMARY_SYSTEM_PROMPT,
-            Self::OrganizationMemories => ORGANIZATION_MEMORY_SYSTEM_PROMPT,
+            Self::ProjectMemoryExtract => PROJECT_MEMORY_EXTRACT_SYSTEM_PROMPT,
+            Self::ProjectMemoryConsolidate => PROJECT_MEMORY_CONSOLIDATE_SYSTEM_PROMPT,
+            Self::ProjectSkills => PROJECT_SKILLS_SYSTEM_PROMPT,
+            Self::OrganizationMemoryConsolidate => ORGANIZATION_MEMORY_CONSOLIDATE_SYSTEM_PROMPT,
             Self::OrganizationSkills => ORGANIZATION_SKILLS_SYSTEM_PROMPT,
         }
     }
@@ -54,12 +102,7 @@ impl WorkflowKind {
     }
 
     pub(crate) fn sandbox(self) -> SandboxMode {
-        match self {
-            Self::ProjectSummary
-            | Self::OrganizationSummary
-            | Self::OrganizationMemories
-            | Self::OrganizationSkills => SandboxMode::ReadOnly,
-        }
+        SandboxMode::ReadOnly
     }
 
     pub(crate) fn approval_policy(self) -> AskForApproval {
@@ -70,7 +113,13 @@ impl WorkflowKind {
         match self {
             Self::ProjectSummary => Some(SummaryTool::project_specs()),
             Self::OrganizationSummary => Some(SummaryTool::organization_specs()),
-            Self::OrganizationMemories => Some(SummaryTool::organization_memory_specs()),
+            Self::ProjectMemoryExtract | Self::ProjectMemoryConsolidate => {
+                Some(SummaryTool::project_memory_specs())
+            }
+            Self::ProjectSkills => Some(SummaryTool::project_skills_specs()),
+            Self::OrganizationMemoryConsolidate => {
+                Some(SummaryTool::organization_memory_specs())
+            }
             Self::OrganizationSkills => Some(SummaryTool::organization_skills_specs()),
         }
     }

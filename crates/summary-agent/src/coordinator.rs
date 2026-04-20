@@ -11,15 +11,16 @@ use crate::{
     agent::{AgentCommand, AgentEvent},
     db::{OrganizationSummaryQueryOptions, ProjectSummaryQueryOptions, SummaryDb, now_rfc3339},
     event::{
-        OrganizationTranscriptRequest, format_organization_memory_request,
+        ProjectSkillsRequest, format_organization_memory_consolidate_request,
         format_organization_skills_request, format_organization_summary_request,
-        format_project_event,
+        format_project_event, format_project_memory_consolidate_request,
+        format_project_memory_extract_request, format_project_skills_request,
     },
     workflow::{WorkflowCursor, WorkflowDispatch, WorkflowKind, WorkflowTarget},
 };
 
 const ORGANIZATION_SUMMARY_EVENT_LIMIT: i64 = 500;
-const ORGANIZATION_TRANSCRIPT_LIMIT: i64 = 24;
+const PROJECT_TRANSCRIPT_LIMIT: i64 = 24;
 const PROJECT_SUMMARY_EVENT_LIMIT: i64 = 200;
 const PROJECT_SUMMARY_SWEEP_LIMIT: i64 = 50;
 
@@ -29,20 +30,27 @@ pub(crate) struct WorkflowCoordinator {
     event_rx: mpsc::Receiver<AgentEvent>,
     organization_summary_refresh_interval: Duration,
     project_summary_poll_interval: Duration,
-    organization_memory_refresh_interval: Duration,
-    organization_skills_refresh_interval: Duration,
+    project_memory_extract_interval: Duration,
+    project_memory_consolidate_interval: Duration,
+    project_skills_interval: Duration,
+    organization_memory_consolidate_interval: Duration,
+    organization_skills_interval: Duration,
     pending_workflow_cursor: HashMap<WorkflowTarget, WorkflowCursor>,
 }
 
 impl WorkflowCoordinator {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         db: SummaryDb,
         command_tx: mpsc::Sender<AgentCommand>,
         event_rx: mpsc::Receiver<AgentEvent>,
         organization_summary_refresh_interval: Duration,
         project_summary_poll_interval: Duration,
-        organization_memory_refresh_interval: Duration,
-        organization_skills_refresh_interval: Duration,
+        project_memory_extract_interval: Duration,
+        project_memory_consolidate_interval: Duration,
+        project_skills_interval: Duration,
+        organization_memory_consolidate_interval: Duration,
+        organization_skills_interval: Duration,
     ) -> Self {
         Self {
             db,
@@ -50,8 +58,11 @@ impl WorkflowCoordinator {
             event_rx,
             organization_summary_refresh_interval,
             project_summary_poll_interval,
-            organization_memory_refresh_interval,
-            organization_skills_refresh_interval,
+            project_memory_extract_interval,
+            project_memory_consolidate_interval,
+            project_skills_interval,
+            organization_memory_consolidate_interval,
+            organization_skills_interval,
             pending_workflow_cursor: HashMap::new(),
         }
     }
@@ -61,22 +72,33 @@ impl WorkflowCoordinator {
             self.db.reset_generating_organization_summaries(),
             self.db.reset_generating_project_summaries(),
             self.db.reset_generating_organization_workflows(),
+            self.db.reset_generating_project_workflows(),
         )?;
 
         self.run_organization_summary_sweep().await?;
         self.run_project_summary_sweep().await?;
-        self.run_organization_transcript_sweep(WorkflowKind::OrganizationMemories)
+        self.run_project_transcript_sweep(WorkflowKind::ProjectMemoryExtract)
             .await?;
-        self.run_organization_transcript_sweep(WorkflowKind::OrganizationSkills)
+        self.run_project_periodic_sweep(WorkflowKind::ProjectMemoryConsolidate)
+            .await?;
+        self.run_project_transcript_sweep(WorkflowKind::ProjectSkills)
+            .await?;
+        self.run_organization_periodic_sweep(WorkflowKind::OrganizationMemoryConsolidate)
+            .await?;
+        self.run_organization_periodic_sweep(WorkflowKind::OrganizationSkills)
             .await?;
 
         let mut organization_summary_interval =
             create_interval(self.organization_summary_refresh_interval);
         let mut project_summary_interval = create_interval(self.project_summary_poll_interval);
-        let mut organization_memory_interval =
-            create_interval(self.organization_memory_refresh_interval);
-        let mut organization_skills_interval =
-            create_interval(self.organization_skills_refresh_interval);
+        let mut project_memory_extract_interval =
+            create_interval(self.project_memory_extract_interval);
+        let mut project_memory_consolidate_interval =
+            create_interval(self.project_memory_consolidate_interval);
+        let mut project_skills_interval = create_interval(self.project_skills_interval);
+        let mut organization_memory_consolidate_interval =
+            create_interval(self.organization_memory_consolidate_interval);
+        let mut organization_skills_interval = create_interval(self.organization_skills_interval);
         let mut shutdown = Box::pin(shutdown_signal());
 
         loop {
@@ -91,11 +113,20 @@ impl WorkflowCoordinator {
                 _ = wait_for_interval(&mut project_summary_interval) => {
                     self.run_project_summary_sweep().await?;
                 }
-                _ = wait_for_interval(&mut organization_memory_interval) => {
-                    self.run_organization_transcript_sweep(WorkflowKind::OrganizationMemories).await?;
+                _ = wait_for_interval(&mut project_memory_extract_interval) => {
+                    self.run_project_transcript_sweep(WorkflowKind::ProjectMemoryExtract).await?;
+                }
+                _ = wait_for_interval(&mut project_memory_consolidate_interval) => {
+                    self.run_project_periodic_sweep(WorkflowKind::ProjectMemoryConsolidate).await?;
+                }
+                _ = wait_for_interval(&mut project_skills_interval) => {
+                    self.run_project_transcript_sweep(WorkflowKind::ProjectSkills).await?;
+                }
+                _ = wait_for_interval(&mut organization_memory_consolidate_interval) => {
+                    self.run_organization_periodic_sweep(WorkflowKind::OrganizationMemoryConsolidate).await?;
                 }
                 _ = wait_for_interval(&mut organization_skills_interval) => {
-                    self.run_organization_transcript_sweep(WorkflowKind::OrganizationSkills).await?;
+                    self.run_organization_periodic_sweep(WorkflowKind::OrganizationSkills).await?;
                 }
                 _ = &mut shutdown => break,
             }
@@ -128,17 +159,14 @@ impl WorkflowCoordinator {
                         .set_organization_summary_updated_at(&target.id, &updated_at)
                         .await?;
                 }
-                (
-                    WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills,
-                    WorkflowCursor::ReceivedAt(updated_at),
-                ) => {
-                    self.db
-                        .set_organization_workflow_updated_at(&target.id, target.kind, &updated_at)
-                        .await?;
-                }
                 (WorkflowKind::ProjectSummary, WorkflowCursor::Seq(last_processed_seq)) => {
                     self.db
                         .set_project_summary_last_processed_seq(&target.id, last_processed_seq)
+                        .await?;
+                }
+                (kind, WorkflowCursor::ReceivedAt(updated_at)) => {
+                    self.db
+                        .set_workflow_updated_at(&target.id, kind, &updated_at)
                         .await?;
                 }
                 _ => {}
@@ -156,10 +184,8 @@ impl WorkflowCoordinator {
                     .set_project_summary_status(&target.id, status)
                     .await?;
             }
-            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => {
-                self.db
-                    .set_organization_workflow_status(&target.id, target.kind, status)
-                    .await?;
+            kind => {
+                self.db.set_workflow_status(&target.id, kind, status).await?;
             }
         }
 
@@ -317,25 +343,21 @@ impl WorkflowCoordinator {
         Ok(())
     }
 
-    async fn run_organization_transcript_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
+    async fn run_project_transcript_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
         debug_assert!(matches!(
             kind,
-            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills
+            WorkflowKind::ProjectMemoryExtract | WorkflowKind::ProjectSkills
         ));
 
-        let organization_ids = self.db.list_organizations_with_transcripts().await?;
+        let projects = self.db.list_projects_with_transcripts().await?;
 
-        for organization_id in organization_ids {
-            let target = WorkflowTarget::new(kind, organization_id);
+        for project in projects {
+            let target = WorkflowTarget::new(kind, project.project_id.clone());
             if self.pending_workflow_cursor.contains_key(&target) {
                 continue;
             }
 
-            let claim = match self
-                .db
-                .try_start_organization_workflow(&target.id, kind)
-                .await
-            {
+            let claim = match self.db.try_start_workflow(&target.id, kind).await {
                 Ok(Some(claim)) => claim,
                 Ok(None) => continue,
                 Err(error) => {
@@ -345,8 +367,9 @@ impl WorkflowCoordinator {
             };
 
             if let Err(error) = self
-                .enqueue_organization_transcript_workflow(
+                .enqueue_project_transcript_workflow(
                     &target,
+                    &project.name,
                     claim.previous_processed_received_at,
                 )
                 .await
@@ -359,20 +382,21 @@ impl WorkflowCoordinator {
         Ok(())
     }
 
-    async fn enqueue_organization_transcript_workflow(
+    async fn enqueue_project_transcript_workflow(
         &mut self,
         target: &WorkflowTarget,
+        project_name: &str,
         previous_processed_received_at: Option<String>,
     ) -> Result<()> {
         let heartbeat_cutoff = now_rfc3339()?;
         let transcripts = self
             .db
-            .query_organization_transcripts_for_workflow(
+            .query_project_transcripts_for_workflow(
                 &target.id,
                 OrganizationSummaryQueryOptions {
                     after_received_at: previous_processed_received_at.clone(),
                     before_received_at: Some(heartbeat_cutoff.clone()),
-                    limit: Some(ORGANIZATION_TRANSCRIPT_LIMIT),
+                    limit: Some(PROJECT_TRANSCRIPT_LIMIT),
                 },
             )
             .await?;
@@ -382,7 +406,7 @@ impl WorkflowCoordinator {
                 .iter()
                 .map(|transcript| transcript.received_at.as_str())
                 .collect::<Vec<_>>(),
-            ORGANIZATION_TRANSCRIPT_LIMIT,
+            PROJECT_TRANSCRIPT_LIMIT,
             &heartbeat_cutoff,
         );
         self.pending_workflow_cursor.insert(
@@ -396,24 +420,177 @@ impl WorkflowCoordinator {
             return Ok(());
         }
 
-        let projects = self.db.list_projects_for_summary(&target.id).await?;
-        let request = OrganizationTranscriptRequest {
-            projects: &projects,
-            transcripts: &transcripts,
-            previous_processed_received_at: previous_processed_received_at.as_deref(),
-            heartbeat_cutoff: &heartbeat_cutoff,
-        };
-        let input = match target.kind {
-            WorkflowKind::OrganizationMemories => format_organization_memory_request(request)?,
-            WorkflowKind::OrganizationSkills => format_organization_skills_request(request)?,
+        match target.kind {
+            WorkflowKind::ProjectMemoryExtract => {
+                for transcript in &transcripts {
+                    self.dispatch_workflow(WorkflowDispatch {
+                        target: target.clone(),
+                        input: format_project_memory_extract_request(transcript)?,
+                    })
+                    .await?;
+                }
+                Ok(())
+            }
+            WorkflowKind::ProjectSkills => {
+                let project = crate::event::OrganizationProject {
+                    project_id: target.id.clone(),
+                    name: project_name.to_owned(),
+                };
+                self.dispatch_workflow(WorkflowDispatch {
+                    target: target.clone(),
+                    input: format_project_skills_request(ProjectSkillsRequest {
+                        project: &project,
+                        transcripts: &transcripts,
+                        previous_processed_received_at: previous_processed_received_at.as_deref(),
+                        heartbeat_cutoff: &heartbeat_cutoff,
+                    })?,
+                })
+                .await
+            }
             _ => unreachable!(),
-        };
+        }
+    }
 
-        self.dispatch_workflow(WorkflowDispatch {
-            target: target.clone(),
-            input,
-        })
-        .await
+    async fn run_project_periodic_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
+        debug_assert!(matches!(kind, WorkflowKind::ProjectMemoryConsolidate));
+
+        let projects = self.db.list_projects_with_transcripts().await?;
+
+        for project in projects {
+            let target = WorkflowTarget::new(kind, project.project_id.clone());
+            if self.pending_workflow_cursor.contains_key(&target) {
+                continue;
+            }
+
+            match self.db.try_start_workflow(&target.id, kind).await {
+                Ok(Some(_)) => {}
+                Ok(None) => continue,
+                Err(error) => {
+                    self.mark_error(&target, "claim", &error).await;
+                    continue;
+                }
+            }
+
+            let heartbeat_cutoff = match now_rfc3339() {
+                Ok(value) => value,
+                Err(error) => {
+                    self.mark_error(&target, "heartbeat", &error).await;
+                    continue;
+                }
+            };
+
+            self.pending_workflow_cursor.insert(
+                target.clone(),
+                WorkflowCursor::ReceivedAt(heartbeat_cutoff.clone()),
+            );
+
+            let org_project = crate::event::OrganizationProject {
+                project_id: target.id.clone(),
+                name: project.name.clone(),
+            };
+            let input = match format_project_memory_consolidate_request(
+                &org_project,
+                &heartbeat_cutoff,
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.mark_error(&target, "format", &error).await;
+                    self.pending_workflow_cursor.remove(&target);
+                    continue;
+                }
+            };
+
+            if let Err(error) = self
+                .dispatch_workflow(WorkflowDispatch {
+                    target: target.clone(),
+                    input,
+                })
+                .await
+            {
+                self.mark_error(&target, "enqueue", &error).await;
+                self.pending_workflow_cursor.remove(&target);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn run_organization_periodic_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
+        debug_assert!(matches!(
+            kind,
+            WorkflowKind::OrganizationMemoryConsolidate | WorkflowKind::OrganizationSkills
+        ));
+
+        let organization_ids = self.db.list_organizations_with_projects().await?;
+
+        for organization_id in organization_ids {
+            let target = WorkflowTarget::new(kind, organization_id);
+            if self.pending_workflow_cursor.contains_key(&target) {
+                continue;
+            }
+
+            match self.db.try_start_workflow(&target.id, kind).await {
+                Ok(Some(_)) => {}
+                Ok(None) => continue,
+                Err(error) => {
+                    self.mark_error(&target, "claim", &error).await;
+                    continue;
+                }
+            };
+
+            let heartbeat_cutoff = match now_rfc3339() {
+                Ok(value) => value,
+                Err(error) => {
+                    self.mark_error(&target, "heartbeat", &error).await;
+                    continue;
+                }
+            };
+
+            self.pending_workflow_cursor.insert(
+                target.clone(),
+                WorkflowCursor::ReceivedAt(heartbeat_cutoff.clone()),
+            );
+
+            let projects = match self.db.list_projects_for_summary(&target.id).await {
+                Ok(value) => value,
+                Err(error) => {
+                    self.mark_error(&target, "list projects", &error).await;
+                    self.pending_workflow_cursor.remove(&target);
+                    continue;
+                }
+            };
+
+            let input = match target.kind {
+                WorkflowKind::OrganizationMemoryConsolidate => {
+                    format_organization_memory_consolidate_request(&projects, &heartbeat_cutoff)
+                }
+                WorkflowKind::OrganizationSkills => {
+                    format_organization_skills_request(&projects, &heartbeat_cutoff)
+                }
+                _ => unreachable!(),
+            };
+            let input = match input {
+                Ok(value) => value,
+                Err(error) => {
+                    self.mark_error(&target, "format", &error).await;
+                    self.pending_workflow_cursor.remove(&target);
+                    continue;
+                }
+            };
+
+            if let Err(error) = self
+                .dispatch_workflow(WorkflowDispatch {
+                    target: target.clone(),
+                    input,
+                })
+                .await
+            {
+                self.mark_error(&target, "enqueue", &error).await;
+                self.pending_workflow_cursor.remove(&target);
+            }
+        }
+
+        Ok(())
     }
 
     async fn dispatch_workflow(&mut self, dispatch: WorkflowDispatch) -> Result<()> {
@@ -441,9 +618,9 @@ impl WorkflowCoordinator {
                     .set_project_summary_status(&target.id, SummaryStatus::Error)
                     .await
             }
-            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => {
+            kind => {
                 self.db
-                    .set_organization_workflow_status(&target.id, target.kind, SummaryStatus::Error)
+                    .set_workflow_status(&target.id, kind, SummaryStatus::Error)
                     .await
             }
         };

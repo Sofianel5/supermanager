@@ -65,12 +65,12 @@ pub(crate) enum SummaryTool {
         member_user_id: String,
         member_name: String,
     },
-    OrganizationWorkflowGetSnapshot,
-    UpsertOrganizationWorkflowFile {
+    WorkflowGetSnapshot,
+    UpsertWorkflowFile {
         path: String,
         content: String,
     },
-    DeleteOrganizationWorkflowFile {
+    DeleteWorkflowFile {
         path: String,
     },
 }
@@ -170,18 +170,34 @@ impl SummaryTool {
     }
 
     pub(crate) fn organization_memory_specs() -> Vec<DynamicToolSpec> {
-        organization_workflow_specs(
-            "Read the current DB-backed organization memory files before deciding what to change.",
-            "Create or replace one organization memory file. Paths are relative to the organization memory root, for example `MEMORY.md` or `memory_summary.md`.",
-            "Delete one organization memory file by relative path when it is stale or no longer needed.",
+        workflow_document_specs(
+            "Read the current DB-backed organization memory files, including read-only per-project snapshots under `projects/<project_id>/...`.",
+            "Create or replace one organization memory file. Paths are relative to the organization memory root, for example `MEMORY.md`. Do not write under `projects/<project_id>/...`.",
+            "Delete one organization memory file by relative path when it is stale or no longer needed. Do not delete under `projects/<project_id>/...`.",
         )
     }
 
     pub(crate) fn organization_skills_specs() -> Vec<DynamicToolSpec> {
-        organization_workflow_specs(
-            "Read the current DB-backed organization skill files before deciding what to change.",
-            "Create or replace one organization skill file. Paths are relative to the organization skills root, for example `code-review/SKILL.md`.",
-            "Delete one organization skill file by relative path when it is stale or no longer needed.",
+        workflow_document_specs(
+            "Read the current DB-backed organization skill files, including read-only per-project snapshots under `projects/<project_id>/...`.",
+            "Create or replace one organization skill file. Paths are relative to the organization skills root, for example `code-review/SKILL.md`. Do not write under `projects/<project_id>/...`.",
+            "Delete one organization skill file by relative path when it is stale or no longer needed. Do not delete under `projects/<project_id>/...`.",
+        )
+    }
+
+    pub(crate) fn project_memory_specs() -> Vec<DynamicToolSpec> {
+        workflow_document_specs(
+            "Read the current DB-backed project memory files, including `_raw/<session_id>.md` staging candidates.",
+            "Create or replace one project memory file. Paths are relative to the project memory root, for example `MEMORY.md`, `memory_summary.md`, or `_raw/<session_id>.md`.",
+            "Delete one project memory file by relative path when it is stale or no longer needed.",
+        )
+    }
+
+    pub(crate) fn project_skills_specs() -> Vec<DynamicToolSpec> {
+        workflow_document_specs(
+            "Read the current DB-backed project skill files before deciding what to change.",
+            "Create or replace one project skill file. Paths are relative to the project skills root, for example `code-review/SKILL.md`.",
+            "Delete one project skill file by relative path when it is stale or no longer needed.",
         )
     }
 
@@ -257,15 +273,13 @@ impl SummaryTool {
         }
     }
 
-    pub(crate) fn parse_organization_workflow_documents(
-        params: &DynamicToolCallParams,
-    ) -> Result<Self> {
+    pub(crate) fn parse_workflow_documents(params: &DynamicToolCallParams) -> Result<Self> {
         match params.tool.as_str() {
-            "get_snapshot" => Ok(Self::OrganizationWorkflowGetSnapshot),
+            "get_snapshot" => Ok(Self::WorkflowGetSnapshot),
             "upsert_file" => {
                 let args: UpsertWorkflowFileArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid upsert_file arguments")?;
-                Ok(Self::UpsertOrganizationWorkflowFile {
+                Ok(Self::UpsertWorkflowFile {
                     path: args.path,
                     content: args.content,
                 })
@@ -273,9 +287,9 @@ impl SummaryTool {
             "delete_file" => {
                 let args: DeleteWorkflowFileArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid delete_file arguments")?;
-                Ok(Self::DeleteOrganizationWorkflowFile { path: args.path })
+                Ok(Self::DeleteWorkflowFile { path: args.path })
             }
-            other => anyhow::bail!("unknown organization workflow document tool: {other}"),
+            other => anyhow::bail!("unknown workflow document tool: {other}"),
         }
     }
 }
@@ -311,7 +325,7 @@ fn markdown_only_schema() -> Value {
     })
 }
 
-fn organization_workflow_specs(
+fn workflow_document_specs(
     get_snapshot_description: &str,
     upsert_file_description: &str,
     delete_file_description: &str,
