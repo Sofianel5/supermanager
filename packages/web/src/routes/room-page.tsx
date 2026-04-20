@@ -4,6 +4,10 @@ import { Link, useParams } from "react-router-dom";
 import { MarkdownBlock } from "../components/markdown-block";
 import { formatRelativeTime } from "../lib/format-relative-time";
 import {
+  buildOrganizationHref,
+  formatOrganizationLabel,
+} from "../lib/organization";
+import {
   api,
   type FeedResponse,
   type RoomSnapshot,
@@ -999,31 +1003,4 @@ function summaryToneClass(status: UiSummaryStatus) {
     return "border-red-400/30 text-danger";
   }
   return "border-border text-ink-dim";
-}
-
-function buildOrganizationHref(organizationSlug: string | null) {
-  if (!organizationSlug) {
-    return "/app";
-  }
-
-  return `/app?organization=${encodeURIComponent(organizationSlug)}`;
-}
-
-function formatOrganizationLabel(
-  organizationName: string | null,
-  organizationSlug: string | null,
-) {
-  if (organizationName) {
-    return organizationName;
-  }
-
-  if (!organizationSlug) {
-    return "workspace";
-  }
-
-  return organizationSlug
-    .split("-")
-    .filter(Boolean)
-    .map((segment) => segment[0]!.toUpperCase() + segment.slice(1))
-    .join(" ");
 }
