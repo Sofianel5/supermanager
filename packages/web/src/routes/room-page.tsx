@@ -489,12 +489,12 @@ function SummaryContent({
     <div className="grid gap-4">
       <section className={cx(accentSurfaceClass, "p-[18px]")}>
         <div className="mb-3.5 inline-flex font-mono text-[11px] font-semibold uppercase text-accent">
-          BLUF
+          TLDR
         </div>
         {snapshot.bluf_markdown.trim() ? (
           <MarkdownBlock markdown={snapshot.bluf_markdown} />
         ) : (
-          <p className={messageClass}>No BLUF yet.</p>
+          <p className={messageClass}>No TLDR yet.</p>
         )}
       </section>
 
