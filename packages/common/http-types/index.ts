@@ -14,6 +14,7 @@ export interface RoomSummaryResponse {
 
 export interface OrganizationSummaryResponse {
   status: SummaryStatus;
+  updated_at: string | null;
   summary: OrganizationSnapshot;
 }
 

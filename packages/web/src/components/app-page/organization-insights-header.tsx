@@ -1,11 +1,21 @@
 import { DropdownButton } from "../dropdown-button";
 import { Link } from "react-router-dom";
-import { pillBaseClass, roomMetaClass } from "../../ui";
+import type { OrganizationSnapshot, SummaryStatus } from "../../api";
+import { formatCount } from "../../lib/format-count";
+import {
+  buildOrganizationHref,
+  formatOrganizationLabel,
+} from "../../lib/organization";
+import { formatRelativeTime } from "../../lib/format-relative-time";
+import { cx, roomMetaClass, sectionLabelClass } from "../../ui";
 
 interface OrganizationInsightsHeaderProps {
   organizationName: string | null;
   organizationSlug: string | null;
+  organizationSummary: OrganizationSnapshot | null;
+  organizationSummaryUpdatedAt: string | null;
   isSigningOut: boolean;
+  summaryStatus: SummaryStatus;
   onInviteTeammate(): void;
   onOpenDocs(): void;
   onSignOut(): void;
@@ -14,13 +24,25 @@ interface OrganizationInsightsHeaderProps {
 export function OrganizationInsightsHeader({
   organizationName,
   organizationSlug,
+  organizationSummary,
+  organizationSummaryUpdatedAt,
   isSigningOut,
+  summaryStatus,
   onInviteTeammate,
   onOpenDocs,
   onSignOut,
 }: OrganizationInsightsHeaderProps) {
   const organizationHref = buildOrganizationHref(organizationSlug);
-  const label = organizationName || "your org";
+  const label = formatOrganizationLabel(
+    organizationName,
+    organizationSlug,
+    "Your organization",
+  );
+  const summaryMeta = buildSummaryMeta(
+    organizationSummary,
+    organizationSummaryUpdatedAt,
+    summaryStatus,
+  );
 
   return (
     <header className="flex flex-col gap-7 border-b border-border pb-9 pt-7 md:flex-row md:items-start md:justify-between">
@@ -34,16 +56,14 @@ export function OrganizationInsightsHeader({
           </span>
           <span>{`Back to ${label}`}</span>
         </Link>
-        <h1 className="mt-5 max-w-full text-4xl font-semibold leading-none text-ink sm:text-5xl lg:text-6xl">
-          Org insights
+        <div className={cx(sectionLabelClass, "mt-6")}>Org insights</div>
+        <h1 className="mt-4 max-w-full text-4xl font-semibold leading-none text-ink sm:text-5xl lg:text-6xl">
+          {label}
         </h1>
         <p className={roomMetaClass}>
-          <span>{label}</span>
-          {organizationSlug && (
-            <span className={`${pillBaseClass} border-border text-ink-dim`}>
-              {organizationSlug}
-            </span>
-          )}
+          {summaryMeta.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
         </p>
       </div>
 
@@ -90,10 +110,29 @@ export function OrganizationInsightsHeader({
   );
 }
 
-function buildOrganizationHref(organizationSlug: string | null) {
-  if (!organizationSlug) {
-    return "/app";
-  }
+function buildSummaryMeta(
+  organizationSummary: OrganizationSnapshot | null,
+  organizationSummaryUpdatedAt: string | null,
+  summaryStatus: SummaryStatus,
+) {
+  const employees = organizationSummary?.employees ?? [];
+  const rooms = organizationSummary?.rooms ?? [];
+  return [
+    organizationSummaryUpdatedAt
+      ? `updated ${formatRelativeTime(organizationSummaryUpdatedAt)}`
+      : describePendingSummary(summaryStatus),
+    formatCount(rooms.length, "room summary", "room summaries"),
+    formatCount(employees.length, "employee summary", "employee summaries"),
+  ];
+}
 
-  return `/app?organization=${encodeURIComponent(organizationSlug)}`;
+function describePendingSummary(status: SummaryStatus) {
+  switch (status) {
+    case "generating":
+      return "refreshing now";
+    case "error":
+      return "summary unavailable";
+    default:
+      return "waiting for activity";
+  }
 }

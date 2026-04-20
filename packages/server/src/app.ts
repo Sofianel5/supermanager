@@ -219,14 +219,9 @@ export function createApp(context: AppContext) {
           viewer.session.activeOrganizationId ?? null,
         );
 
-        return {
-          status: await context.db.getOrganizationSummaryStatus(
-            membership.organization_id,
-          ),
-          summary: await context.db.getOrganizationSummary(
-            membership.organization_id,
-          ),
-        };
+        return context.db.getOrganizationSummaryResponse(
+          membership.organization_id,
+        );
       },
       {
         params: organizationParams,

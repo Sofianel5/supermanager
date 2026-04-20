@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { formatCount } from "../../lib/format-count";
 import { formatRelativeTime } from "../../lib/format-relative-time";
 import type {
   EmployeeSnapshot,
@@ -16,11 +17,9 @@ import {
   pillBaseClass,
   sectionLabelClass,
   subduedSurfaceClass,
-  surfaceClass,
 } from "../../ui";
 import { MarkdownBlock } from "../markdown-block";
 import { OrgWideBlufCard } from "./org-wide-bluf-card";
-import { SecondaryActionLink } from "./secondary-action-link";
 
 interface OrganizationInsightsPanelProps {
   activeOrganization: OrganizationMembership | null;
@@ -56,7 +55,7 @@ export function OrganizationInsightsPanel({
   }, []);
 
   return (
-    <section className={cx(surfaceClass, "mt-7 p-[22px]")}>
+    <section className="mt-7 grid gap-6">
       {error && <p className={errorMessageClass}>{error}</p>}
 
       {isLoading ? (
@@ -65,24 +64,9 @@ export function OrganizationInsightsPanel({
         <p className={errorMessageClass}>Failed to load your workspace.</p>
       ) : (
         <div className="grid gap-6">
-          <div className="flex flex-wrap gap-3">
-            <span className={`${pillBaseClass} border-border text-ink-dim`}>
-              {employees.length} employee TLDR
-              {employees.length === 1 ? "" : "s"}
-            </span>
-            <span className={`${pillBaseClass} border-border text-ink-dim`}>
-              {roomBlufs.length} room TLDR
-              {roomBlufs.length === 1 ? "" : "s"}
-            </span>
-          </div>
-
           <OrgWideBlufCard
-            action={
-              <SecondaryActionLink to="/docs#mcp-setup">
-                Learn more
-              </SecondaryActionLink>
-            }
             organizationSummary={organizationSummary}
+            showStatusMeta
             summaryStatus={summaryStatus}
           />
 
@@ -91,7 +75,7 @@ export function OrganizationInsightsPanel({
               <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <span className={sectionLabelClass}>Employees</span>
                 <span className={`${pillBaseClass} border-border text-ink-dim`}>
-                  {employees.length} TLDR{employees.length === 1 ? "" : "s"}
+                  {formatCount(employees.length, "summary", "summaries")}
                 </span>
               </div>
 
@@ -107,7 +91,7 @@ export function OrganizationInsightsPanel({
                   ))}
                 </div>
               ) : (
-                <p className={messageClass}>No employee TLDRs yet.</p>
+                <p className={messageClass}>No employee summaries yet.</p>
               )}
             </section>
 
@@ -115,7 +99,7 @@ export function OrganizationInsightsPanel({
               <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <span className={sectionLabelClass}>Rooms</span>
                 <span className={`${pillBaseClass} border-border text-ink-dim`}>
-                  {roomBlufs.length} TLDR{roomBlufs.length === 1 ? "" : "s"}
+                  {formatCount(roomBlufs.length, "summary", "summaries")}
                 </span>
               </div>
 
@@ -131,7 +115,7 @@ export function OrganizationInsightsPanel({
                   ))}
                 </div>
               ) : (
-                <p className={messageClass}>No room TLDRs yet.</p>
+                <p className={messageClass}>No room summaries yet.</p>
               )}
             </section>
           </div>

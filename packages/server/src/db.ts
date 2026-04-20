@@ -2,6 +2,7 @@ import {
   type EmployeeSnapshot,
   type HookTurnReport,
   type OrganizationMembership,
+  type OrganizationSummaryResponse,
   type OrganizationSnapshot,
   type RoomListEntry,
   type RoomBlufSnapshot,
@@ -68,6 +69,8 @@ interface CountRow {
 
 interface SummaryRow {
   content_json?: OrganizationSnapshot;
+  status?: string | null;
+  updated_at?: string | Date | null;
 }
 
 interface RoomSummaryRow {
@@ -76,10 +79,6 @@ interface RoomSummaryRow {
   last_processed_seq?: unknown;
   status: unknown;
   updated_at?: unknown;
-}
-
-interface SummaryStatusRow {
-  status: unknown;
 }
 
 export interface RoomRecord extends RoomListEntry {
@@ -408,17 +407,21 @@ export class Db {
     return row == null ? 0 : toNumber(row.count);
   }
 
-  async getOrganizationSummary(
+  async getOrganizationSummaryResponse(
     organizationId: string,
-  ): Promise<OrganizationSnapshot> {
-    const [snapshot, rooms] = await Promise.all([
-      this.getStoredOrganizationSummary(organizationId),
+  ): Promise<OrganizationSummaryResponse> {
+    const [row, rooms] = await Promise.all([
+      this.getStoredOrganizationSummaryRow(organizationId),
       this.listRoomBlufsForOrganization(organizationId),
     ]);
 
     return {
-      ...snapshot,
-      rooms,
+      status: row ? parseSummaryStatus(row.status) : "ready",
+      updated_at: toOptionalRfc3339(row?.updated_at),
+      summary: {
+        ...normalizeStoredOrganizationSummary(row?.content_json),
+        rooms,
+      },
     };
   }
 
@@ -440,17 +443,6 @@ export class Db {
       status: row ? parseSummaryStatus(row.status) : "ready",
       summary: normalizeStoredRoomSummary(row?.content_json),
     };
-  }
-
-  async getOrganizationSummaryStatus(
-    organizationId: string,
-  ): Promise<SummaryStatus> {
-    const [row] = await this.client<SummaryStatusRow[]>`
-      SELECT status
-      FROM organization_summaries
-      WHERE organization_id = ${organizationId}
-    `;
-    return row ? parseSummaryStatus(row.status) : "ready";
   }
 
   async listRoomBlufsForOrganization(
@@ -480,15 +472,15 @@ export class Db {
     );
   }
 
-  private async getStoredOrganizationSummary(
+  private async getStoredOrganizationSummaryRow(
     organizationId: string,
-  ): Promise<OrganizationSnapshot> {
+  ): Promise<SummaryRow | undefined> {
     const [row] = await this.client<SummaryRow[]>`
-      SELECT content_json
+      SELECT content_json, status, updated_at
       FROM organization_summaries
       WHERE organization_id = ${organizationId}
     `;
-    return normalizeStoredOrganizationSummary(row?.content_json);
+    return row;
   }
 
   private async getStoredRoomSummary(roomId: string): Promise<RoomSnapshot> {

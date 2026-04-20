@@ -158,14 +158,13 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
         organization_slug,
       );
 
+      const summary = await options.db.getOrganizationSummaryResponse(
+        membership.organization_id,
+      );
+
       return jsonToolResult({
         organization_slug: membership.organization_slug,
-        status: await options.db.getOrganizationSummaryStatus(
-          membership.organization_id,
-        ),
-        summary: await options.db.getOrganizationSummary(
-          membership.organization_id,
-        ),
+        ...summary,
       });
     },
   );

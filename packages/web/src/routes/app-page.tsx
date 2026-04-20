@@ -209,9 +209,12 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
               isSigningOut={pendingAction === "sign-out"}
               organizationName={activeOrganization?.organization_name ?? null}
               organizationSlug={activeOrganization?.organization_slug ?? null}
+              organizationSummary={summaryQuery.data?.summary ?? null}
+              organizationSummaryUpdatedAt={summaryQuery.data?.updated_at ?? null}
               onInviteTeammate={() => setIsInviteDialogOpen(true)}
               onOpenDocs={openDocs}
               onSignOut={() => void handleSignOut()}
+              summaryStatus={summaryStatus}
             />
           ) : (
             <WorkspaceHeader

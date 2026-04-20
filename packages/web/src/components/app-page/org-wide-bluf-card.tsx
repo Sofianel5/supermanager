@@ -12,12 +12,14 @@ import { MarkdownBlock } from "../markdown-block";
 interface OrgWideBlufCardProps {
   action?: ReactNode;
   organizationSummary: OrganizationSnapshot | null;
+  showStatusMeta?: boolean;
   summaryStatus: SummaryStatus;
 }
 
 export function OrgWideBlufCard({
   action,
   organizationSummary,
+  showStatusMeta = false,
   summaryStatus,
 }: OrgWideBlufCardProps) {
   const hasBluf = Boolean(organizationSummary?.bluf_markdown.trim());
@@ -25,14 +27,24 @@ export function OrgWideBlufCard({
   return (
     <section className={cx(accentSurfaceClass, "grid gap-4 p-[18px]")}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <span className={sectionLabelClass}>Org-wide TLDR</span>
+        <span className={sectionLabelClass}>Organization summary</span>
+        {showStatusMeta ? (
+          <div className="flex flex-wrap gap-2">
+            <span className={cx(pillBaseClass, summaryToneClass(summaryStatus))}>
+              {summaryStatusLabel(summaryStatus)}
+            </span>
+            <span className={`${pillBaseClass} border-border text-ink-dim`}>
+              Refreshes every 5 min
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {hasBluf ? (
         <MarkdownBlock markdown={organizationSummary!.bluf_markdown} />
       ) : (
         <p className={messageClass}>
-          No organization TLDR yet. New hook activity will build it here.
+          No organization summary yet. New hook activity will build it here.
         </p>
       )}
 
@@ -41,13 +53,24 @@ export function OrgWideBlufCard({
   );
 }
 
+function summaryStatusLabel(status: SummaryStatus) {
+  switch (status) {
+    case "generating":
+      return "Refreshing";
+    case "error":
+      return "Error";
+    default:
+      return "Ready";
+  }
+}
+
 function summaryToneClass(status: SummaryStatus) {
   switch (status) {
     case "generating":
-      return "border-amber-400/40 bg-amber-400/12 text-amber-100";
+      return "border-accent/30 text-accent";
     case "error":
-      return "border-red-400/40 bg-red-400/12 text-red-100";
+      return "border-red-400/30 text-danger";
     default:
-      return "border-emerald-400/35 bg-emerald-400/12 text-emerald-100";
+      return "border-emerald-400/30 text-success";
   }
 }
