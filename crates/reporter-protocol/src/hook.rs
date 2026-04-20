@@ -27,6 +27,17 @@ pub struct HookTurnReport {
     pub branch: Option<String>,
     #[ts(type = "unknown")]
     pub payload: Value,
+    #[serde(default)]
+    pub transcript: Option<UploadedTranscript>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../packages/common/api-protocol/")]
+pub struct UploadedTranscript {
+    pub transcript_path: String,
+    pub content_text: String,
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

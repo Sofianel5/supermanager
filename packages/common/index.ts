@@ -6,6 +6,7 @@ export type {
   IngestResponse,
   ProjectMetadataResponse,
   StoredHookEvent,
+  UploadedTranscript,
 } from "./api-protocol";
 export type {
   OrganizationMembership,

@@ -92,6 +92,11 @@ interface HookEventInsert {
   repo_root: string;
   branch: string | null;
   payload: unknown;
+  transcript?: {
+    transcript_path: string;
+    content_text: string;
+    truncated: boolean;
+  } | null;
 }
 
 interface HookEventWriteContextRow extends ProjectRow {
@@ -428,41 +433,61 @@ export class Db {
   ): Promise<StoredHookEvent> {
     const normalizedProjectId = normalizeProjectId(projectId);
     const eventId = crypto.randomUUID();
-    const [row] = await this.client<InsertHookEventRow[]>`
-      INSERT INTO hook_events (
-        event_id,
-        project_id,
-        member_user_id,
-        member_name,
-        client,
-        repo_root,
-        branch,
-        payload_json
-      )
-      VALUES (
-        ${eventId},
-        ${normalizedProjectId},
-        ${report.member_user_id},
-        ${report.member_name},
-        ${report.client},
-        ${report.repo_root},
-        ${report.branch},
-        ${report.payload}
-      )
-      RETURNING seq, received_at
-    `;
+    return this.client.begin(async (tx) => {
+      const [row] = await tx<InsertHookEventRow[]>`
+        INSERT INTO hook_events (
+          event_id,
+          project_id,
+          member_user_id,
+          member_name,
+          client,
+          repo_root,
+          branch,
+          payload_json
+        )
+        VALUES (
+          ${eventId},
+          ${normalizedProjectId},
+          ${report.member_user_id},
+          ${report.member_name},
+          ${report.client},
+          ${report.repo_root},
+          ${report.branch},
+          ${report.payload}
+        )
+        RETURNING seq, received_at
+      `;
 
-    return {
-      seq: toNumber(row?.seq),
-      event_id: eventId,
-      received_at: toRfc3339(row?.received_at),
-      member_user_id: report.member_user_id,
-      member_name: report.member_name,
-      client: report.client,
-      repo_root: report.repo_root,
-      branch: report.branch,
-      payload: report.payload,
-    };
+      const transcript = normalizeTranscriptAttachment(report.transcript);
+      if (transcript) {
+        await tx`
+          INSERT INTO hook_event_transcripts (
+            event_id,
+            transcript_path,
+            content_text,
+            truncated
+          )
+          VALUES (
+            ${eventId},
+            ${transcript.transcript_path},
+            ${transcript.content_text},
+            ${transcript.truncated}
+          )
+        `;
+      }
+
+      return {
+        seq: toNumber(row?.seq),
+        event_id: eventId,
+        received_at: toRfc3339(row?.received_at),
+        member_user_id: report.member_user_id,
+        member_name: report.member_name,
+        client: report.client,
+        repo_root: report.repo_root,
+        branch: report.branch,
+        payload: report.payload,
+      };
+    });
   }
 
   async getHookEvents(
@@ -872,6 +897,33 @@ function toOptionalRfc3339(value: unknown): string {
   } catch {
     return "";
   }
+}
+
+function normalizeTranscriptAttachment(
+  transcript:
+    | {
+        transcript_path: string;
+        content_text: string;
+        truncated: boolean;
+      }
+    | null
+    | undefined,
+) {
+  if (transcript == null) {
+    return null;
+  }
+
+  const transcriptPath = transcript.transcript_path.trim();
+  const contentText = transcript.content_text.trim();
+  if (!transcriptPath || !contentText) {
+    return null;
+  }
+
+  return {
+    transcript_path: transcriptPath,
+    content_text: contentText,
+    truncated: Boolean(transcript.truncated),
+  };
 }
 
 function isUniqueViolation(error: unknown): boolean {

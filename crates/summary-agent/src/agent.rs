@@ -1,42 +1,27 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use codex_app_server_client::{InProcessAppServerClient, InProcessServerEvent, TypedRequestError};
 use codex_app_server_protocol::{
-    AskForApproval, ClientRequest, DynamicToolCallOutputContentItem, DynamicToolCallParams,
-    DynamicToolCallResponse, JSONRPCErrorError, RequestId, SandboxMode, ServerNotification,
-    ServerRequest, ThreadResumeParams, ThreadResumeResponse, ThreadStartParams,
-    ThreadStartResponse, TurnStartParams, TurnStartResponse, TurnStatus, TurnSteerParams,
-    TurnSteerResponse, UserInput,
+    ClientRequest, DynamicToolCallOutputContentItem, DynamicToolCallParams,
+    DynamicToolCallResponse, JSONRPCErrorError, RequestId, ServerNotification, ServerRequest,
+    ThreadResumeParams, ThreadResumeResponse, ThreadStartParams, ThreadStartResponse,
+    TurnStartParams, TurnStartResponse, TurnStatus, TurnSteerParams, TurnSteerResponse, UserInput,
 };
-use reporter_protocol::{StoredHookEvent, SummaryStatus};
+use reporter_protocol::SummaryStatus;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::{
     db::SummaryDb,
-    event::{
-        OrganizationHeartbeatEvent, OrganizationHeartbeatProject,
-        format_organization_heartbeat_request, format_project_event,
-    },
-    prompt::{ORGANIZATION_SYSTEM_PROMPT, PROJECT_SYSTEM_PROMPT},
     tools::{SummaryTool, tool_failure},
+    workflow::{WorkflowDispatch, WorkflowKind, WorkflowPaths, WorkflowTarget},
 };
 
-const SUMMARY_MODEL: &str = "gpt-5.4-mini";
 const NO_ACTIVE_TURN_TO_STEER_ERROR: &str = "no active turn to steer";
 
 pub(crate) enum AgentCommand {
-    EnqueueProjectEvent {
-        project_id: String,
-        project_name: String,
-        event: StoredHookEvent,
-    },
-    OrganizationHeartbeat {
-        organization_id: String,
-        events: Vec<OrganizationHeartbeatEvent>,
-        projects: Vec<OrganizationHeartbeatProject>,
-    },
+    DispatchWorkflow(WorkflowDispatch),
     Shutdown,
 }
 
@@ -45,67 +30,15 @@ enum LoopInput {
     Event(Option<InProcessServerEvent>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum SummaryScope {
-    Organization,
-    Project,
-}
-
-impl SummaryScope {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Organization => "organization",
-            Self::Project => "project",
-        }
-    }
-
-    fn directory_name(self) -> &'static str {
-        match self {
-            Self::Organization => "organizations",
-            Self::Project => "projects",
-        }
-    }
-
-    fn system_prompt(self) -> &'static str {
-        match self {
-            Self::Organization => ORGANIZATION_SYSTEM_PROMPT,
-            Self::Project => PROJECT_SYSTEM_PROMPT,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(crate) enum AgentEvent {
-    SummaryStatus {
-        scope: SummaryScope,
-        target_id: String,
+    WorkflowStatus {
+        target: WorkflowTarget,
         status: SummaryStatus,
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct SummaryTarget {
-    scope: SummaryScope,
-    id: String,
-}
-
-impl SummaryTarget {
-    fn organization(organization_id: impl Into<String>) -> Self {
-        Self {
-            scope: SummaryScope::Organization,
-            id: organization_id.into(),
-        }
-    }
-
-    fn project(project_id: impl Into<String>) -> Self {
-        Self {
-            scope: SummaryScope::Project,
-            id: project_id.into(),
-        }
-    }
-}
-
-struct SummaryTargetState {
+struct WorkflowTargetState {
     thread_id: Option<String>,
     active_turn: Option<String>,
 }
@@ -115,10 +48,10 @@ pub(crate) struct AgentLoop {
     command_rx: mpsc::Receiver<AgentCommand>,
     event_tx: mpsc::Sender<AgentEvent>,
     db: SummaryDb,
-    summary_threads_dir: PathBuf,
+    workflow_paths: WorkflowPaths,
     next_request_id: i64,
-    targets: HashMap<SummaryTarget, SummaryTargetState>,
-    thread_to_target: HashMap<String, SummaryTarget>,
+    targets: HashMap<WorkflowTarget, WorkflowTargetState>,
+    thread_to_target: HashMap<String, WorkflowTarget>,
 }
 
 impl AgentLoop {
@@ -127,14 +60,14 @@ impl AgentLoop {
         command_rx: mpsc::Receiver<AgentCommand>,
         event_tx: mpsc::Sender<AgentEvent>,
         db: SummaryDb,
-        summary_threads_dir: PathBuf,
+        workflow_paths: WorkflowPaths,
     ) -> Self {
         Self {
             client,
             command_rx,
             event_tx,
             db,
-            summary_threads_dir,
+            workflow_paths,
             next_request_id: 1,
             targets: HashMap::new(),
             thread_to_target: HashMap::new(),
@@ -153,21 +86,8 @@ impl AgentLoop {
             };
 
             match input {
-                LoopInput::Command(Some(AgentCommand::EnqueueProjectEvent {
-                    project_id,
-                    project_name,
-                    event,
-                })) => {
-                    self.send_project_event(&project_id, &project_name, &event)
-                        .await?;
-                }
-                LoopInput::Command(Some(AgentCommand::OrganizationHeartbeat {
-                    organization_id,
-                    events,
-                    projects,
-                })) => {
-                    self.handle_organization_heartbeat(&organization_id, &projects, &events)
-                        .await?;
+                LoopInput::Command(Some(AgentCommand::DispatchWorkflow(dispatch))) => {
+                    self.dispatch_workflow(dispatch).await?;
                 }
                 LoopInput::Command(Some(AgentCommand::Shutdown)) => break,
                 LoopInput::Command(None) => break,
@@ -212,11 +132,11 @@ impl AgentLoop {
                         JSONRPCErrorError {
                             code: -32000,
                             message: format!(
-                                "unsupported Codex server request during summary generation: {:?}",
+                                "unsupported Codex server request during workflow execution: {:?}",
                                 other
                             ),
                             data: Some(Value::String(
-                                "summary workflows only support dynamic tool calls".to_owned(),
+                                "workflow execution only supports dynamic tool calls".to_owned(),
                             )),
                         },
                     )
@@ -234,17 +154,19 @@ impl AgentLoop {
                 let Some(target) = self.thread_to_target.get(&payload.thread_id).cloned() else {
                     return Ok(());
                 };
-                if let Some(state) = self.targets.get_mut(&target) {
-                    if state.active_turn.as_deref() != Some(payload.turn.id.as_str()) {
-                        return Ok(());
-                    }
-                    state.active_turn = None;
-                    let status = match payload.turn.status {
-                        TurnStatus::Completed => SummaryStatus::Ready,
-                        _ => SummaryStatus::Error,
-                    };
-                    self.emit_summary_status(&target, status).await;
+                let Some(state) = self.targets.get_mut(&target) else {
+                    return Ok(());
+                };
+                if state.active_turn.as_deref() != Some(payload.turn.id.as_str()) {
+                    return Ok(());
                 }
+
+                state.active_turn = None;
+                let status = match payload.turn.status {
+                    TurnStatus::Completed => SummaryStatus::Ready,
+                    _ => SummaryStatus::Error,
+                };
+                self.emit_workflow_status(&target, status).await;
             }
             _ => {}
         }
@@ -252,41 +174,19 @@ impl AgentLoop {
         Ok(())
     }
 
-    async fn send_project_event(
-        &mut self,
-        project_id: &str,
-        project_name: &str,
-        event: &StoredHookEvent,
-    ) -> Result<()> {
-        let target = SummaryTarget::project(project_id.to_owned());
-        let thread_id = self.ensure_thread(&target).await?;
+    async fn dispatch_workflow(&mut self, dispatch: WorkflowDispatch) -> Result<()> {
+        let thread_id = self.ensure_thread(&dispatch.target).await?;
         let input = vec![UserInput::Text {
-            text: format_project_event(project_id, project_name, event)?,
+            text: dispatch.input,
             text_elements: Vec::new(),
         }];
 
-        self.send_input(&target, thread_id, input).await
-    }
-
-    async fn handle_organization_heartbeat(
-        &mut self,
-        organization_id: &str,
-        projects: &[OrganizationHeartbeatProject],
-        events: &[OrganizationHeartbeatEvent],
-    ) -> Result<()> {
-        let target = SummaryTarget::organization(organization_id.to_owned());
-        let thread_id = self.ensure_thread(&target).await?;
-        let input = vec![UserInput::Text {
-            text: format_organization_heartbeat_request(projects, events)?,
-            text_elements: Vec::new(),
-        }];
-
-        self.send_input(&target, thread_id, input).await
+        self.send_input(&dispatch.target, thread_id, input).await
     }
 
     async fn send_input(
         &mut self,
-        target: &SummaryTarget,
+        target: &WorkflowTarget,
         thread_id: String,
         input: Vec<UserInput>,
     ) -> Result<()> {
@@ -317,9 +217,8 @@ impl AgentLoop {
                 }
                 Err(error) => {
                     eprintln!(
-                        "[summary-agent] steer failed for {} {}: {error}",
-                        target.scope.as_str(),
-                        target.id
+                        "[summary-agent] steer failed for {}: {error}",
+                        target.label()
                     );
                     if !is_stale_active_turn_error(&error) {
                         return Ok(());
@@ -331,7 +230,7 @@ impl AgentLoop {
             }
         }
 
-        self.emit_summary_status(target, SummaryStatus::Generating)
+        self.emit_workflow_status(target, SummaryStatus::Generating)
             .await;
         let request_id = self.next_request_id();
         match self
@@ -353,18 +252,18 @@ impl AgentLoop {
             }
             Err(error) => {
                 eprintln!(
-                    "[summary-agent] turn start failed for {} {}: {error}",
-                    target.scope.as_str(),
-                    target.id
+                    "[summary-agent] turn start failed for {}: {error}",
+                    target.label()
                 );
-                self.emit_summary_status(target, SummaryStatus::Error).await;
+                self.emit_workflow_status(target, SummaryStatus::Error)
+                    .await;
             }
         }
 
         Ok(())
     }
 
-    async fn ensure_thread(&mut self, target: &SummaryTarget) -> Result<String> {
+    async fn ensure_thread(&mut self, target: &WorkflowTarget) -> Result<String> {
         if let Some(thread_id) = self
             .targets
             .get(target)
@@ -373,33 +272,29 @@ impl AgentLoop {
             return Ok(thread_id);
         }
 
-        let target_dir = self
-            .summary_threads_dir
-            .join(target.scope.directory_name())
-            .join(&target.id);
-        let cwd = target_dir.join("cwd");
-        tokio::fs::create_dir_all(&cwd)
+        let target_dir = self.workflow_paths.thread_state_dir(target);
+        tokio::fs::create_dir_all(&target_dir)
             .await
-            .with_context(|| format!("failed to create target cwd: {}", cwd.display()))?;
+            .with_context(|| format!("failed to create target dir: {}", target_dir.display()))?;
+        let cwd = self.workflow_paths.prepare_cwd(target).await?;
         let cwd_str = cwd.display().to_string();
         let thread_id_path = target_dir.join("thread-id");
 
         let stored_thread_id = read_thread_id(&thread_id_path).await?;
         let thread_id = if let Some(thread_id) = stored_thread_id {
-            match self.resume_thread(&thread_id, &cwd_str).await {
+            match self.resume_thread(&thread_id, &cwd_str, target.kind).await {
                 Ok(thread_id) => thread_id,
                 Err(error) => {
                     eprintln!(
-                        "[summary-agent] failed to resume {} thread {} for {}: {error}. Creating new thread.",
-                        target.scope.as_str(),
+                        "[summary-agent] failed to resume workflow thread {} for {}: {error}. Creating new thread.",
                         thread_id,
-                        target.id,
+                        target.label(),
                     );
-                    self.create_thread(target.scope, &cwd_str).await?
+                    self.create_thread(target.kind, &cwd_str).await?
                 }
             }
         } else {
-            self.create_thread(target.scope, &cwd_str).await?
+            self.create_thread(target.kind, &cwd_str).await?
         };
 
         tokio::fs::write(&thread_id_path, &thread_id)
@@ -411,7 +306,7 @@ impl AgentLoop {
         let state = self
             .targets
             .entry(target.clone())
-            .or_insert_with(|| SummaryTargetState {
+            .or_insert_with(|| WorkflowTargetState {
                 thread_id: None,
                 active_turn: None,
             });
@@ -422,36 +317,36 @@ impl AgentLoop {
         Ok(thread_id)
     }
 
-    async fn create_thread(&mut self, scope: SummaryScope, cwd: &str) -> Result<String> {
+    async fn create_thread(&mut self, kind: WorkflowKind, cwd: &str) -> Result<String> {
         let request_id = self.next_request_id();
-        let dynamic_tools = match scope {
-            SummaryScope::Organization => SummaryTool::organization_specs(),
-            SummaryScope::Project => SummaryTool::project_specs(),
-        };
-
         let response = self
             .client
             .request_typed::<ThreadStartResponse>(ClientRequest::ThreadStart {
                 request_id,
                 params: ThreadStartParams {
-                    model: Some(SUMMARY_MODEL.to_owned()),
+                    model: Some(kind.model().to_owned()),
                     cwd: Some(cwd.to_owned()),
-                    approval_policy: Some(AskForApproval::OnRequest),
-                    sandbox: Some(SandboxMode::ReadOnly),
+                    approval_policy: Some(kind.approval_policy()),
+                    sandbox: Some(kind.sandbox()),
                     service_name: Some("supermanager".to_owned()),
-                    base_instructions: Some(scope.system_prompt().to_owned()),
+                    base_instructions: Some(kind.system_prompt().to_owned()),
                     ephemeral: Some(false),
-                    dynamic_tools: Some(dynamic_tools),
+                    dynamic_tools: kind.dynamic_tools(),
                     ..Default::default()
                 },
             })
             .await
-            .context("failed to create Codex summary thread")?;
+            .context("failed to create Codex workflow thread")?;
 
         Ok(response.thread.id)
     }
 
-    async fn resume_thread(&mut self, thread_id: &str, cwd: &str) -> Result<String> {
+    async fn resume_thread(
+        &mut self,
+        thread_id: &str,
+        cwd: &str,
+        kind: WorkflowKind,
+    ) -> Result<String> {
         let request_id = self.next_request_id();
         let response = self
             .client
@@ -460,12 +355,12 @@ impl AgentLoop {
                 params: ThreadResumeParams {
                     thread_id: thread_id.to_owned(),
                     cwd: Some(cwd.to_owned()),
-                    approval_policy: Some(AskForApproval::OnRequest),
+                    approval_policy: Some(kind.approval_policy()),
                     ..Default::default()
                 },
             })
             .await
-            .with_context(|| format!("failed to resume Codex summary thread {thread_id}"))?;
+            .with_context(|| format!("failed to resume Codex workflow thread {thread_id}"))?;
 
         Ok(response.thread.id)
     }
@@ -476,27 +371,33 @@ impl AgentLoop {
     ) -> Result<DynamicToolCallResponse> {
         let Some(target) = self.thread_to_target.get(&params.thread_id).cloned() else {
             return Ok(tool_failure(format!(
-                "unknown summary thread: {}",
+                "unknown workflow thread: {}",
                 params.thread_id
             )));
         };
 
-        let tool = match target.scope {
-            SummaryScope::Organization => SummaryTool::parse_organization(params),
-            SummaryScope::Project => SummaryTool::parse_project(params),
+        let tool = match target.kind {
+            WorkflowKind::OrganizationSummary => SummaryTool::parse_organization(params),
+            WorkflowKind::ProjectSummary => SummaryTool::parse_project(params),
+            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => {
+                return Ok(tool_failure("workflow does not expose dynamic tools"));
+            }
         };
         let tool = match tool {
             Ok(tool) => tool,
             Err(error) => return Ok(tool_failure(error.to_string())),
         };
 
-        let result = match target.scope {
-            SummaryScope::Organization => {
+        let result = match target.kind {
+            WorkflowKind::OrganizationSummary => {
                 self.db
                     .execute_organization_tool_call(&target.id, tool)
                     .await
             }
-            SummaryScope::Project => self.db.execute_project_tool_call(&target.id, tool).await,
+            WorkflowKind::ProjectSummary => {
+                self.db.execute_project_tool_call(&target.id, tool).await
+            }
+            WorkflowKind::OrganizationMemories | WorkflowKind::OrganizationSkills => unreachable!(),
         };
 
         let result = match result {
@@ -512,20 +413,18 @@ impl AgentLoop {
         })
     }
 
-    async fn emit_summary_status(&self, target: &SummaryTarget, status: SummaryStatus) {
+    async fn emit_workflow_status(&self, target: &WorkflowTarget, status: SummaryStatus) {
         if let Err(error) = self
             .event_tx
-            .send(AgentEvent::SummaryStatus {
-                scope: target.scope,
-                target_id: target.id.clone(),
+            .send(AgentEvent::WorkflowStatus {
+                target: target.clone(),
                 status,
             })
             .await
         {
             eprintln!(
-                "[summary-agent] failed to deliver status {status:?} for {} {}: {error}",
-                target.scope.as_str(),
-                target.id,
+                "[summary-agent] failed to deliver status {status:?} for {}: {error}",
+                target.label(),
             );
         }
     }

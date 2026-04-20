@@ -7,3 +7,4 @@ export type { HookTurnReport } from "./HookTurnReport";
 export type { IngestResponse } from "./IngestResponse";
 export type { ProjectMetadataResponse } from "./ProjectMetadataResponse";
 export type { StoredHookEvent } from "./StoredHookEvent";
+export type { UploadedTranscript } from "./UploadedTranscript";

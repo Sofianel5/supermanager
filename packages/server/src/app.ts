@@ -55,11 +55,18 @@ const feedStreamHeaders = t.Object({
   "last-event-id": t.Optional(t.Numeric()),
 });
 
+const uploadedTranscriptBody = t.Object({
+  transcript_path: t.String(),
+  content_text: t.String(),
+  truncated: t.Boolean(),
+});
+
 const hookTurnBody = t.Object({
   client: t.String(),
   repo_root: t.String(),
   branch: t.Optional(t.Nullable(t.String())),
   payload: t.Any(),
+  transcript: t.Optional(t.Nullable(uploadedTranscriptBody)),
 });
 
 export interface AppContext {
@@ -410,6 +417,7 @@ export function createApp(context: AppContext) {
           repo_root: repoRoot,
           branch: body.branch ?? null,
           payload: body.payload,
+          transcript: body.transcript ?? null,
         });
 
         context.feedHub.publishHookEvent(project.project_id, stored);

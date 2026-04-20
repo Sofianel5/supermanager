@@ -15,8 +15,9 @@ use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use crate::{
-    event::{OrganizationHeartbeatEvent, OrganizationHeartbeatProject},
+    event::{OrganizationEvent, OrganizationProject, OrganizationTranscript},
     tools::SummaryTool,
+    workflow::WorkflowKind,
 };
 
 #[derive(Clone)]
@@ -33,6 +34,10 @@ pub(crate) struct OrganizationSummaryClaim {
     pub(crate) previous_summary_updated_at: Option<String>,
 }
 
+pub(crate) struct OrganizationWorkflowClaim {
+    pub(crate) previous_processed_received_at: Option<String>,
+}
+
 pub(crate) struct ProjectSummaryClaim {
     pub(crate) last_processed_seq: i64,
 }
@@ -47,6 +52,8 @@ pub(crate) struct OrganizationSummaryQueryOptions {
     pub(crate) before_received_at: Option<String>,
     pub(crate) limit: Option<i64>,
 }
+
+pub(crate) type OrganizationWorkflowQueryOptions = OrganizationSummaryQueryOptions;
 
 pub(crate) struct ProjectSummaryQueryOptions {
     pub(crate) after_seq: Option<i64>,
@@ -91,6 +98,16 @@ impl SummaryDb {
         Ok(())
     }
 
+    pub(crate) async fn reset_generating_organization_workflows(&self) -> Result<()> {
+        sqlx::query(
+            "UPDATE organization_workflows SET status = 'error' WHERE status = 'generating'",
+        )
+        .execute(&self.pool)
+        .await
+        .context("failed to reset generating organization workflows")?;
+        Ok(())
+    }
+
     pub(crate) async fn list_organizations_with_projects(&self) -> Result<Vec<String>> {
         sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT organization_id FROM projects ORDER BY organization_id ASC",
@@ -98,6 +115,21 @@ impl SummaryDb {
         .fetch_all(&self.pool)
         .await
         .context("failed to list organizations with projects")
+    }
+
+    pub(crate) async fn list_organizations_with_transcripts(&self) -> Result<Vec<String>> {
+        sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT DISTINCT projects.organization_id
+            FROM hook_event_transcripts
+            INNER JOIN hook_events ON hook_events.event_id = hook_event_transcripts.event_id
+            INNER JOIN projects ON projects.project_id = hook_events.project_id
+            ORDER BY projects.organization_id ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list organizations with transcripts")
     }
 
     pub(crate) async fn try_start_organization_summary(
@@ -129,6 +161,57 @@ impl SummaryDb {
                     .context("failed to decode organization summary updated_at")?
                     .map(format_timestamp)
                     .transpose()?,
+            })
+        })
+        .transpose()
+    }
+
+    pub(crate) async fn try_start_organization_workflow(
+        &self,
+        organization_id: &str,
+        workflow_kind: WorkflowKind,
+    ) -> Result<Option<OrganizationWorkflowClaim>> {
+        let row = sqlx::query(
+            r#"
+            INSERT INTO organization_workflows (
+              organization_id,
+              workflow_kind,
+              status,
+              updated_at,
+              last_processed_received_at
+            )
+            VALUES ($1, $2, 'generating', TO_TIMESTAMP(0), TO_TIMESTAMP(0))
+            ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
+              status = 'generating'
+            WHERE organization_workflows.status <> 'generating'
+            RETURNING last_processed_received_at
+            "#,
+        )
+        .bind(organization_id)
+        .bind(workflow_kind_db_str(workflow_kind))
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to claim organization workflow {} for {organization_id}",
+                workflow_kind.as_str()
+            )
+        })?;
+
+        row.map(|row| {
+            Ok(OrganizationWorkflowClaim {
+                previous_processed_received_at: row
+                    .try_get::<Option<OffsetDateTime>, _>("last_processed_received_at")
+                    .context("failed to decode last_processed_received_at")?
+                    .map(format_timestamp)
+                    .transpose()?
+                    .and_then(|value| {
+                        if value == "1970-01-01T00:00:00Z" {
+                            None
+                        } else {
+                            Some(value)
+                        }
+                    }),
             })
         })
         .transpose()
@@ -193,10 +276,82 @@ impl SummaryDb {
         Ok(())
     }
 
+    pub(crate) async fn set_organization_workflow_status(
+        &self,
+        organization_id: &str,
+        workflow_kind: WorkflowKind,
+        status: SummaryStatus,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO organization_workflows (
+              organization_id,
+              workflow_kind,
+              status,
+              updated_at,
+              last_processed_received_at
+            )
+            VALUES ($1, $2, $3, TO_TIMESTAMP(0), TO_TIMESTAMP(0))
+            ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
+              status = EXCLUDED.status
+            "#,
+        )
+        .bind(organization_id)
+        .bind(workflow_kind_db_str(workflow_kind))
+        .bind(status.as_db_str())
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to persist organization workflow status {} for {organization_id}",
+                workflow_kind.as_str()
+            )
+        })?;
+        Ok(())
+    }
+
+    pub(crate) async fn set_organization_workflow_updated_at(
+        &self,
+        organization_id: &str,
+        workflow_kind: WorkflowKind,
+        updated_at: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO organization_workflows (
+              organization_id,
+              workflow_kind,
+              status,
+              updated_at,
+              last_processed_received_at
+            )
+            VALUES ($1, $2, 'ready', NOW(), $3::timestamptz)
+            ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
+              updated_at = EXCLUDED.updated_at,
+              last_processed_received_at = GREATEST(
+                organization_workflows.last_processed_received_at,
+                EXCLUDED.last_processed_received_at
+              )
+            "#,
+        )
+        .bind(organization_id)
+        .bind(workflow_kind_db_str(workflow_kind))
+        .bind(updated_at)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to persist organization workflow updated_at {} for {organization_id}",
+                workflow_kind.as_str()
+            )
+        })?;
+        Ok(())
+    }
+
     pub(crate) async fn list_projects_for_summary(
         &self,
         organization_id: &str,
-    ) -> Result<Vec<OrganizationHeartbeatProject>> {
+    ) -> Result<Vec<OrganizationProject>> {
         let rows = sqlx::query(
             r#"
             SELECT project_id, name
@@ -212,7 +367,7 @@ impl SummaryDb {
 
         rows.into_iter()
             .map(|row| {
-                Ok(OrganizationHeartbeatProject {
+                Ok(OrganizationProject {
                     project_id: row
                         .try_get("project_id")
                         .context("failed to decode project_id")?,
@@ -228,7 +383,7 @@ impl SummaryDb {
         &self,
         organization_id: &str,
         options: OrganizationSummaryQueryOptions,
-    ) -> Result<Vec<OrganizationHeartbeatEvent>> {
+    ) -> Result<Vec<OrganizationEvent>> {
         let rows = sqlx::query(
             r#"
             SELECT
@@ -264,13 +419,79 @@ impl SummaryDb {
 
         rows.into_iter()
             .map(|row| {
-                Ok(OrganizationHeartbeatEvent {
+                Ok(OrganizationEvent {
                     project_id: row
                         .try_get("project_id")
                         .context("failed to decode project_id")?,
                     project_name: row
                         .try_get("project_name")
                         .context("failed to decode project_name")?,
+                    event: map_stored_hook_event(&row)?,
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) async fn query_organization_transcripts_for_workflow(
+        &self,
+        organization_id: &str,
+        options: OrganizationWorkflowQueryOptions,
+    ) -> Result<Vec<OrganizationTranscript>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              h.seq,
+              h.event_id,
+              h.project_id,
+              r.name AS project_name,
+              h.member_user_id,
+              h.member_name,
+              h.client,
+              h.repo_root,
+              h.branch,
+              h.payload_json,
+              h.received_at,
+              t.transcript_path,
+              t.content_text,
+              t.truncated
+            FROM hook_event_transcripts AS t
+            INNER JOIN hook_events AS h ON h.event_id = t.event_id
+            INNER JOIN projects AS r ON r.project_id = h.project_id
+            WHERE r.organization_id = $1
+              AND ($2::timestamptz IS NULL OR h.received_at > $2::timestamptz)
+              AND ($3::timestamptz IS NULL OR h.received_at <= $3::timestamptz)
+            ORDER BY h.received_at ASC, h.seq ASC
+            LIMIT COALESCE($4, 9223372036854775807)
+            "#,
+        )
+        .bind(organization_id)
+        .bind(options.after_received_at)
+        .bind(options.before_received_at)
+        .bind(options.limit)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to query organization transcripts for workflow {organization_id}")
+        })?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(OrganizationTranscript {
+                    project_id: row
+                        .try_get("project_id")
+                        .context("failed to decode project_id")?,
+                    project_name: row
+                        .try_get("project_name")
+                        .context("failed to decode project_name")?,
+                    transcript_path: row
+                        .try_get("transcript_path")
+                        .context("failed to decode transcript_path")?,
+                    transcript_text: row
+                        .try_get("content_text")
+                        .context("failed to decode content_text")?,
+                    transcript_truncated: row
+                        .try_get("truncated")
+                        .context("failed to decode transcript truncated flag")?,
                     event: map_stored_hook_event(&row)?,
                 })
             })
@@ -969,6 +1190,16 @@ impl MemberSnapshotContainer for ProjectSnapshot {
 impl MemberSnapshotContainer for OrganizationSnapshot {
     fn members_mut(&mut self) -> &mut Vec<MemberSnapshot> {
         &mut self.members
+    }
+}
+
+fn workflow_kind_db_str(workflow_kind: WorkflowKind) -> &'static str {
+    match workflow_kind {
+        WorkflowKind::OrganizationMemories => "organization_memories",
+        WorkflowKind::OrganizationSkills => "organization_skills",
+        WorkflowKind::OrganizationSummary | WorkflowKind::ProjectSummary => {
+            panic!("unexpected workflow kind for organization_workflows table")
+        }
     }
 }
 
