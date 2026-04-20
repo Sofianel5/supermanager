@@ -1,4 +1,4 @@
-export function displayEmployeeName(value: string) {
+export function displayMemberName(value: string) {
   const trimmed = value.trim();
   return trimmed || "Unknown member";
 }

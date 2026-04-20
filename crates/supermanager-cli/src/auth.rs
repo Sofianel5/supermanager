@@ -603,6 +603,9 @@ mod tests {
         ViewerResponse {
             active_organization_id: active_organization_id.map(ToOwned::to_owned),
             organizations,
+            user: crate::types::ViewerUser {
+                name: "Dana".to_owned(),
+            },
         }
     }
 

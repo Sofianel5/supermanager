@@ -12,24 +12,24 @@ struct SetMarkdownArgs {
 }
 
 #[derive(Debug, Deserialize)]
-struct SetEmployeeBlufArgs {
-    employee_user_id: String,
-    employee_name: String,
+struct SetMemberBlufArgs {
+    member_user_id: String,
+    member_name: String,
     project_ids: Vec<String>,
     markdown: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct SetProjectEmployeeBlufArgs {
-    employee_user_id: String,
-    employee_name: String,
+struct SetProjectMemberBlufArgs {
+    member_user_id: String,
+    member_name: String,
     markdown: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct RemoveEmployeeBlufArgs {
-    employee_user_id: String,
-    employee_name: String,
+struct RemoveMemberBlufArgs {
+    member_user_id: String,
+    member_name: String,
 }
 
 pub(crate) enum SummaryTool {
@@ -44,15 +44,15 @@ pub(crate) enum SummaryTool {
     SetOrgBluf {
         markdown: String,
     },
-    SetEmployeeBluf {
-        employee_user_id: String,
-        employee_name: String,
+    SetMemberBluf {
+        member_user_id: String,
+        member_name: String,
         project_ids: Vec<String>,
         markdown: String,
     },
-    RemoveEmployeeBluf {
-        employee_user_id: String,
-        employee_name: String,
+    RemoveMemberBluf {
+        member_user_id: String,
+        member_name: String,
     },
 }
 
@@ -75,29 +75,29 @@ impl SummaryTool {
                 markdown_only_schema(),
             ),
             spec(
-                "set_employee_bluf",
-                "Create or update a single employee BLUF scoped to this project.",
+                "set_member_bluf",
+                "Create or update a single member BLUF scoped to this project.",
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_user_id", "employee_name", "markdown"],
+                    "required": ["member_user_id", "member_name", "markdown"],
                     "properties": {
-                        "employee_user_id": { "type": "string" },
-                        "employee_name": { "type": "string" },
+                        "member_user_id": { "type": "string" },
+                        "member_name": { "type": "string" },
                         "markdown": { "type": "string" }
                     }
                 }),
             ),
             spec(
-                "remove_employee_bluf",
-                "Remove an employee BLUF that should no longer appear in this project snapshot.",
+                "remove_member_bluf",
+                "Remove a member BLUF that should no longer appear in this project snapshot.",
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_user_id", "employee_name"],
+                    "required": ["member_user_id", "member_name"],
                     "properties": {
-                        "employee_user_id": { "type": "string" },
-                        "employee_name": { "type": "string" }
+                        "member_user_id": { "type": "string" },
+                        "member_name": { "type": "string" }
                     }
                 }),
             ),
@@ -117,15 +117,15 @@ impl SummaryTool {
                 markdown_only_schema(),
             ),
             spec(
-                "set_employee_bluf",
-                "Create or update a single employee BLUF using concise markdown body content.",
+                "set_member_bluf",
+                "Create or update a single member BLUF using concise markdown body content.",
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_user_id", "employee_name", "project_ids", "markdown"],
+                    "required": ["member_user_id", "member_name", "project_ids", "markdown"],
                     "properties": {
-                        "employee_user_id": { "type": "string" },
-                        "employee_name": { "type": "string" },
+                        "member_user_id": { "type": "string" },
+                        "member_name": { "type": "string" },
                         "project_ids": {
                             "type": "array",
                             "items": { "type": "string" }
@@ -135,15 +135,15 @@ impl SummaryTool {
                 }),
             ),
             spec(
-                "remove_employee_bluf",
-                "Remove an employee BLUF that should no longer appear in the organization snapshot.",
+                "remove_member_bluf",
+                "Remove a member BLUF that should no longer appear in the organization snapshot.",
                 json!({
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["employee_user_id", "employee_name"],
+                    "required": ["member_user_id", "member_name"],
                     "properties": {
-                        "employee_user_id": { "type": "string" },
-                        "employee_name": { "type": "string" }
+                        "member_user_id": { "type": "string" },
+                        "member_name": { "type": "string" }
                     }
                 }),
             ),
@@ -167,23 +167,23 @@ impl SummaryTool {
                     markdown: args.markdown,
                 })
             }
-            "set_employee_bluf" => {
-                let args: SetProjectEmployeeBlufArgs =
+            "set_member_bluf" => {
+                let args: SetProjectMemberBlufArgs =
                     serde_json::from_value(params.arguments.clone())
-                        .context("invalid set_employee_bluf arguments")?;
-                Ok(Self::SetEmployeeBluf {
-                    employee_user_id: args.employee_user_id,
-                    employee_name: args.employee_name,
+                        .context("invalid set_member_bluf arguments")?;
+                Ok(Self::SetMemberBluf {
+                    member_user_id: args.member_user_id,
+                    member_name: args.member_name,
                     project_ids: Vec::new(),
                     markdown: args.markdown,
                 })
             }
-            "remove_employee_bluf" => {
-                let args: RemoveEmployeeBlufArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid remove_employee_bluf arguments")?;
-                Ok(Self::RemoveEmployeeBluf {
-                    employee_user_id: args.employee_user_id,
-                    employee_name: args.employee_name,
+            "remove_member_bluf" => {
+                let args: RemoveMemberBlufArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid remove_member_bluf arguments")?;
+                Ok(Self::RemoveMemberBluf {
+                    member_user_id: args.member_user_id,
+                    member_name: args.member_name,
                 })
             }
             other => anyhow::bail!("unknown project summary tool: {other}"),
@@ -200,22 +200,22 @@ impl SummaryTool {
                     markdown: args.markdown,
                 })
             }
-            "set_employee_bluf" => {
-                let args: SetEmployeeBlufArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid set_employee_bluf arguments")?;
-                Ok(Self::SetEmployeeBluf {
-                    employee_user_id: args.employee_user_id,
-                    employee_name: args.employee_name,
+            "set_member_bluf" => {
+                let args: SetMemberBlufArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_member_bluf arguments")?;
+                Ok(Self::SetMemberBluf {
+                    member_user_id: args.member_user_id,
+                    member_name: args.member_name,
                     project_ids: args.project_ids,
                     markdown: args.markdown,
                 })
             }
-            "remove_employee_bluf" => {
-                let args: RemoveEmployeeBlufArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid remove_employee_bluf arguments")?;
-                Ok(Self::RemoveEmployeeBluf {
-                    employee_user_id: args.employee_user_id,
-                    employee_name: args.employee_name,
+            "remove_member_bluf" => {
+                let args: RemoveMemberBlufArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid remove_member_bluf arguments")?;
+                Ok(Self::RemoveMemberBluf {
+                    member_user_id: args.member_user_id,
+                    member_name: args.member_name,
                 })
             }
             other => anyhow::bail!("unknown organization summary tool: {other}"),

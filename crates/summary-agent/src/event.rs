@@ -32,8 +32,8 @@ pub(crate) fn format_project_event(
         "A new project hook event arrived.\n\
 project_id: {project_id}\n\
 project_name: {project_name}\n\
-employee_user_id: {employee_user_id}\n\
-employee_name: {employee_name}\n\
+member_user_id: {member_user_id}\n\
+member_name: {member_name}\n\
 client: {client}\n\
 repo_root: {repo_root}\n\
 branch: {branch}\n\
@@ -41,8 +41,8 @@ received_at: {received_at}\n\
 payload_json:\n{payload}",
         project_id = project_id,
         project_name = project_name,
-        employee_user_id = event.employee_user_id,
-        employee_name = event.employee_name,
+        member_user_id = event.member_user_id,
+        member_name = event.member_name,
         client = event.client,
         repo_root = event.repo_root,
         branch = branch,
@@ -83,7 +83,7 @@ pub(crate) fn format_organization_heartbeat_request(
         "Organization summary heartbeat fired.\n\
 current_projects:\n{projects}\n\
 org_events_since_previous_heartbeat:\n{events}\n\
-Tighten the organization BLUF and employee BLUFs. Project BLUFs are maintained separately and should be treated as read-only context from get_snapshot.",
+Tighten the organization BLUF and member BLUFs. Project BLUFs are maintained separately and should be treated as read-only context from get_snapshot.",
         projects = projects_text,
         events = events_text,
     ))
@@ -102,8 +102,8 @@ mod tests {
             seq: 0,
             event_id: Uuid::nil(),
             received_at: "2026-04-03T12:00:00Z".to_owned(),
-            employee_user_id: "user_123".to_owned(),
-            employee_name: "Dana".to_owned(),
+            member_user_id: "user_123".to_owned(),
+            member_name: "Dana".to_owned(),
             client: "codex".to_owned(),
             repo_root: "/tmp/repo".to_owned(),
             branch: Some("feature/agent".to_owned()),
@@ -114,8 +114,8 @@ mod tests {
 
         assert!(rendered.contains("project_id: PROJECT42"));
         assert!(rendered.contains("project_name: Operations"));
-        assert!(rendered.contains("employee_user_id: user_123"));
-        assert!(rendered.contains("employee_name: Dana"));
+        assert!(rendered.contains("member_user_id: user_123"));
+        assert!(rendered.contains("member_name: Dana"));
         assert!(rendered.contains("branch: feature/agent"));
         assert!(rendered.contains("\"hook_event_name\": \"Stop\""));
     }
@@ -126,8 +126,8 @@ mod tests {
             seq: 0,
             event_id: Uuid::nil(),
             received_at: "2026-04-03T12:00:00Z".to_owned(),
-            employee_user_id: "user_123".to_owned(),
-            employee_name: "Dana".to_owned(),
+            member_user_id: "user_123".to_owned(),
+            member_name: "Dana".to_owned(),
             client: "codex".to_owned(),
             repo_root: "/tmp/repo".to_owned(),
             branch: None,

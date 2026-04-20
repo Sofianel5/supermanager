@@ -115,14 +115,14 @@ function buildSummaryMeta(
   organizationSummaryUpdatedAt: string | null,
   summaryStatus: SummaryStatus,
 ) {
-  const employees = organizationSummary?.employees ?? [];
+  const members = organizationSummary?.members ?? [];
   const projects = organizationSummary?.projects ?? [];
   return [
     organizationSummaryUpdatedAt
       ? `updated ${formatRelativeTime(organizationSummaryUpdatedAt)}`
       : describePendingSummary(summaryStatus),
     formatCount(projects.length, "project summary", "project summaries"),
-    formatCount(employees.length, "employee summary", "employee summaries"),
+    formatCount(members.length, "member summary", "member summaries"),
   ];
 }
 

@@ -37,8 +37,8 @@ pub struct StoredHookEvent {
     #[ts(type = "string")]
     pub event_id: Uuid,
     pub received_at: String,
-    pub employee_user_id: String,
-    pub employee_name: String,
+    pub member_user_id: String,
+    pub member_name: String,
     pub client: String,
     pub repo_root: String,
     #[serde(default)]

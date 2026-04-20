@@ -370,13 +370,13 @@ export function createApp(context: AppContext) {
         }
 
         const metadata = parseConnectionMetadata(verification.key.metadata);
-        const employeeUserId = verification.key.referenceId.trim();
-        if (!employeeUserId) {
+        const memberUserId = verification.key.referenceId.trim();
+        if (!memberUserId) {
           throw httpError(401, "api key user is invalid");
         }
         const hookTarget = await context.db.getHookEventWriteContext(
           metadata.projectId,
-          employeeUserId,
+          memberUserId,
         );
         if (!hookTarget.project) {
           throw httpError(404, `project not found: ${metadata.projectId}`);
@@ -388,7 +388,7 @@ export function createApp(context: AppContext) {
           throw httpError(403, "api key user no longer has project access");
         }
         const project = hookTarget.project;
-        const employeeName = hookTarget.employeeName ?? "Unknown member";
+        const memberName = hookTarget.memberName ?? "Unknown member";
 
         const client = body.client.trim();
         if (!client) {
@@ -404,8 +404,8 @@ export function createApp(context: AppContext) {
         }
 
         const stored = await context.db.insertHookEvent(project.project_id, {
-          employee_user_id: employeeUserId,
-          employee_name: employeeName,
+          member_user_id: memberUserId,
+          member_name: memberName,
           client,
           repo_root: repoRoot,
           branch: body.branch ?? null,

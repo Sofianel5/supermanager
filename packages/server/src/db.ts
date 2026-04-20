@@ -1,5 +1,5 @@
 import {
-  type EmployeeSnapshot,
+  type MemberSnapshot,
   type OrganizationMembership,
   type OrganizationSummaryResponse,
   type OrganizationSnapshot,
@@ -30,7 +30,7 @@ interface ProjectRow {
   organization_slug: unknown;
   created_by_user_id: unknown;
   bluf_markdown?: unknown;
-  employee_count?: unknown;
+  member_count?: unknown;
 }
 
 interface OrganizationMembershipRow {
@@ -54,8 +54,8 @@ interface HookEventRow {
   seq: unknown;
   event_id: unknown;
   project_id?: unknown;
-  employee_user_id: unknown;
-  employee_name: unknown;
+  member_user_id: unknown;
+  member_name: unknown;
   client: unknown;
   repo_root: unknown;
   branch: unknown;
@@ -86,8 +86,8 @@ interface SummaryStatusRow {
 }
 
 interface HookEventInsert {
-  employee_user_id: string;
-  employee_name: string;
+  member_user_id: string;
+  member_name: string;
   client: string;
   repo_root: string;
   branch: string | null;
@@ -97,7 +97,7 @@ interface HookEventInsert {
 interface HookEventWriteContextRow extends ProjectRow {
   has_access: unknown;
   user_exists: unknown;
-  employee_name: unknown;
+  member_name: unknown;
 }
 export interface ProjectRecord extends ProjectListEntry {
   created_by_user_id: string;
@@ -292,10 +292,10 @@ export class Db {
     const projectBlufMap = new Map(
       projectSummaries.map((project) => [project.project_id, project.snapshot.bluf_markdown]),
     );
-    const employeeCounts = new Map(
+    const memberCounts = new Map(
       projectSummaries.map((project) => [
         project.project_id,
-        project.snapshot.employees.length,
+        project.snapshot.members.length,
       ]),
     );
 
@@ -304,7 +304,7 @@ export class Db {
       return {
         ...project,
         bluf_markdown: projectBlufMap.get(project.project_id) ?? "",
-        employee_count: employeeCounts.get(project.project_id) ?? 0,
+        member_count: memberCounts.get(project.project_id) ?? 0,
       };
     });
   }
@@ -354,7 +354,7 @@ export class Db {
     project: ProjectRecord | null;
     hasAccess: boolean;
     userExists: boolean;
-    employeeName: string | null;
+    memberName: string | null;
   }> {
     const [row] = await this.client<HookEventWriteContextRow[]>`
       SELECT
@@ -369,7 +369,7 @@ export class Db {
         COALESCE(
           NULLIF(BTRIM("user".name), ''),
           NULLIF(BTRIM("user".email), '')
-        ) AS employee_name
+        ) AS member_name
       FROM projects
       INNER JOIN organization ON organization.id = projects.organization_id
       LEFT JOIN member ON member."organizationId" = projects.organization_id AND member."userId" = ${userId}
@@ -381,10 +381,10 @@ export class Db {
       project: row ? mapProject(row) : null,
       hasAccess: row ? readBoolean(row.has_access, "has_access") : false,
       userExists: row ? readBoolean(row.user_exists, "user_exists") : false,
-      employeeName:
-        row?.employee_name == null
+      memberName:
+        row?.member_name == null
           ? null
-          : readString(row.employee_name, "employee_name"),
+          : readString(row.member_name, "member_name"),
     };
   }
 
@@ -397,11 +397,11 @@ export class Db {
     }
 
     const rows = await this.client<
-      Array<{ user_id: unknown; employee_name: unknown }>
+      Array<{ user_id: unknown; member_name: unknown }>
     >`
       SELECT
         id AS user_id,
-        COALESCE(NULLIF(BTRIM(name), ''), email) AS employee_name
+        COALESCE(NULLIF(BTRIM(name), ''), email) AS member_name
       FROM "user"
       WHERE id = ANY(${normalizedUserIds}::text[])
     `;
@@ -409,7 +409,7 @@ export class Db {
     return new Map(
       rows.map((row) => [
         readString(row.user_id, "user_id"),
-        readString(row.employee_name, "employee_name"),
+        readString(row.member_name, "member_name"),
       ]),
     );
   }
@@ -424,8 +424,8 @@ export class Db {
       INSERT INTO hook_events (
         event_id,
         project_id,
-        employee_user_id,
-        employee_name,
+        member_user_id,
+        member_name,
         client,
         repo_root,
         branch,
@@ -434,8 +434,8 @@ export class Db {
       VALUES (
         ${eventId},
         ${normalizedProjectId},
-        ${report.employee_user_id},
-        ${report.employee_name},
+        ${report.member_user_id},
+        ${report.member_name},
         ${report.client},
         ${report.repo_root},
         ${report.branch},
@@ -448,8 +448,8 @@ export class Db {
       seq: toNumber(row?.seq),
       event_id: eventId,
       received_at: toRfc3339(row?.received_at),
-      employee_user_id: report.employee_user_id,
-      employee_name: report.employee_name,
+      member_user_id: report.member_user_id,
+      member_name: report.member_name,
       client: report.client,
       repo_root: report.repo_root,
       branch: report.branch,
@@ -468,15 +468,15 @@ export class Db {
       SELECT
         h.seq,
         h.event_id,
-        h.employee_user_id,
-        COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) AS employee_name,
+        h.member_user_id,
+        COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.member_name) AS member_name,
         h.client,
         h.repo_root,
         h.branch,
         h.payload_json,
         h.received_at
       FROM hook_events AS h
-      LEFT JOIN "user" AS u ON u.id = h.employee_user_id
+      LEFT JOIN "user" AS u ON u.id = h.member_user_id
       WHERE h.project_id = ${normalizeProjectId(projectId)}
         AND (${before ?? null}::bigint IS NULL OR h.seq < ${before ?? null})
         AND (${after ?? null}::bigint IS NULL OR h.seq > ${after ?? null})
@@ -510,14 +510,14 @@ export class Db {
       status: row ? parseSummaryStatus(row.status) : "ready",
       updated_at: toOptionalRfc3339(row?.updated_at),
       summary: {
-        ...(await this.resolveSnapshotEmployeeNames(snapshot)),
+        ...(await this.resolveSnapshotMemberNames(snapshot)),
         projects,
       },
     };
   }
 
   async getProjectSummary(projectId: string): Promise<ProjectSnapshot> {
-    return this.resolveSnapshotEmployeeNames(
+    return this.resolveSnapshotMemberNames(
       await this.getStoredProjectSummary(normalizeProjectId(projectId)),
     );
   }
@@ -534,7 +534,7 @@ export class Db {
       last_processed_seq:
         row?.last_processed_seq == null ? 0 : toNumber(row.last_processed_seq),
       status: row ? parseSummaryStatus(row.status) : "ready",
-      summary: await this.resolveSnapshotEmployeeNames(
+      summary: await this.resolveSnapshotMemberNames(
         normalizeStoredProjectSummary(row?.content_json),
       ),
     };
@@ -622,19 +622,19 @@ export class Db {
     }));
   }
 
-  private async resolveSnapshotEmployeeNames<T extends OrganizationSnapshot | ProjectSnapshot>(
+  private async resolveSnapshotMemberNames<T extends OrganizationSnapshot | ProjectSnapshot>(
     snapshot: T,
   ): Promise<T> {
     const userNames = await this.getUserDisplayNames(
-      snapshot.employees.map((employee) => employee.employee_user_id),
+      snapshot.members.map((member) => member.member_user_id),
     );
 
     return {
       ...snapshot,
-      employees: snapshot.employees.map((employee) => ({
-        ...employee,
-        employee_name:
-          userNames.get(employee.employee_user_id) ?? employee.employee_name,
+      members: snapshot.members.map((member) => ({
+        ...member,
+        member_name:
+          userNames.get(member.member_user_id) ?? member.member_name,
       })),
     };
   }
@@ -675,8 +675,8 @@ function mapProject(row: ProjectRow): ProjectRecord {
       "created_by_user_id",
     ),
     bluf_markdown: row.bluf_markdown == null ? "" : String(row.bluf_markdown),
-    employee_count:
-      row.employee_count == null ? 0 : toNumber(row.employee_count),
+    member_count:
+      row.member_count == null ? 0 : toNumber(row.member_count),
   };
 }
 
@@ -685,8 +685,8 @@ function mapStoredHookEvent(row: HookEventRow): StoredHookEvent {
     seq: toNumber(row.seq),
     event_id: readString(row.event_id, "event_id"),
     received_at: toRfc3339(row.received_at),
-    employee_user_id: readString(row.employee_user_id, "employee_user_id"),
-    employee_name: readString(row.employee_name, "employee_name"),
+    member_user_id: readString(row.member_user_id, "member_user_id"),
+    member_name: readString(row.member_name, "member_name"),
     client: readString(row.client, "client"),
     repo_root: readString(row.repo_root, "repo_root"),
     branch: row.branch == null ? null : String(row.branch),
@@ -704,8 +704,8 @@ function normalizeOrganizationSnapshot(
     projects: Array.isArray(base.projects)
       ? base.projects.map((project) => normalizeOrganizationProjectBlufSnapshot(project))
       : [],
-    employees: Array.isArray(base.employees)
-      ? base.employees.map(normalizeEmployeeSnapshot)
+    members: Array.isArray(base.members)
+      ? base.members.map(normalizeMemberSnapshot)
       : [],
   };
 }
@@ -731,8 +731,8 @@ function normalizeProjectSnapshot(
       typeof base.detailed_summary_markdown === "string"
         ? base.detailed_summary_markdown
         : "",
-    employees: Array.isArray(base.employees)
-      ? base.employees.map(normalizeEmployeeSnapshot)
+    members: Array.isArray(base.members)
+      ? base.members.map(normalizeMemberSnapshot)
       : [],
   };
 }
@@ -770,12 +770,12 @@ function toProjectBlufSnapshot(
   };
 }
 
-function normalizeEmployeeSnapshot(snapshot: EmployeeSnapshot): EmployeeSnapshot {
-  const employeeUserId = snapshot.employee_user_id.trim();
+function normalizeMemberSnapshot(snapshot: MemberSnapshot): MemberSnapshot {
+  const memberUserId = snapshot.member_user_id.trim();
   return {
-    employee_user_id: employeeUserId,
-    employee_name:
-      typeof snapshot.employee_name === "string" ? snapshot.employee_name : "",
+    member_user_id: memberUserId,
+    member_name:
+      typeof snapshot.member_name === "string" ? snapshot.member_name : "",
     project_ids: Array.isArray(snapshot.project_ids)
       ? Array.from(
           new Set(

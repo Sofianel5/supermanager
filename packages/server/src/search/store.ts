@@ -8,7 +8,7 @@ const INDEX_BATCH_SIZE = 100;
 
 interface EventIndexRow {
   event_id: unknown;
-  employee_name: unknown;
+  member_name: unknown;
   client: unknown;
   repo_root: unknown;
   branch: unknown;
@@ -19,8 +19,8 @@ interface EventResultRow {
   seq: unknown;
   event_id: unknown;
   received_at: unknown;
-  employee_user_id: unknown;
-  employee_name: unknown;
+  member_user_id: unknown;
+  member_name: unknown;
   client: unknown;
   repo_root: unknown;
   branch: unknown;
@@ -35,7 +35,7 @@ interface SearchResultRow extends EventResultRow {
 export interface EventQueryFilters {
   organizationId: string;
   projectId?: string;
-  employeeName?: string;
+  memberName?: string;
   repoRoot?: string;
   branch?: string;
   client?: string;
@@ -57,7 +57,7 @@ export async function indexUnembeddedEvents(db: Db): Promise<number> {
     const rows = await db.client<EventIndexRow[]>`
       SELECT
         event_id,
-        employee_name,
+        member_name,
         client,
         repo_root,
         branch,
@@ -83,7 +83,7 @@ export async function indexEventById(db: Db, eventId: string): Promise<boolean> 
   const [row] = await db.client<EventIndexRow[]>`
     SELECT
       event_id,
-      employee_name,
+      member_name,
       client,
       repo_root,
       branch,
@@ -110,18 +110,18 @@ export async function queryOrganizationEvents(
       h.seq,
       h.event_id,
       h.received_at,
-      h.employee_user_id,
-      COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) AS employee_name,
+      h.member_user_id,
+      COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.member_name) AS member_name,
       h.client,
       h.repo_root,
       h.branch,
       h.payload_json
     FROM hook_events AS h
     INNER JOIN projects AS r ON r.project_id = h.project_id
-    LEFT JOIN "user" AS u ON u.id = h.employee_user_id
+    LEFT JOIN "user" AS u ON u.id = h.member_user_id
     WHERE r.organization_id = ${filters.organizationId}
       AND (${normalizeOptionalProjectId(filters.projectId)}::text IS NULL OR h.project_id = ${normalizeOptionalProjectId(filters.projectId)}::text)
-      AND (${filters.employeeName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) = ${filters.employeeName ?? null}::text)
+      AND (${filters.memberName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.member_name) = ${filters.memberName ?? null}::text)
       AND (${filters.repoRoot ?? null}::text IS NULL OR h.repo_root = ${filters.repoRoot ?? null}::text)
       AND (${filters.branch ?? null}::text IS NULL OR h.branch = ${filters.branch ?? null}::text)
       AND (${filters.client ?? null}::text IS NULL OR h.client = ${filters.client ?? null}::text)
@@ -146,8 +146,8 @@ export async function searchEvents(
       h.seq,
       h.event_id,
       h.received_at,
-      h.employee_user_id,
-      COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) AS employee_name,
+      h.member_user_id,
+      COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.member_name) AS member_name,
       h.client,
       h.repo_root,
       h.branch,
@@ -156,11 +156,11 @@ export async function searchEvents(
       (1 - (h.embedding <=> ${vector}::vector)) AS score
     FROM hook_events AS h
     INNER JOIN projects AS r ON r.project_id = h.project_id
-    LEFT JOIN "user" AS u ON u.id = h.employee_user_id
+    LEFT JOIN "user" AS u ON u.id = h.member_user_id
     WHERE r.organization_id = ${filters.organizationId}
       AND h.embedding IS NOT NULL
       AND (${normalizeOptionalProjectId(filters.projectId)}::text IS NULL OR h.project_id = ${normalizeOptionalProjectId(filters.projectId)}::text)
-      AND (${filters.employeeName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) = ${filters.employeeName ?? null}::text)
+      AND (${filters.memberName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.member_name) = ${filters.memberName ?? null}::text)
       AND (${filters.repoRoot ?? null}::text IS NULL OR h.repo_root = ${filters.repoRoot ?? null}::text)
       AND (${filters.branch ?? null}::text IS NULL OR h.branch = ${filters.branch ?? null}::text)
       AND (${filters.client ?? null}::text IS NULL OR h.client = ${filters.client ?? null}::text)
@@ -179,7 +179,7 @@ export async function searchEvents(
 
 async function indexRow(db: Db, row: EventIndexRow): Promise<void> {
   const searchText = buildHookEventSearchText({
-    employee_name: readString(row.employee_name, "employee_name"),
+    member_name: readString(row.member_name, "member_name"),
     client: readString(row.client, "client"),
     repo_root: readString(row.repo_root, "repo_root"),
     branch: row.branch == null ? null : String(row.branch),
@@ -211,8 +211,8 @@ function mapStoredHookEvent(row: EventResultRow): StoredHookEvent {
     seq: toNumber(row.seq),
     event_id: readString(row.event_id, "event_id"),
     received_at: toRfc3339(row.received_at),
-    employee_user_id: readString(row.employee_user_id, "employee_user_id"),
-    employee_name: readString(row.employee_name, "employee_name"),
+    member_user_id: readString(row.member_user_id, "member_user_id"),
+    member_name: readString(row.member_name, "member_name"),
     client: readString(row.client, "client"),
     repo_root: readString(row.repo_root, "repo_root"),
     branch: row.branch == null ? null : String(row.branch),

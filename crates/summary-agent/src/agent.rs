@@ -158,7 +158,8 @@ impl AgentLoop {
                     project_name,
                     event,
                 })) => {
-                    self.send_project_event(&project_id, &project_name, &event).await?;
+                    self.send_project_event(&project_id, &project_name, &event)
+                        .await?;
                 }
                 LoopInput::Command(Some(AgentCommand::OrganizationHeartbeat {
                     organization_id,

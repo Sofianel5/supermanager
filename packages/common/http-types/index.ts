@@ -24,7 +24,7 @@ export interface ProjectListEntry {
   created_at: string;
   organization_slug: string;
   bluf_markdown: string;
-  employee_count: number;
+  member_count: number;
 }
 
 export interface ProjectListResponse {

@@ -1,5 +1,5 @@
 interface HookEventSearchTextInput {
-  employee_name: string;
+  member_name: string;
   client: string;
   repo_root: string;
   branch: string | null;
@@ -11,7 +11,7 @@ const MAX_TEXT_PART_LENGTH = 1_000;
 export function buildHookEventSearchText(input: HookEventSearchTextInput): string {
   const parts = new Set<string>();
 
-  pushPart(parts, input.employee_name);
+  pushPart(parts, input.member_name);
   pushPart(parts, input.client);
   pushPart(parts, input.repo_root);
   pushPart(parts, input.branch);

@@ -74,7 +74,7 @@ const eventQueryFields = {
     "Optional organization slug. Defaults to the active organization.",
   ),
   project_id: optionalString("Optional project identifier filter."),
-  employee_name: optionalString("Optional employee name filter."),
+  member_name: optionalString("Optional member name filter."),
   repo_root: optionalString("Optional repo root filter."),
   branch: optionalString("Optional git branch filter."),
   client: optionalString("Optional client filter, for example codex or claude."),
@@ -173,7 +173,7 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
     "get_project_summary",
     {
       title: "Get Project Summary",
-      description: "Read the current project-level view composed from the project TLDR, detailed summary, and matching employee TLDRs.",
+      description: "Read the current project-level view composed from the project TLDR, detailed summary, and matching member TLDRs.",
       inputSchema: getProjectSummarySchema,
       annotations: READ_ONLY_TOOL,
     },
@@ -306,7 +306,7 @@ function buildEventFilters(
   return {
     organizationId,
     projectId: input.project_id,
-    employeeName: input.employee_name,
+    memberName: input.member_name,
     repoRoot: input.repo_root,
     branch: input.branch,
     client: input.client,
@@ -332,7 +332,7 @@ function projectMetadata(project: {
 
 function publicFilters(filters: {
   projectId?: string;
-  employeeName?: string;
+  memberName?: string;
   repoRoot?: string;
   branch?: string;
   client?: string;
@@ -342,7 +342,7 @@ function publicFilters(filters: {
 }) {
   return {
     project_id: filters.projectId ?? null,
-    employee_name: filters.employeeName ?? null,
+    member_name: filters.memberName ?? null,
     repo_root: filters.repoRoot ?? null,
     branch: filters.branch ?? null,
     client: filters.client ?? null,
