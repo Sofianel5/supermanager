@@ -1,31 +1,31 @@
 import type {
   OrganizationSnapshot,
-  RoomSnapshot,
+  ProjectSnapshot,
 } from "@supermanager/common/summary-protocol";
 
 export type {
-  CreateRoomRequest,
-  CreateRoomResponse,
+  CreateProjectRequest,
+  CreateProjectResponse,
   FeedResponse,
   HookTurnReport,
   IngestResponse,
-  RoomMetadataResponse,
+  ProjectMetadataResponse,
   StoredHookEvent,
 } from "@supermanager/common/api-protocol";
 export type {
   OrganizationMembership,
   OrganizationSummaryResponse,
-  RoomListEntry,
-  RoomListResponse,
-  RoomSummaryResponse,
+  ProjectListEntry,
+  ProjectListResponse,
+  ProjectSummaryResponse,
   ViewerResponse,
   ViewerUser,
 } from "@supermanager/common/http-types";
 export type {
   EmployeeSnapshot,
   OrganizationSnapshot,
-  RoomBlufSnapshot,
-  RoomSnapshot,
+  ProjectBlufSnapshot,
+  ProjectSnapshot,
   SummaryStatus,
 } from "@supermanager/common/summary-protocol";
 
@@ -33,10 +33,10 @@ export interface ConnectionResponse {
   api_key: string;
   api_key_id: string;
   dashboard_url: string;
-  room_id: string;
+  project_id: string;
 }
 
-export function emptyRoomSnapshot(): RoomSnapshot {
+export function emptyProjectSnapshot(): ProjectSnapshot {
   return {
     bluf_markdown: "",
     detailed_summary_markdown: "",
@@ -47,7 +47,7 @@ export function emptyRoomSnapshot(): RoomSnapshot {
 export function emptyOrganizationSnapshot(): OrganizationSnapshot {
   return {
     bluf_markdown: "",
-    rooms: [],
+    projects: [],
     employees: [],
   };
 }

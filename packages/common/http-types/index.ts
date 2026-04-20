@@ -2,14 +2,14 @@
 // Types with a Rust counterpart live in ./api-protocol instead.
 import type {
   OrganizationSnapshot,
-  RoomSnapshot,
+  ProjectSnapshot,
   SummaryStatus,
 } from "../summary-protocol";
 
-export interface RoomSummaryResponse {
+export interface ProjectSummaryResponse {
   last_processed_seq: number;
   status: SummaryStatus;
-  summary: RoomSnapshot;
+  summary: ProjectSnapshot;
 }
 
 export interface OrganizationSummaryResponse {
@@ -18,8 +18,8 @@ export interface OrganizationSummaryResponse {
   summary: OrganizationSnapshot;
 }
 
-export interface RoomListEntry {
-  room_id: string;
+export interface ProjectListEntry {
+  project_id: string;
   name: string;
   created_at: string;
   organization_slug: string;
@@ -27,9 +27,9 @@ export interface RoomListEntry {
   employee_count: number;
 }
 
-export interface RoomListResponse {
+export interface ProjectListResponse {
   organization_slug: string;
-  rooms: RoomListEntry[];
+  projects: ProjectListEntry[];
 }
 
 export interface ViewerUser {

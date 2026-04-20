@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { authClient } from "../auth-client";
 import { CliSetupBanner } from "../components/app-page/cli-setup-banner";
-import { CreateRoomDialog } from "../components/app-page/create-room-dialog";
+import { CreateProjectDialog } from "../components/app-page/create-project-dialog";
 import { DeviceApprovalDialog } from "../components/app-page/device-approval-dialog";
 import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
 import { InviteJoinGate } from "../components/app-page/invite-join-gate";
@@ -23,7 +23,7 @@ import {
 } from "../queries/device-status";
 import {
   organizationSummaryQueryRootKey,
-  roomListQueryRootKey,
+  projectListQueryRootKey,
   useWorkspaceData,
   workspaceQueryKey,
 } from "../queries/workspace";
@@ -31,52 +31,58 @@ import { pageShellClass } from "../ui";
 import { readAuthError, readMessage } from "../utils";
 
 interface AppPageProps {
-  view?: "rooms" | "insights";
+  view?: "projects" | "insights";
 }
 
-export function AppPage({ view = "rooms" }: AppPageProps) {
+export function AppPage({ view = "projects" }: AppPageProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [workspaceActionError, setWorkspaceActionError] = useState<
     string | null
   >(null);
-  const [createRoomError, setCreateRoomError] = useState<string | null>(null);
+  const [createProjectError, setCreateProjectError] = useState<string | null>(null);
   const [deviceActionError, setDeviceActionError] = useState<string | null>(
     null,
   );
   const [pendingAction, setPendingAction] = useState<
-    "sign-out" | "create-room" | null
+    "sign-out" | "create-project" | null
   >(null);
   const [pendingDeviceAction, setPendingDeviceAction] = useState<
     "approve" | "deny" | null
   >(null);
-  const [isCreateRoomDialogOpen, setIsCreateRoomDialogOpen] = useState(false);
+  const [isCreateProjectDialogOpen, setIsCreateProjectDialogOpen] = useState(false);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
-  const [createRoomName, setCreateRoomName] = useState("");
+  const [createProjectName, setCreateProjectName] = useState("");
 
   const searchParams = new URLSearchParams(location.search);
   const userCode = normalizeUserCode(searchParams.get("user_code"));
   const preferredOrganizationSlug = searchParams.get("organization");
-  const { activeOrganization, rooms, roomsQuery, summaryQuery, viewerQuery } =
+  const {
+    activeOrganization,
+    projects,
+    projectsQuery,
+    summaryQuery,
+    viewerQuery,
+  } =
     useWorkspaceData(preferredOrganizationSlug);
   const deviceStatusQuery = useDeviceStatus(userCode);
 
   const viewer = viewerQuery.data ?? null;
   const isFirstRun = viewer !== null && viewer.organizations.length === 0;
-  const hasWorkspaceData = !activeOrganization || roomsQuery.data != null;
+  const hasWorkspaceData = !activeOrganization || projectsQuery.data != null;
   const isLoading =
     viewerQuery.isLoading ||
     (Boolean(activeOrganization) &&
       !hasWorkspaceData &&
-      roomsQuery.isLoading);
+      projectsQuery.isLoading);
   const workspaceError =
     workspaceActionError ||
     readQueryError(viewerQuery.error, viewerQuery.data != null) ||
-    readQueryError(roomsQuery.error, roomsQuery.data != null);
+    readQueryError(projectsQuery.error, projectsQuery.data != null);
   const deviceError =
     deviceActionError || readQueryError(deviceStatusQuery.error);
-  const isCreatingRoom = pendingAction === "create-room";
+  const isCreatingProject = pendingAction === "create-project";
   const summaryStatus = readSummaryStatus(summaryQuery.error, summaryQuery.data);
 
   function openDocs() {
@@ -98,48 +104,48 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
     navigate("/login", { replace: true });
   }
 
-  function openCreateRoomDialog() {
-    setCreateRoomError(null);
-    setCreateRoomName("");
-    setIsCreateRoomDialogOpen(true);
+  function openCreateProjectDialog() {
+    setCreateProjectError(null);
+    setCreateProjectName("");
+    setIsCreateProjectDialogOpen(true);
   }
 
-  function closeCreateRoomDialog() {
-    if (isCreatingRoom) {
+  function closeCreateProjectDialog() {
+    if (isCreatingProject) {
       return;
     }
 
-    setIsCreateRoomDialogOpen(false);
-    setCreateRoomError(null);
-    setCreateRoomName("");
+    setIsCreateProjectDialogOpen(false);
+    setCreateProjectError(null);
+    setCreateProjectName("");
   }
 
-  async function handleCreateRoomSubmit() {
+  async function handleCreateProjectSubmit() {
     if (!activeOrganization) {
       return;
     }
 
-    const name = createRoomName.trim();
+    const name = createProjectName.trim();
     if (!name) {
-      setCreateRoomError("Room name is required.");
+      setCreateProjectError("Project name is required.");
       return;
     }
 
-    setPendingAction("create-room");
-    setCreateRoomError(null);
+    setPendingAction("create-project");
+    setCreateProjectError(null);
 
     try {
-      const room = await api.createRoom({
+      const project = await api.createProject({
         name,
         organizationSlug: activeOrganization.organization_slug,
       });
 
       await refreshWorkspace();
-      setIsCreateRoomDialogOpen(false);
-      setCreateRoomName("");
-      navigate(`/r/${room.room_id}`);
+      setIsCreateProjectDialogOpen(false);
+      setCreateProjectName("");
+      navigate(`/p/${project.project_id}`);
     } catch (error) {
-      setCreateRoomError(readMessage(error));
+      setCreateProjectError(readMessage(error));
     } finally {
       setPendingAction(null);
     }
@@ -186,7 +192,7 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
         queryKey: organizationSummaryQueryRootKey(),
       }),
       queryClient.invalidateQueries({ queryKey: workspaceQueryKey() }),
-      queryClient.invalidateQueries({ queryKey: roomListQueryRootKey() }),
+      queryClient.invalidateQueries({ queryKey: projectListQueryRootKey() }),
     ]);
     setPendingAction(null);
   }, [queryClient]);
@@ -238,7 +244,7 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
             />
           )}
 
-          {view === "rooms" && activeOrganization && viewer && !viewer.has_cli_auth && (
+          {view === "projects" && activeOrganization && viewer && !viewer.has_cli_auth && (
             <CliSetupBanner />
           )}
 
@@ -248,7 +254,7 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
               error={workspaceError}
               isLoading={isLoading}
               organizationSummary={summaryQuery.data?.summary ?? null}
-              rooms={rooms}
+              projects={projects}
               summaryStatus={summaryStatus}
             />
           ) : (
@@ -270,24 +276,24 @@ export function AppPage({ view = "rooms" }: AppPageProps) {
               <WorkspacePanel
                 activeOrganization={activeOrganization}
                 error={workspaceError}
-                isCreatingRoom={isCreatingRoom}
+                isCreatingProject={isCreatingProject}
                 isLoading={isLoading}
-                rooms={rooms}
-                onCreateRoom={openCreateRoomDialog}
+                projects={projects}
+                onCreateProject={openCreateProjectDialog}
               />
             </div>
           )}
         </main>
       )}
 
-      {isCreateRoomDialogOpen && (
-        <CreateRoomDialog
-          error={createRoomError}
-          isCreating={isCreatingRoom}
-          name={createRoomName}
-          onClose={closeCreateRoomDialog}
-          onCreate={() => void handleCreateRoomSubmit()}
-          onNameChange={setCreateRoomName}
+      {isCreateProjectDialogOpen && (
+        <CreateProjectDialog
+          error={createProjectError}
+          isCreating={isCreatingProject}
+          name={createProjectName}
+          onClose={closeCreateProjectDialog}
+          onCreate={() => void handleCreateProjectSubmit()}
+          onNameChange={setCreateProjectName}
         />
       )}
 

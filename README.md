@@ -1,6 +1,6 @@
 # Supermanager
 
-Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, hook ingest, PostgreSQL state, and SSE. A separate Rust summary worker owns room and organization summary orchestration plus Codex runtime state. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live room dashboard.
+Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, hook ingest, PostgreSQL state, and SSE. A separate Rust summary worker owns project and organization summary orchestration plus Codex runtime state. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live project dashboard.
 
 ## Setup
 
@@ -39,7 +39,7 @@ cd crates/summary-agent
 export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
 export SUPERMANAGER_DATA_DIR='../../.supermanager-data'
 export SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS='300'
-export SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS='5'
+export SUPERMANAGER_PROJECT_SUMMARY_POLL_INTERVAL_SECONDS='5'
 export CODEX_API_KEY='replace-me'
 cargo run -- --database-url "$DATABASE_URL" --data-dir "$SUPERMANAGER_DATA_DIR"
 ```
@@ -49,7 +49,7 @@ The summary worker reads these runtime config values:
 - `DATABASE_URL`
 - `SUPERMANAGER_DATA_DIR`
 - `SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS`
-- `SUPERMANAGER_ROOM_SUMMARY_POLL_INTERVAL_SECONDS`
+- `SUPERMANAGER_PROJECT_SUMMARY_POLL_INTERVAL_SECONDS`
 - `CODEX_API_KEY`
 
 For production packaging, compile the server to a standalone Bun executable:
@@ -102,7 +102,7 @@ Set `SUPERMANAGER_AUTO_UPDATE=0` to disable the automatic daily check.
 
 ### 4. Sign in and create an organization
 
-Open `http://127.0.0.1:5173`, continue with Google or GitHub, and create the private organization that will own your rooms.
+Open `http://127.0.0.1:5173`, continue with Google or GitHub, and create the private organization that will own your projects.
 
 Then authenticate the CLI on any machine that will report repo activity:
 
@@ -124,26 +124,26 @@ Codex configs:
 supermanager mcp install
 ```
 
-### 5. Create a room from the CLI
+### 5. Create a project from the CLI
 
-Create the room from inside a git repo:
+Create the project from inside a git repo:
 
 ```sh
-supermanager create room --server "http://127.0.0.1:8787"
+supermanager create project --server "http://127.0.0.1:8787"
 ```
 
-That uses the active organization and the current git repo name by default, joins the current repo automatically, prints a dashboard URL, and prints a join command for additional repos. To pick the room name explicitly:
+That uses the active organization and the current git repo name by default, joins the current repo automatically, prints a dashboard URL, and prints a join command for additional repos. To pick the project name explicitly:
 
 ```sh
-supermanager create room "My Team" --server "http://127.0.0.1:8787"
+supermanager create project "My Team" --server "http://127.0.0.1:8787"
 ```
 
-### 6. Join more repos to the room
+### 6. Join more repos to the project
 
-The repo where you ran `supermanager create room` is already connected. Run the join command inside each additional git repo you want connected:
+The repo where you ran `supermanager create project` is already connected. Run the join command inside each additional git repo you want connected:
 
 ```sh
-supermanager join <room-id> --server "http://127.0.0.1:8787" --org "<org-slug>"
+supermanager join <project-id> --server "http://127.0.0.1:8787" --org "<org-slug>"
 ```
 
 That command verifies org membership, mints a repo-scoped API key, installs repo-local Claude Code and Codex hooks for the current repo only, and stores the repo key machine-locally in `$HOME/.supermanager/repos.json`. Claude uses `.claude/settings.local.json`; Codex uses `.codex/hooks.json` and ensures `[features]` contains `codex_hooks = true` in `.codex/config.toml`.
@@ -154,7 +154,7 @@ To remove the repo from supermanager later:
 supermanager leave
 ```
 
-To list every room this machine is currently joined to:
+To list every project this machine is currently joined to:
 
 ```sh
 supermanager list
@@ -176,7 +176,7 @@ Open the workspace in the browser:
 open "http://127.0.0.1:5173/app"
 ```
 
-From there you can create room-scoped workspaces, generate organization invite links, approve CLI device logins, and open room dashboards at `/r/<room-id>`. Signed-out users are redirected back to login; wrong-org room access returns `403`.
+From there you can create project-scoped workspaces, generate organization invite links, approve CLI device logins, and open project dashboards at `/p/<project-id>`. Signed-out users are redirected back to login; wrong-org project access returns `403`.
 
 ## API
 
@@ -185,23 +185,23 @@ From there you can create room-scoped workspaces, generate organization invite l
 | `/api/auth/*` | various | Better Auth session, social OAuth, organization, device authorization, and API-key endpoints |
 | `/health` | GET | Health check |
 | `/v1/me` | GET | Signed-in user plus organization memberships |
-| `/v1/rooms` | GET | List rooms for the selected organization |
-| `/v1/rooms` | POST | Create a room in the selected organization |
-| `/v1/rooms/{room_id}` | GET | Room metadata |
-| `/v1/rooms/{room_id}/feed` | GET | Raw room hook events, newest first |
-| `/v1/rooms/{room_id}/feed/stream` | GET | SSE stream of hook-event and summary-status events |
-| `/v1/rooms/{room_id}/connections` | POST | Mint a repo-scoped API key for the room |
+| `/v1/projects` | GET | List projects for the selected organization |
+| `/v1/projects` | POST | Create a project in the selected organization |
+| `/v1/projects/{project_id}` | GET | Project metadata |
+| `/v1/projects/{project_id}/feed` | GET | Raw project hook events, newest first |
+| `/v1/projects/{project_id}/feed/stream` | GET | SSE stream of hook-event and summary-status events |
+| `/v1/projects/{project_id}/connections` | POST | Mint a repo-scoped API key for the project |
 | `/v1/hooks/turn` | POST | Submit a hook-captured turn event using `x-api-key` |
-| `/v1/organizations/{organization_slug}/summary` | GET | Read the current org summary JSON (`bluf_markdown`, `rooms[]`, `employees[]`) plus status |
-| `/v1/rooms/{room_id}/summary` | GET | Read the current room summary (`bluf_markdown`, `detailed_summary_markdown`, `employees[]`) |
+| `/v1/organizations/{organization_slug}/summary` | GET | Read the current org summary JSON (`bluf_markdown`, `projects[]`, `employees[]`) plus status |
+| `/v1/projects/{project_id}/summary` | GET | Read the current project summary (`bluf_markdown`, `detailed_summary_markdown`, `employees[]`) |
 | `/mcp` | POST | Streamable HTTP MCP endpoint with manager-facing read-only tools |
 
 The MCP endpoint currently exposes these tools:
 
-- `list_rooms`
+- `list_projects`
 - `get_organization_summary`
-- `get_room_summary`
-- `get_room_feed`
+- `get_project_summary`
+- `get_project_feed`
 - `query_events`
 - `search_events`
 
@@ -209,7 +209,7 @@ The MCP endpoint currently exposes these tools:
 
 ```text
 crates/
-  reporter-protocol/      # Shared room and hook-event types
+  reporter-protocol/      # Shared project and hook-event types
   summary-agent/          # Rust Codex org summarizer
   supermanager-cli/       # Global CLI for joining/leaving repos
 packages/
@@ -223,7 +223,7 @@ infra/aws/                # Terraform for the AWS backend
 ## Notes
 
 - Summary generation runs on the server after new hook turns arrive and on a periodic timer.
-- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps thread state under `<data-dir>/summary-threads/{organizations|rooms}/<ID>/`.
+- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps thread state under `<data-dir>/summary-threads/{organizations|projects}/<ID>/`.
 - The stored org summary is structured JSON. The model receives the current snapshot plus fresh updates and can return partial section updates instead of rewriting the whole summary each time.
 
 ## Licensing
@@ -299,7 +299,7 @@ The summary worker task definition mounts EFS and keeps the Codex runtime state:
 - `CODEX_API_KEY`
 - `SUPERMANAGER_DATA_DIR=/srv/supermanager`
 
-The API service now uses rolling deploys with `desired_count = 1`, `deployment_minimum_healthy_percent = 100`, and `deployment_maximum_percent = 200`. Room summarization replays from Postgres using `room_summaries.last_processed_seq`, so the worker can be restarted independently without losing summary progress.
+The API service now uses rolling deploys with `desired_count = 1`, `deployment_minimum_healthy_percent = 100`, and `deployment_maximum_percent = 200`. Project summarization replays from Postgres using `project_summaries.last_processed_seq`, so the worker can be restarted independently without losing summary progress.
 
 ## Deploying the frontend to Cloudflare Pages
 

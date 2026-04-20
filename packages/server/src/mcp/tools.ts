@@ -5,7 +5,7 @@ import type { SupermanagerAuth } from "../auth";
 import type { ApiConfig } from "../config";
 import type { Db } from "../db";
 import {
-  requireRoomAccess,
+  requireProjectAccess,
   requireViewer,
   resolveOrganizationMembership,
 } from "../middleware";
@@ -22,7 +22,7 @@ const SERVER_INFO = {
 } as const;
 
 const SERVER_INSTRUCTIONS =
-  "Use get_organization_summary for the org-level snapshot, get_room_summary for a single room view, and query_events or search_events for raw historical evidence.";
+  "Use get_organization_summary for the org-level snapshot, get_project_summary for a single project view, and query_events or search_events for raw historical evidence.";
 
 const DEFAULT_FEED_LIMIT = 25;
 const DEFAULT_QUERY_LIMIT = 25;
@@ -38,14 +38,14 @@ const READ_ONLY_TOOL = {
   openWorldHint: false,
 } as const;
 
-const listRoomsSchema = z.object({
+const listProjectsSchema = z.object({
   organization_slug: optionalString(
     "Optional organization slug. Defaults to the active organization.",
   ),
 });
 
-const getRoomSummarySchema = z.object({
-  room_id: requiredString("The room identifier."),
+const getProjectSummarySchema = z.object({
+  project_id: requiredString("The project identifier."),
 });
 
 const getOrganizationSummarySchema = z.object({
@@ -54,8 +54,8 @@ const getOrganizationSummarySchema = z.object({
   ),
 });
 
-const getRoomFeedSchema = z.object({
-  room_id: requiredString("The room identifier."),
+const getProjectFeedSchema = z.object({
+  project_id: requiredString("The project identifier."),
   before_seq: z
     .number()
     .int()
@@ -73,7 +73,7 @@ const eventQueryFields = {
   organization_slug: optionalString(
     "Optional organization slug. Defaults to the active organization.",
   ),
-  room_id: optionalString("Optional room identifier filter."),
+  project_id: optionalString("Optional project identifier filter."),
   employee_name: optionalString("Optional employee name filter."),
   repo_root: optionalString("Optional repo root filter."),
   branch: optionalString("Optional git branch filter."),
@@ -120,11 +120,11 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
   });
 
   server.registerTool(
-    "list_rooms",
+    "list_projects",
     {
-      title: "List Rooms",
-      description: "List rooms for the current or specified organization.",
-      inputSchema: listRoomsSchema,
+      title: "List Projects",
+      description: "List projects for the current or specified organization.",
+      inputSchema: listProjectsSchema,
       annotations: READ_ONLY_TOOL,
     },
     async ({ organization_slug }) => {
@@ -136,7 +136,7 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
 
       return jsonToolResult({
         organization_slug: membership.organization_slug,
-        rooms: await options.db.listRoomsForOrganization(
+        projects: await options.db.listProjectsForOrganization(
           membership.organization_id,
         ),
       });
@@ -170,38 +170,38 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
   );
 
   server.registerTool(
-    "get_room_summary",
+    "get_project_summary",
     {
-      title: "Get Room Summary",
-      description: "Read the current room-level view composed from the room TLDR, detailed summary, and matching employee TLDRs.",
-      inputSchema: getRoomSummarySchema,
+      title: "Get Project Summary",
+      description: "Read the current project-level view composed from the project TLDR, detailed summary, and matching employee TLDRs.",
+      inputSchema: getProjectSummarySchema,
       annotations: READ_ONLY_TOOL,
     },
-    async ({ room_id }) => {
-      const room = await loadAccessibleRoom(options, headers, room_id);
+    async ({ project_id }) => {
+      const project = await loadAccessibleProject(options, headers, project_id);
 
       return jsonToolResult({
-        room: roomMetadata(room),
-        summary: await options.db.getRoomSummary(room.room_id),
+        project: projectMetadata(project),
+        summary: await options.db.getProjectSummary(project.project_id),
       });
     },
   );
 
   server.registerTool(
-    "get_room_feed",
+    "get_project_feed",
     {
-      title: "Get Room Feed",
-      description: "Read raw hook events for a room, newest first.",
-      inputSchema: getRoomFeedSchema,
+      title: "Get Project Feed",
+      description: "Read raw hook events for a project, newest first.",
+      inputSchema: getProjectFeedSchema,
       annotations: READ_ONLY_TOOL,
     },
-    async ({ room_id, before_seq, limit }) => {
-      const room = await loadAccessibleRoom(options, headers, room_id);
+    async ({ project_id, before_seq, limit }) => {
+      const project = await loadAccessibleProject(options, headers, project_id);
 
       return jsonToolResult({
-        room: roomMetadata(room),
+        project: projectMetadata(project),
         events: await options.db.getHookEvents(
-          room.room_id,
+          project.project_id,
           before_seq,
           undefined,
           limit ?? DEFAULT_FEED_LIMIT,
@@ -215,7 +215,7 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
     {
       title: "Query Events",
       description:
-        "Query raw events across rooms in an organization using deterministic filters.",
+        "Query raw events across projects in an organization using deterministic filters.",
       inputSchema: queryEventsSchema,
       annotations: READ_ONLY_TOOL,
     },
@@ -289,13 +289,13 @@ async function loadOrganizationMembership(
   );
 }
 
-async function loadAccessibleRoom(
+async function loadAccessibleProject(
   options: McpToolOptions,
   headers: Headers,
-  roomId: string,
+  projectId: string,
 ) {
   const viewer = await requireViewer(options.auth, headers);
-  return requireRoomAccess(options.db, viewer.user.id, roomId);
+  return requireProjectAccess(options.db, viewer.user.id, projectId);
 }
 
 function buildEventFilters(
@@ -305,7 +305,7 @@ function buildEventFilters(
 ) {
   return {
     organizationId,
-    roomId: input.room_id,
+    projectId: input.project_id,
     employeeName: input.employee_name,
     repoRoot: input.repo_root,
     branch: input.branch,
@@ -316,22 +316,22 @@ function buildEventFilters(
   };
 }
 
-function roomMetadata(room: {
-  room_id: string;
+function projectMetadata(project: {
+  project_id: string;
   name: string;
   organization_slug: string;
   created_at: string;
 }) {
   return {
-    room_id: room.room_id,
-    name: room.name,
-    organization_slug: room.organization_slug,
-    created_at: room.created_at,
+    project_id: project.project_id,
+    name: project.name,
+    organization_slug: project.organization_slug,
+    created_at: project.created_at,
   };
 }
 
 function publicFilters(filters: {
-  roomId?: string;
+  projectId?: string;
   employeeName?: string;
   repoRoot?: string;
   branch?: string;
@@ -341,7 +341,7 @@ function publicFilters(filters: {
   limit: number;
 }) {
   return {
-    room_id: filters.roomId ?? null,
+    project_id: filters.projectId ?? null,
     employee_name: filters.employeeName ?? null,
     repo_root: filters.repoRoot ?? null,
     branch: filters.branch ?? null,

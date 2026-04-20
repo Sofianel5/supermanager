@@ -5,7 +5,7 @@ import { AppPage } from "./routes/app-page";
 import { DocsPage } from "./routes/docs-page";
 import { LandingPage } from "./routes/landing-page";
 import { LoginPage } from "./routes/login-page";
-import { RoomPage } from "./routes/room-page";
+import { ProjectPage } from "./routes/project-page";
 import { centeredShellClass, sectionLabelClass, statusBlockClass } from "./ui";
 
 export function App() {
@@ -19,7 +19,7 @@ export function App() {
           path="/app"
           element={
             <RequireSession>
-              <AppPage view="rooms" />
+              <AppPage view="projects" />
             </RequireSession>
           }
         />
@@ -32,10 +32,10 @@ export function App() {
           }
         />
         <Route
-          path="/r/:roomId"
+          path="/p/:projectId"
           element={
             <RequireSession>
-              <RoomPage />
+              <ProjectPage />
             </RequireSession>
           }
         />

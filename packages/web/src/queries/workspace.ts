@@ -8,7 +8,7 @@ import {
 
 const VIEWER_QUERY_KEY = ["viewer"] as const;
 const ORGANIZATION_SUMMARY_QUERY_KEY = "organization-summary";
-const ROOM_LIST_QUERY_KEY = "room-list";
+const PROJECT_LIST_QUERY_KEY = "project-list";
 const WORKSPACE_STALE_TIME_MS = 30_000;
 
 export function useWorkspaceData(preferredOrganizationSlug: string | null) {
@@ -19,10 +19,10 @@ export function useWorkspaceData(preferredOrganizationSlug: string | null) {
     preferredOrganizationSlug,
   );
 
-  const roomsQuery = useQuery({
+  const projectsQuery = useQuery({
     enabled: Boolean(activeOrganization?.organization_slug),
-    queryFn: () => api.listRooms(activeOrganization!.organization_slug),
-    queryKey: roomListQueryKey(activeOrganization?.organization_slug ?? ""),
+    queryFn: () => api.listProjects(activeOrganization!.organization_slug),
+    queryKey: projectListQueryKey(activeOrganization?.organization_slug ?? ""),
     refetchInterval: WORKSPACE_STALE_TIME_MS,
     staleTime: WORKSPACE_STALE_TIME_MS,
   });
@@ -45,8 +45,8 @@ export function useWorkspaceData(preferredOrganizationSlug: string | null) {
 
   return {
     activeOrganization,
-    rooms: roomsQuery.data?.rooms ?? [],
-    roomsQuery,
+    projects: projectsQuery.data?.projects ?? [],
+    projectsQuery,
     summaryQuery,
     viewerQuery,
   };
@@ -71,12 +71,12 @@ export function pickActiveOrganization(
   );
 }
 
-export function roomListQueryKey(organizationSlug: string) {
-  return [ROOM_LIST_QUERY_KEY, organizationSlug] as const;
+export function projectListQueryKey(organizationSlug: string) {
+  return [PROJECT_LIST_QUERY_KEY, organizationSlug] as const;
 }
 
-export function roomListQueryRootKey() {
-  return [ROOM_LIST_QUERY_KEY] as const;
+export function projectListQueryRootKey() {
+  return [PROJECT_LIST_QUERY_KEY] as const;
 }
 
 export function organizationSummaryQueryKey(organizationSlug: string) {

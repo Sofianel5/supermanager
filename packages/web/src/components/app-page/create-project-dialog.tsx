@@ -10,7 +10,7 @@ import {
   sectionLabelClass,
 } from "../../ui";
 
-interface CreateRoomDialogProps {
+interface CreateProjectDialogProps {
   error?: string | null;
   isCreating?: boolean;
   name: string;
@@ -19,14 +19,14 @@ interface CreateRoomDialogProps {
   onNameChange(name: string): void;
 }
 
-export function CreateRoomDialog({
+export function CreateProjectDialog({
   error,
   isCreating = false,
   name,
   onClose,
   onCreate,
   onNameChange,
-}: CreateRoomDialogProps) {
+}: CreateProjectDialogProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -39,18 +39,18 @@ export function CreateRoomDialog({
         className={`${dialogCardClass} w-full max-w-[460px]`}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="create-room-dialog-title"
+        aria-labelledby="create-project-dialog-title"
       >
         <div>
-          <div className={sectionLabelClass}>Create room</div>
+          <div className={sectionLabelClass}>Create project</div>
           <h2
             className="mt-4 text-4xl font-semibold leading-none text-ink sm:text-[2.8rem]"
-            id="create-room-dialog-title"
+            id="create-project-dialog-title"
           >
-            New room
+            New project
           </h2>
           <p className={`${messageClass} mt-3`}>
-            Give the room a name. You can add the rest after it exists.
+            Give the project a name. You can add the rest after it exists.
           </p>
         </div>
 
@@ -61,14 +61,14 @@ export function CreateRoomDialog({
             onCreate();
           }}
         >
-          <label className={fieldLabelClass} htmlFor="create-room-name">
-            Room name
+          <label className={fieldLabelClass} htmlFor="create-project-name">
+            Project name
           </label>
           <input
             className={inputClass}
             ref={inputRef}
-            id="create-room-name"
-            name="room-name"
+            id="create-project-name"
+            name="project-name"
             type="text"
             autoComplete="off"
             spellCheck={false}
@@ -83,7 +83,7 @@ export function CreateRoomDialog({
               Cancel
             </button>
             <button className={primaryButtonClass} type="submit" disabled={isCreating}>
-              {isCreating ? "Creating..." : "Create room"}
+              {isCreating ? "Creating..." : "Create project"}
             </button>
           </div>
         </form>

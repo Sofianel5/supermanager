@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 use reporter_protocol::{
-    EmployeeSnapshot, OrganizationSnapshot, RoomBlufSnapshot, RoomSnapshot, StoredHookEvent,
+    EmployeeSnapshot, OrganizationSnapshot, ProjectBlufSnapshot, ProjectSnapshot, StoredHookEvent,
     SummaryStatus,
 };
 use serde_json::Value;
@@ -15,7 +15,7 @@ use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use crate::{
-    event::{OrganizationHeartbeatEvent, OrganizationHeartbeatRoom},
+    event::{OrganizationHeartbeatEvent, OrganizationHeartbeatProject},
     tools::SummaryTool,
 };
 
@@ -24,8 +24,8 @@ pub(crate) struct SummaryDb {
     pool: PgPool,
 }
 
-pub(crate) struct SummaryRoomRecord {
-    pub(crate) room_id: String,
+pub(crate) struct SummaryProjectRecord {
+    pub(crate) project_id: String,
     pub(crate) name: String,
 }
 
@@ -33,7 +33,7 @@ pub(crate) struct OrganizationSummaryClaim {
     pub(crate) previous_summary_updated_at: Option<String>,
 }
 
-pub(crate) struct RoomSummaryClaim {
+pub(crate) struct ProjectSummaryClaim {
     pub(crate) last_processed_seq: i64,
 }
 
@@ -48,7 +48,7 @@ pub(crate) struct OrganizationSummaryQueryOptions {
     pub(crate) limit: Option<i64>,
 }
 
-pub(crate) struct RoomSummaryQueryOptions {
+pub(crate) struct ProjectSummaryQueryOptions {
     pub(crate) after_seq: Option<i64>,
     pub(crate) limit: Option<i64>,
 }
@@ -83,21 +83,21 @@ impl SummaryDb {
         Ok(())
     }
 
-    pub(crate) async fn reset_generating_room_summaries(&self) -> Result<()> {
-        sqlx::query("UPDATE room_summaries SET status = 'error' WHERE status = 'generating'")
+    pub(crate) async fn reset_generating_project_summaries(&self) -> Result<()> {
+        sqlx::query("UPDATE project_summaries SET status = 'error' WHERE status = 'generating'")
             .execute(&self.pool)
             .await
-            .context("failed to reset generating room summaries")?;
+            .context("failed to reset generating project summaries")?;
         Ok(())
     }
 
-    pub(crate) async fn list_organizations_with_rooms(&self) -> Result<Vec<String>> {
+    pub(crate) async fn list_organizations_with_projects(&self) -> Result<Vec<String>> {
         sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT organization_id FROM rooms ORDER BY organization_id ASC",
+            "SELECT DISTINCT organization_id FROM projects ORDER BY organization_id ASC",
         )
         .fetch_all(&self.pool)
         .await
-        .context("failed to list organizations with rooms")
+        .context("failed to list organizations with projects")
     }
 
     pub(crate) async fn try_start_organization_summary(
@@ -193,28 +193,32 @@ impl SummaryDb {
         Ok(())
     }
 
-    pub(crate) async fn list_rooms_for_summary(
+    pub(crate) async fn list_projects_for_summary(
         &self,
         organization_id: &str,
-    ) -> Result<Vec<OrganizationHeartbeatRoom>> {
+    ) -> Result<Vec<OrganizationHeartbeatProject>> {
         let rows = sqlx::query(
             r#"
-            SELECT room_id, name
-            FROM rooms
+            SELECT project_id, name
+            FROM projects
             WHERE organization_id = $1
-            ORDER BY created_at DESC, room_id DESC
+            ORDER BY created_at DESC, project_id DESC
             "#,
         )
         .bind(organization_id)
         .fetch_all(&self.pool)
         .await
-        .with_context(|| format!("failed to list rooms for organization {organization_id}"))?;
+        .with_context(|| format!("failed to list projects for organization {organization_id}"))?;
 
         rows.into_iter()
             .map(|row| {
-                Ok(OrganizationHeartbeatRoom {
-                    room_id: row.try_get("room_id").context("failed to decode room_id")?,
-                    name: row.try_get("name").context("failed to decode room name")?,
+                Ok(OrganizationHeartbeatProject {
+                    project_id: row
+                        .try_get("project_id")
+                        .context("failed to decode project_id")?,
+                    name: row
+                        .try_get("name")
+                        .context("failed to decode project name")?,
                 })
             })
             .collect()
@@ -230,8 +234,8 @@ impl SummaryDb {
             SELECT
               h.seq,
               h.event_id,
-              h.room_id,
-              r.name AS room_name,
+              h.project_id,
+              r.name AS project_name,
               h.employee_user_id,
               h.employee_name,
               h.client,
@@ -240,7 +244,7 @@ impl SummaryDb {
               h.payload_json,
               h.received_at
             FROM hook_events AS h
-            INNER JOIN rooms AS r ON r.room_id = h.room_id
+            INNER JOIN projects AS r ON r.project_id = h.project_id
             WHERE r.organization_id = $1
               AND ($2::timestamptz IS NULL OR h.received_at > $2::timestamptz)
               AND ($3::timestamptz IS NULL OR h.received_at <= $3::timestamptz)
@@ -261,10 +265,12 @@ impl SummaryDb {
         rows.into_iter()
             .map(|row| {
                 Ok(OrganizationHeartbeatEvent {
-                    room_id: row.try_get("room_id").context("failed to decode room_id")?,
-                    room_name: row
-                        .try_get("room_name")
-                        .context("failed to decode room_name")?,
+                    project_id: row
+                        .try_get("project_id")
+                        .context("failed to decode project_id")?,
+                    project_name: row
+                        .try_get("project_name")
+                        .context("failed to decode project_name")?,
                     event: map_stored_hook_event(&row)?,
                 })
             })
@@ -275,29 +281,29 @@ impl SummaryDb {
         &self,
         organization_id: &str,
     ) -> Result<OrganizationSnapshot> {
-        let (stored, rooms) = tokio::try_join!(
+        let (stored, projects) = tokio::try_join!(
             self.get_stored_organization_summary(organization_id),
-            self.list_room_blufs_for_organization(organization_id),
+            self.list_project_blufs_for_organization(organization_id),
         )?;
-        Ok(OrganizationSnapshot { rooms, ..stored })
+        Ok(OrganizationSnapshot { projects, ..stored })
     }
 
-    pub(crate) async fn list_room_ids_for_organization(
+    pub(crate) async fn list_project_ids_for_organization(
         &self,
         organization_id: &str,
     ) -> Result<Vec<String>> {
         sqlx::query_scalar::<_, String>(
             r#"
-            SELECT room_id
-            FROM rooms
+            SELECT project_id
+            FROM projects
             WHERE organization_id = $1
-            ORDER BY created_at DESC, room_id DESC
+            ORDER BY created_at DESC, project_id DESC
             "#,
         )
         .bind(organization_id)
         .fetch_all(&self.pool)
         .await
-        .with_context(|| format!("failed to list room ids for organization {organization_id}"))
+        .with_context(|| format!("failed to list project ids for organization {organization_id}"))
     }
 
     pub(crate) async fn set_organization_summary(
@@ -321,83 +327,87 @@ impl SummaryDb {
         Ok(())
     }
 
-    pub(crate) async fn list_rooms_needing_summary(
+    pub(crate) async fn list_projects_needing_summary(
         &self,
         limit: i64,
-    ) -> Result<Vec<SummaryRoomRecord>> {
+    ) -> Result<Vec<SummaryProjectRecord>> {
         let rows = sqlx::query(
             r#"
             SELECT
-              rooms.room_id,
-              rooms.name
-            FROM rooms
-            INNER JOIN hook_events ON hook_events.room_id = rooms.room_id
-            LEFT JOIN room_summaries ON room_summaries.room_id = rooms.room_id
-            GROUP BY rooms.room_id, rooms.name, room_summaries.last_processed_seq
-            HAVING MAX(hook_events.seq) > COALESCE(room_summaries.last_processed_seq, 0)
-            ORDER BY MAX(hook_events.received_at) ASC, rooms.room_id ASC
+              projects.project_id,
+              projects.name
+            FROM projects
+            INNER JOIN hook_events ON hook_events.project_id = projects.project_id
+            LEFT JOIN project_summaries ON project_summaries.project_id = projects.project_id
+            GROUP BY projects.project_id, projects.name, project_summaries.last_processed_seq
+            HAVING MAX(hook_events.seq) > COALESCE(project_summaries.last_processed_seq, 0)
+            ORDER BY MAX(hook_events.received_at) ASC, projects.project_id ASC
             LIMIT $1
             "#,
         )
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .context("failed to list rooms needing summary")?;
+        .context("failed to list projects needing summary")?;
 
         rows.into_iter()
             .map(|row| {
-                Ok(SummaryRoomRecord {
-                    room_id: row.try_get("room_id").context("failed to decode room_id")?,
-                    name: row.try_get("name").context("failed to decode room name")?,
+                Ok(SummaryProjectRecord {
+                    project_id: row
+                        .try_get("project_id")
+                        .context("failed to decode project_id")?,
+                    name: row
+                        .try_get("name")
+                        .context("failed to decode project name")?,
                 })
             })
             .collect()
     }
 
-    pub(crate) async fn try_start_room_summary(
+    pub(crate) async fn try_start_project_summary(
         &self,
-        room_id: &str,
-    ) -> Result<Option<RoomSummaryClaim>> {
-        let normalized_room_id = normalize_room_id(room_id);
+        project_id: &str,
+    ) -> Result<Option<ProjectSummaryClaim>> {
+        let normalized_project_id = normalize_project_id(project_id);
         let row = sqlx::query(
             r#"
-            INSERT INTO room_summaries (
-              room_id,
+            INSERT INTO project_summaries (
+              project_id,
               content_json,
               status,
               updated_at,
               last_processed_seq
             )
             VALUES ($1, $2, 'generating', TO_TIMESTAMP(0), 0)
-            ON CONFLICT(room_id) DO UPDATE SET
+            ON CONFLICT(project_id) DO UPDATE SET
               status = 'generating'
-            WHERE room_summaries.status <> 'generating'
+            WHERE project_summaries.status <> 'generating'
             RETURNING last_processed_seq
             "#,
         )
-        .bind(&normalized_room_id)
-        .bind(Json(normalize_room_snapshot(RoomSnapshot::default())))
+        .bind(&normalized_project_id)
+        .bind(Json(normalize_project_snapshot(ProjectSnapshot::default())))
         .fetch_optional(&self.pool)
         .await
-        .with_context(|| format!("failed to claim room summary for {normalized_room_id}"))?;
+        .with_context(|| format!("failed to claim project summary for {normalized_project_id}"))?;
 
         row.map(|row| {
-            Ok(RoomSummaryClaim {
+            Ok(ProjectSummaryClaim {
                 last_processed_seq: row
                     .try_get::<Option<i64>, _>("last_processed_seq")
-                    .context("failed to decode room summary last_processed_seq")?
+                    .context("failed to decode project summary last_processed_seq")?
                     .unwrap_or(0),
             })
         })
         .transpose()
     }
 
-    pub(crate) async fn query_room_events_for_summary(
+    pub(crate) async fn query_project_events_for_summary(
         &self,
-        room_id: &str,
-        options: RoomSummaryQueryOptions,
+        project_id: &str,
+        options: ProjectSummaryQueryOptions,
     ) -> Result<Vec<StoredHookEvent>> {
-        let normalized_room_id = normalize_room_id(room_id);
+        let normalized_project_id = normalize_project_id(project_id);
         let rows = sqlx::query(
             r#"
             SELECT
@@ -411,168 +421,176 @@ impl SummaryDb {
               payload_json,
               received_at
             FROM hook_events
-            WHERE room_id = $1
+            WHERE project_id = $1
               AND ($2::bigint IS NULL OR seq > $2)
             ORDER BY seq ASC
             LIMIT COALESCE($3, 9223372036854775807)
             "#,
         )
-        .bind(&normalized_room_id)
+        .bind(&normalized_project_id)
         .bind(options.after_seq)
         .bind(options.limit)
         .fetch_all(&self.pool)
         .await
-        .with_context(|| format!("failed to query room summary events for {normalized_room_id}"))?;
+        .with_context(|| {
+            format!("failed to query project summary events for {normalized_project_id}")
+        })?;
 
         rows.into_iter()
             .map(|row| map_stored_hook_event(&row))
             .collect()
     }
 
-    pub(crate) async fn set_room_summary_status(
+    pub(crate) async fn set_project_summary_status(
         &self,
-        room_id: &str,
+        project_id: &str,
         status: SummaryStatus,
     ) -> Result<()> {
-        let normalized_room_id = normalize_room_id(room_id);
+        let normalized_project_id = normalize_project_id(project_id);
         sqlx::query(
             r#"
-            INSERT INTO room_summaries (
-              room_id,
+            INSERT INTO project_summaries (
+              project_id,
               content_json,
               status,
               updated_at,
               last_processed_seq
             )
             VALUES ($1, $2, $3, TO_TIMESTAMP(0), 0)
-            ON CONFLICT(room_id) DO UPDATE SET
+            ON CONFLICT(project_id) DO UPDATE SET
               status = EXCLUDED.status
             "#,
         )
-        .bind(&normalized_room_id)
-        .bind(Json(normalize_room_snapshot(RoomSnapshot::default())))
+        .bind(&normalized_project_id)
+        .bind(Json(normalize_project_snapshot(ProjectSnapshot::default())))
         .bind(status.as_db_str())
         .execute(&self.pool)
         .await
         .with_context(|| {
-            format!("failed to persist room summary status for {normalized_room_id}")
+            format!("failed to persist project summary status for {normalized_project_id}")
         })?;
         Ok(())
     }
 
-    pub(crate) async fn set_room_summary_last_processed_seq(
+    pub(crate) async fn set_project_summary_last_processed_seq(
         &self,
-        room_id: &str,
+        project_id: &str,
         last_processed_seq: i64,
     ) -> Result<()> {
-        let normalized_room_id = normalize_room_id(room_id);
+        let normalized_project_id = normalize_project_id(project_id);
         sqlx::query(
             r#"
-            INSERT INTO room_summaries (
-              room_id,
+            INSERT INTO project_summaries (
+              project_id,
               content_json,
               status,
               updated_at,
               last_processed_seq
             )
             VALUES ($1, $2, 'ready', TO_TIMESTAMP(0), $3)
-            ON CONFLICT(room_id) DO UPDATE SET
+            ON CONFLICT(project_id) DO UPDATE SET
               last_processed_seq = GREATEST(
-                room_summaries.last_processed_seq,
+                project_summaries.last_processed_seq,
                 EXCLUDED.last_processed_seq
               )
             "#,
         )
-        .bind(&normalized_room_id)
-        .bind(Json(normalize_room_snapshot(RoomSnapshot::default())))
+        .bind(&normalized_project_id)
+        .bind(Json(normalize_project_snapshot(ProjectSnapshot::default())))
         .bind(last_processed_seq)
         .execute(&self.pool)
         .await
         .with_context(|| {
-            format!("failed to persist last_processed_seq for room {normalized_room_id}")
+            format!("failed to persist last_processed_seq for project {normalized_project_id}")
         })?;
         Ok(())
     }
 
-    pub(crate) async fn get_room_summary(&self, room_id: &str) -> Result<RoomSnapshot> {
-        let normalized_room_id = normalize_room_id(room_id);
-        let row = sqlx::query("SELECT content_json FROM room_summaries WHERE room_id = $1")
-            .bind(&normalized_room_id)
+    pub(crate) async fn get_project_summary(&self, project_id: &str) -> Result<ProjectSnapshot> {
+        let normalized_project_id = normalize_project_id(project_id);
+        let row = sqlx::query("SELECT content_json FROM project_summaries WHERE project_id = $1")
+            .bind(&normalized_project_id)
             .fetch_optional(&self.pool)
             .await
-            .with_context(|| format!("failed to fetch room summary for {normalized_room_id}"))?;
+            .with_context(|| {
+                format!("failed to fetch project summary for {normalized_project_id}")
+            })?;
 
         Ok(row
             .map(|row| {
-                row.try_get::<Option<Json<RoomSnapshot>>, _>("content_json")
-                    .context("failed to decode room summary content_json")
+                row.try_get::<Option<Json<ProjectSnapshot>>, _>("content_json")
+                    .context("failed to decode project summary content_json")
             })
             .transpose()?
             .flatten()
-            .map(|json| normalize_room_snapshot(json.0))
+            .map(|json| normalize_project_snapshot(json.0))
             .unwrap_or_default())
     }
 
-    pub(crate) async fn set_room_summary(
+    pub(crate) async fn set_project_summary(
         &self,
-        room_id: &str,
-        content: &RoomSnapshot,
+        project_id: &str,
+        content: &ProjectSnapshot,
     ) -> Result<()> {
-        let normalized_room_id = normalize_room_id(room_id);
+        let normalized_project_id = normalize_project_id(project_id);
         sqlx::query(
             r#"
-            INSERT INTO room_summaries (
-              room_id,
+            INSERT INTO project_summaries (
+              project_id,
               content_json,
               status,
               updated_at,
               last_processed_seq
             )
             VALUES ($1, $2, 'ready', NOW(), 0)
-            ON CONFLICT(room_id) DO UPDATE SET
+            ON CONFLICT(project_id) DO UPDATE SET
               content_json = EXCLUDED.content_json,
               updated_at = EXCLUDED.updated_at
             "#,
         )
-        .bind(&normalized_room_id)
-        .bind(Json(normalize_room_snapshot(content.clone())))
+        .bind(&normalized_project_id)
+        .bind(Json(normalize_project_snapshot(content.clone())))
         .execute(&self.pool)
         .await
-        .with_context(|| format!("failed to persist room summary for {normalized_room_id}"))?;
+        .with_context(|| {
+            format!("failed to persist project summary for {normalized_project_id}")
+        })?;
         Ok(())
     }
 
-    pub(crate) async fn execute_room_tool_call(
+    pub(crate) async fn execute_project_tool_call(
         &self,
-        room_id: &str,
+        project_id: &str,
         tool: SummaryTool,
     ) -> Result<ToolExecutionResult> {
         match tool {
-            SummaryTool::RoomGetSnapshot => Ok(ToolExecutionResult {
+            SummaryTool::ProjectGetSnapshot => Ok(ToolExecutionResult {
                 success: true,
-                message: serde_json::to_string_pretty(&self.get_room_summary(room_id).await?)
-                    .context("failed to serialize room snapshot")?,
+                message: serde_json::to_string_pretty(&self.get_project_summary(project_id).await?)
+                    .context("failed to serialize project snapshot")?,
             }),
-            SummaryTool::SetRoomBluf { markdown } => {
-                let normalized_room_id = normalize_room_id(room_id);
-                let mut snapshot = self.get_room_summary(&normalized_room_id).await?;
+            SummaryTool::SetProjectBluf { markdown } => {
+                let normalized_project_id = normalize_project_id(project_id);
+                let mut snapshot = self.get_project_summary(&normalized_project_id).await?;
                 snapshot.bluf_markdown = markdown.trim().to_owned();
-                self.set_room_summary(&normalized_room_id, &snapshot)
+                self.set_project_summary(&normalized_project_id, &snapshot)
                     .await?;
                 Ok(ToolExecutionResult {
                     success: true,
-                    message: format!("updated room BLUF for {normalized_room_id}"),
+                    message: format!("updated project BLUF for {normalized_project_id}"),
                 })
             }
-            SummaryTool::SetRoomDetailedSummary { markdown } => {
-                let normalized_room_id = normalize_room_id(room_id);
-                let mut snapshot = self.get_room_summary(&normalized_room_id).await?;
+            SummaryTool::SetProjectDetailedSummary { markdown } => {
+                let normalized_project_id = normalize_project_id(project_id);
+                let mut snapshot = self.get_project_summary(&normalized_project_id).await?;
                 snapshot.detailed_summary_markdown = markdown.trim().to_owned();
-                self.set_room_summary(&normalized_room_id, &snapshot)
+                self.set_project_summary(&normalized_project_id, &snapshot)
                     .await?;
                 Ok(ToolExecutionResult {
                     success: true,
-                    message: format!("updated room detailed summary for {normalized_room_id}"),
+                    message: format!(
+                        "updated project detailed summary for {normalized_project_id}"
+                    ),
                 })
             }
             SummaryTool::SetEmployeeBluf {
@@ -581,22 +599,22 @@ impl SummaryDb {
                 markdown,
                 ..
             } => {
-                let normalized_room_id = normalize_room_id(room_id);
-                let mut snapshot = self.get_room_summary(&normalized_room_id).await?;
+                let normalized_project_id = normalize_project_id(project_id);
+                let mut snapshot = self.get_project_summary(&normalized_project_id).await?;
                 upsert_employee_bluf(
                     &mut snapshot.employees,
                     employee_user_id.trim(),
                     employee_name.trim(),
-                    vec![normalized_room_id.clone()],
+                    vec![normalized_project_id.clone()],
                     markdown.trim(),
                     now_rfc3339()?,
                 );
-                self.set_room_summary(&normalized_room_id, &snapshot)
+                self.set_project_summary(&normalized_project_id, &snapshot)
                     .await?;
                 Ok(ToolExecutionResult {
                     success: true,
                     message: format!(
-                        "updated employee BLUF for {} in {normalized_room_id}",
+                        "updated employee BLUF for {} in {normalized_project_id}",
                         employee_name.trim()
                     ),
                 })
@@ -605,15 +623,15 @@ impl SummaryDb {
                 employee_user_id,
                 employee_name,
             } => {
-                let normalized_room_id = normalize_room_id(room_id);
-                let mut snapshot = self.get_room_summary(&normalized_room_id).await?;
+                let normalized_project_id = normalize_project_id(project_id);
+                let mut snapshot = self.get_project_summary(&normalized_project_id).await?;
                 let result = remove_employee_bluf(
                     &mut snapshot,
                     employee_user_id.trim(),
                     employee_name.trim(),
                 );
                 if result.changed {
-                    self.set_room_summary(&normalized_room_id, &snapshot)
+                    self.set_project_summary(&normalized_project_id, &snapshot)
                         .await?;
                 }
                 Ok(ToolExecutionResult {
@@ -623,7 +641,7 @@ impl SummaryDb {
             }
             _ => Ok(ToolExecutionResult {
                 success: false,
-                message: "tool is not available for room summaries".to_owned(),
+                message: "tool is not available for project summaries".to_owned(),
             }),
         }
     }
@@ -654,25 +672,25 @@ impl SummaryDb {
             SummaryTool::SetEmployeeBluf {
                 employee_user_id,
                 employee_name,
-                room_ids,
+                project_ids,
                 markdown,
             } => {
-                let requested_room_ids = normalize_room_ids(room_ids);
-                let known_room_ids = self
-                    .list_room_ids_for_organization(organization_id)
+                let requested_project_ids = normalize_project_ids(project_ids);
+                let known_project_ids = self
+                    .list_project_ids_for_organization(organization_id)
                     .await?
                     .into_iter()
                     .collect::<HashSet<_>>();
-                let valid_room_ids = requested_room_ids
+                let valid_project_ids = requested_project_ids
                     .into_iter()
-                    .filter(|room_id| known_room_ids.contains(room_id))
+                    .filter(|project_id| known_project_ids.contains(project_id))
                     .collect::<Vec<_>>();
 
-                if valid_room_ids.is_empty() {
+                if valid_project_ids.is_empty() {
                     return Ok(ToolExecutionResult {
                         success: false,
                         message:
-                            "room_ids must include at least one valid room for the organization"
+                            "project_ids must include at least one valid project for the organization"
                                 .to_owned(),
                     });
                 }
@@ -682,7 +700,7 @@ impl SummaryDb {
                     &mut snapshot.employees,
                     employee_user_id.trim(),
                     employee_name.trim(),
-                    valid_room_ids,
+                    valid_project_ids,
                     markdown.trim(),
                     now_rfc3339()?,
                 );
@@ -744,42 +762,46 @@ impl SummaryDb {
             .unwrap_or_default())
     }
 
-    async fn list_room_blufs_for_organization(
+    async fn list_project_blufs_for_organization(
         &self,
         organization_id: &str,
-    ) -> Result<Vec<RoomBlufSnapshot>> {
+    ) -> Result<Vec<ProjectBlufSnapshot>> {
         let rows = sqlx::query(
             r#"
             SELECT
-              rooms.room_id,
-              room_summaries.content_json,
-              room_summaries.updated_at
-            FROM rooms
-            LEFT JOIN room_summaries ON room_summaries.room_id = rooms.room_id
-            WHERE rooms.organization_id = $1
-            ORDER BY rooms.created_at DESC, rooms.room_id DESC
+              projects.project_id,
+              project_summaries.content_json,
+              project_summaries.updated_at
+            FROM projects
+            LEFT JOIN project_summaries ON project_summaries.project_id = projects.project_id
+            WHERE projects.organization_id = $1
+            ORDER BY projects.created_at DESC, projects.project_id DESC
             "#,
         )
         .bind(organization_id)
         .fetch_all(&self.pool)
         .await
-        .with_context(|| format!("failed to list room BLUFs for organization {organization_id}"))?;
+        .with_context(|| {
+            format!("failed to list project BLUFs for organization {organization_id}")
+        })?;
 
         rows.into_iter()
             .map(|row| {
-                let room_id: String = row.try_get("room_id").context("failed to decode room_id")?;
+                let project_id: String = row
+                    .try_get("project_id")
+                    .context("failed to decode project_id")?;
                 let snapshot = row
-                    .try_get::<Option<Json<RoomSnapshot>>, _>("content_json")
-                    .context("failed to decode room_summaries.content_json")?
-                    .map(|json| normalize_room_snapshot(json.0))
+                    .try_get::<Option<Json<ProjectSnapshot>>, _>("content_json")
+                    .context("failed to decode project_summaries.content_json")?
+                    .map(|json| normalize_project_snapshot(json.0))
                     .unwrap_or_default();
                 let updated_at = row
                     .try_get::<Option<OffsetDateTime>, _>("updated_at")
-                    .context("failed to decode room_summaries.updated_at")?
+                    .context("failed to decode project_summaries.updated_at")?
                     .map(format_timestamp)
                     .transpose()?;
-                Ok(RoomBlufSnapshot {
-                    room_id: normalize_room_id(&room_id),
+                Ok(ProjectBlufSnapshot {
+                    project_id: normalize_project_id(&project_id),
                     bluf_markdown: snapshot.bluf_markdown,
                     last_update_at: updated_at.unwrap_or_default(),
                 })
@@ -820,19 +842,19 @@ fn map_stored_hook_event(row: &sqlx::postgres::PgRow) -> Result<StoredHookEvent>
     })
 }
 
-fn normalize_room_id(room_id: &str) -> String {
-    room_id.trim().to_ascii_uppercase()
+fn normalize_project_id(project_id: &str) -> String {
+    project_id.trim().to_ascii_uppercase()
 }
 
-fn normalize_room_ids(room_ids: Vec<String>) -> Vec<String> {
+fn normalize_project_ids(project_ids: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut normalized = Vec::new();
-    for room_id in room_ids {
-        let room_id = normalize_room_id(&room_id);
-        if room_id.is_empty() || !seen.insert(room_id.clone()) {
+    for project_id in project_ids {
+        let project_id = normalize_project_id(&project_id);
+        if project_id.is_empty() || !seen.insert(project_id.clone()) {
             continue;
         }
-        normalized.push(room_id);
+        normalized.push(project_id);
     }
     normalized
 }
@@ -841,14 +863,14 @@ fn normalize_employee_snapshot(snapshot: EmployeeSnapshot) -> EmployeeSnapshot {
     EmployeeSnapshot {
         employee_user_id: snapshot.employee_user_id.trim().to_owned(),
         employee_name: snapshot.employee_name,
-        room_ids: normalize_room_ids(snapshot.room_ids),
+        project_ids: normalize_project_ids(snapshot.project_ids),
         bluf_markdown: snapshot.bluf_markdown,
         last_update_at: snapshot.last_update_at,
     }
 }
 
-fn normalize_room_snapshot(snapshot: RoomSnapshot) -> RoomSnapshot {
-    RoomSnapshot {
+fn normalize_project_snapshot(snapshot: ProjectSnapshot) -> ProjectSnapshot {
+    ProjectSnapshot {
         bluf_markdown: snapshot.bluf_markdown,
         detailed_summary_markdown: snapshot.detailed_summary_markdown,
         employees: snapshot
@@ -862,7 +884,7 @@ fn normalize_room_snapshot(snapshot: RoomSnapshot) -> RoomSnapshot {
 fn normalize_organization_snapshot(snapshot: OrganizationSnapshot) -> OrganizationSnapshot {
     OrganizationSnapshot {
         bluf_markdown: snapshot.bluf_markdown,
-        rooms: snapshot.rooms,
+        projects: snapshot.projects,
         employees: snapshot
             .employees
             .into_iter()
@@ -873,7 +895,7 @@ fn normalize_organization_snapshot(snapshot: OrganizationSnapshot) -> Organizati
 
 fn stored_organization_snapshot(snapshot: OrganizationSnapshot) -> OrganizationSnapshot {
     let mut snapshot = normalize_organization_snapshot(snapshot);
-    snapshot.rooms.clear();
+    snapshot.projects.clear();
     snapshot
 }
 
@@ -881,7 +903,7 @@ fn upsert_employee_bluf(
     employees: &mut Vec<EmployeeSnapshot>,
     employee_user_id: &str,
     employee_name: &str,
-    room_ids: Vec<String>,
+    project_ids: Vec<String>,
     markdown: &str,
     updated_at: String,
 ) {
@@ -895,7 +917,7 @@ fn upsert_employee_bluf(
     {
         existing.employee_user_id = normalized_employee_user_id.to_owned();
         existing.employee_name = employee_name.to_owned();
-        existing.room_ids = room_ids;
+        existing.project_ids = project_ids;
         existing.bluf_markdown = markdown.to_owned();
         existing.last_update_at = updated_at;
         return;
@@ -904,7 +926,7 @@ fn upsert_employee_bluf(
     employees.push(EmployeeSnapshot {
         employee_user_id: normalized_employee_user_id.to_owned(),
         employee_name: employee_name.to_owned(),
-        room_ids,
+        project_ids,
         bluf_markdown: markdown.to_owned(),
         last_update_at: updated_at,
     });
@@ -944,7 +966,7 @@ trait EmployeeSnapshotContainer {
     fn employees_mut(&mut self) -> &mut Vec<EmployeeSnapshot>;
 }
 
-impl EmployeeSnapshotContainer for RoomSnapshot {
+impl EmployeeSnapshotContainer for ProjectSnapshot {
     fn employees_mut(&mut self) -> &mut Vec<EmployeeSnapshot> {
         &mut self.employees
     }

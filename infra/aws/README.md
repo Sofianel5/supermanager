@@ -58,7 +58,7 @@ After apply, set these repository variables from the Terraform outputs:
 
 The deploy workflow assumes both ECS services already exist, runs only from `master`, pushes the backend image to ECR as `:latest`, rolls the API service first so it can apply migrations, then restarts the summary worker service.
 
-The API task definition is managed in Terraform and no longer mounts EFS. The summary worker task definition runs the Rust `summary-agent` binary directly, mounts EFS at `/srv/supermanager`, and sets `SUPERMANAGER_DATA_DIR=/srv/supermanager` in the container environment. The API service now rolls with `desired_count = 1`, `deployment_minimum_healthy_percent = 100`, and `deployment_maximum_percent = 200`, while the summary worker replays room summaries from Postgres using `room_summaries.last_processed_seq`.
+The API task definition is managed in Terraform and no longer mounts EFS. The summary worker task definition runs the Rust `summary-agent` binary directly, mounts EFS at `/srv/supermanager`, and sets `SUPERMANAGER_DATA_DIR=/srv/supermanager` in the container environment. The API service now rolls with `desired_count = 1`, `deployment_minimum_healthy_percent = 100`, and `deployment_maximum_percent = 200`, while the summary worker replays project summaries from Postgres using `project_summaries.last_processed_seq`.
 
 The task definition also injects these auth-related secrets from Secrets Manager:
 

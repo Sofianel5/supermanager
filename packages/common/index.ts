@@ -1,25 +1,25 @@
 export type {
-  CreateRoomRequest,
-  CreateRoomResponse,
+  CreateProjectRequest,
+  CreateProjectResponse,
   FeedResponse,
   HookTurnReport,
   IngestResponse,
-  RoomMetadataResponse,
+  ProjectMetadataResponse,
   StoredHookEvent,
 } from "./api-protocol";
 export type {
   OrganizationMembership,
   OrganizationSummaryResponse,
-  RoomListEntry,
-  RoomListResponse,
-  RoomSummaryResponse,
+  ProjectListEntry,
+  ProjectListResponse,
+  ProjectSummaryResponse,
   ViewerResponse,
   ViewerUser,
 } from "./http-types";
 export type {
   EmployeeSnapshot,
   OrganizationSnapshot,
-  RoomBlufSnapshot,
-  RoomSnapshot,
+  ProjectBlufSnapshot,
+  ProjectSnapshot,
   SummaryStatus,
 } from "./summary-protocol";

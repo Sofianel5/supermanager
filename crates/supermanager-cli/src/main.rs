@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 #[command(
     author,
     version,
-    about = "Create, join, list, or leave supermanager rooms from the CLI"
+    about = "Create, join, list, or leave supermanager projects from the CLI"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -33,9 +33,9 @@ enum Commands {
         #[command(subcommand)]
         command: CreateCommands,
     },
-    /// Configure the current repo to report into a room.
+    /// Configure the current repo to report into a project.
     Join {
-        room: String,
+        project: String,
         #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
         server: String,
         #[arg(long)]
@@ -48,7 +48,7 @@ enum Commands {
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
-    /// List the rooms currently joined on this machine.
+    /// List the projects currently joined on this machine.
     List,
     /// Install the authenticated Supermanager MCP into global Claude and Codex config.
     Mcp {
@@ -69,8 +69,8 @@ enum Commands {
 
 #[derive(Subcommand, Debug)]
 enum CreateCommands {
-    /// Create a new room from the current git repo, connect it, and copy its dashboard URL.
-    Room {
+    /// Create a new project from the current git repo, connect it, and copy its dashboard URL.
+    Project {
         name: Option<String>,
         #[arg(long, env = "SUPERMANAGER_SERVER_URL", default_value = supermanager::DEFAULT_SERVER_URL)]
         server_url: String,
@@ -229,13 +229,13 @@ fn main() -> Result<()> {
             }
         },
         Commands::Create { command } => match command {
-            CreateCommands::Room {
+            CreateCommands::Project {
                 name,
                 server_url,
                 org,
                 cwd,
             } => {
-                let outcome = supermanager::create_room(supermanager::CreateRoomConfig {
+                let outcome = supermanager::create_project(supermanager::CreateProjectConfig {
                     home_dir: home_dir.clone(),
                     organization_slug: org.clone(),
                     server_url: server_url.clone(),
@@ -245,7 +245,7 @@ fn main() -> Result<()> {
                 let join_outcome = supermanager::join_repo(supermanager::JoinConfig {
                     server_url: server_url,
                     organization_slug: org,
-                    room_id: outcome.room_id.clone(),
+                    project_id: outcome.project_id.clone(),
                     repo_dir: outcome.repo_dir.clone(),
                     home_dir,
                 });
@@ -253,28 +253,31 @@ fn main() -> Result<()> {
                 match join_outcome {
                     Ok(join_outcome) => {
                         println!();
-                        println!("  \x1b[32m✓\x1b[0m \x1b[1mRoom created\x1b[0m");
+                        println!("  \x1b[32m✓\x1b[0m \x1b[1mProject created\x1b[0m");
                         println!();
-                        println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
-                        println!("    \x1b[2mName\x1b[0m       {}", outcome.room_name);
+                        println!("    \x1b[2mProject\x1b[0m    {}", outcome.project_id);
+                        println!("    \x1b[2mName\x1b[0m       {}", outcome.project_name);
                         println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
                         println!(
                             "    \x1b[2mRepo\x1b[0m       {}",
                             outcome.repo_dir.display()
                         );
                         println!("    \x1b[2mShare\x1b[0m      {}", outcome.join_command);
-                        println!("    \x1b[2mEmployee\x1b[0m   {}", join_outcome.display_name);
+                        println!(
+                            "    \x1b[2mEmployee\x1b[0m   {}",
+                            join_outcome.employee_name
+                        );
                         println!();
                         print_clipboard_status(&outcome.dashboard_url);
                     }
                     Err(error) => {
                         println!();
                         println!(
-                            "  \x1b[33m!\x1b[0m \x1b[1mRoom created, repo setup incomplete\x1b[0m"
+                            "  \x1b[33m!\x1b[0m \x1b[1mProject created, repo setup incomplete\x1b[0m"
                         );
                         println!();
-                        println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
-                        println!("    \x1b[2mName\x1b[0m       {}", outcome.room_name);
+                        println!("    \x1b[2mProject\x1b[0m    {}", outcome.project_id);
+                        println!("    \x1b[2mName\x1b[0m       {}", outcome.project_name);
                         println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
                         println!(
                             "    \x1b[2mRepo\x1b[0m       {}",
@@ -285,8 +288,8 @@ fn main() -> Result<()> {
                         print_clipboard_status(&outcome.dashboard_url);
                         return Err(error).with_context(|| {
                             format!(
-                                "room {} was created, but joining repo {} failed; run `{}` after fixing the repo setup",
-                                outcome.room_id,
+                                "project {} was created, but joining repo {} failed; run `{}` after fixing the repo setup",
+                                outcome.project_id,
                                 outcome.repo_dir.display(),
                                 outcome.join_command
                             )
@@ -296,7 +299,7 @@ fn main() -> Result<()> {
             }
         },
         Commands::Join {
-            room,
+            project,
             server,
             org,
             cwd,
@@ -304,16 +307,16 @@ fn main() -> Result<()> {
             let outcome = supermanager::join_repo(supermanager::JoinConfig {
                 server_url: server,
                 organization_slug: org,
-                room_id: room,
+                project_id: project,
                 repo_dir: cwd,
                 home_dir,
             })?;
 
             println!();
-            println!("  \x1b[32m✓\x1b[0m \x1b[1mJoined room\x1b[0m");
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mJoined project\x1b[0m");
             println!();
-            println!("    \x1b[2mRoom\x1b[0m       {}", outcome.room_id);
-            println!("    \x1b[2mEmployee\x1b[0m   {}", outcome.display_name);
+            println!("    \x1b[2mProject\x1b[0m    {}", outcome.project_id);
+            println!("    \x1b[2mEmployee\x1b[0m   {}", outcome.employee_name);
             println!("    \x1b[2mDashboard\x1b[0m  {}", outcome.dashboard_url);
             println!(
                 "    \x1b[2mRepo\x1b[0m       {}",
@@ -327,14 +330,14 @@ fn main() -> Result<()> {
 
             println!();
             if outcome.removed_paths.is_empty() {
-                println!("  \x1b[33m!\x1b[0m \x1b[1mNo room config found in this repo\x1b[0m");
+                println!("  \x1b[33m!\x1b[0m \x1b[1mNo project config found in this repo\x1b[0m");
                 println!();
                 println!(
                     "    \x1b[2mRepo\x1b[0m       {}",
                     outcome.repo_dir.display()
                 );
             } else {
-                println!("  \x1b[32m✓\x1b[0m \x1b[1mLeft room\x1b[0m");
+                println!("  \x1b[32m✓\x1b[0m \x1b[1mLeft project\x1b[0m");
                 println!();
                 println!(
                     "    \x1b[2mRepo\x1b[0m       {}",
@@ -347,29 +350,29 @@ fn main() -> Result<()> {
             }
         }
         Commands::List => {
-            let outcome = supermanager::list_rooms(&home_dir)?;
+            let outcome = supermanager::list_projects(&home_dir)?;
 
-            if outcome.rooms.is_empty() {
+            if outcome.projects.is_empty() {
                 println!();
-                println!("  \x1b[33m!\x1b[0m \x1b[1mNo joined rooms\x1b[0m");
+                println!("  \x1b[33m!\x1b[0m \x1b[1mNo joined projects\x1b[0m");
                 println!();
-                println!("    Join one with `supermanager join <room-code>` inside a git repo");
+                println!("    Join one with `supermanager join <project-id>` inside a git repo");
                 return Ok(());
             }
 
             let repo_count = outcome
-                .rooms
+                .projects
                 .iter()
-                .map(|room| room.repo_dirs.len())
+                .map(|project| project.repo_dirs.len())
                 .sum::<usize>();
 
             println!();
-            println!("  \x1b[32m✓\x1b[0m \x1b[1mJoined rooms\x1b[0m");
+            println!("  \x1b[32m✓\x1b[0m \x1b[1mJoined projects\x1b[0m");
             println!();
-            println!("    \x1b[2mRooms\x1b[0m      {}", outcome.rooms.len());
+            println!("    \x1b[2mProjects\x1b[0m   {}", outcome.projects.len());
             println!("    \x1b[2mRepos\x1b[0m      {}", repo_count);
             println!();
-            print_joined_rooms(&outcome.rooms);
+            print_joined_projects(&outcome.projects);
         }
         Commands::Mcp { command } => match command {
             McpCommands::Install { server } => {
@@ -443,48 +446,48 @@ fn print_invite_request_guidance(rerun_command: &str) {
     println!();
 }
 
-fn print_joined_rooms(rooms: &[supermanager::ListRoomEntry]) {
-    let room_width = rooms
+fn print_joined_projects(projects: &[supermanager::ListProjectEntry]) {
+    let project_width = projects
         .iter()
-        .map(|room| room.room_id.len())
+        .map(|project| project.project_id.len())
         .max()
         .unwrap_or(4)
         .max(4);
-    let org_width = rooms
+    let org_width = projects
         .iter()
-        .map(|room| room.organization_slug.len())
+        .map(|project| project.organization_slug.len())
         .max()
         .unwrap_or(3)
         .max(3);
-    let repo_width = rooms
+    let repo_width = projects
         .iter()
-        .map(|room| room.repo_dirs.len().to_string().len())
+        .map(|project| project.repo_dirs.len().to_string().len())
         .max()
         .unwrap_or(5)
         .max(5);
 
     println!(
-        "    {:room_width$}  {:org_width$}  {:>repo_width$}  Server",
-        "Room",
+        "    {:project_width$}  {:org_width$}  {:>repo_width$}  Server",
+        "Project",
         "Org",
         "Repos",
-        room_width = room_width,
+        project_width = project_width,
         org_width = org_width,
         repo_width = repo_width,
     );
 
-    for room in rooms {
+    for project in projects {
         println!(
-            "    {:room_width$}  {:org_width$}  {:>repo_width$}  {}",
-            room.room_id,
-            room.organization_slug,
-            room.repo_dirs.len(),
-            room.server_url,
-            room_width = room_width,
+            "    {:project_width$}  {:org_width$}  {:>repo_width$}  {}",
+            project.project_id,
+            project.organization_slug,
+            project.repo_dirs.len(),
+            project.server_url,
+            project_width = project_width,
             org_width = org_width,
             repo_width = repo_width,
         );
-        for repo_dir in &room.repo_dirs {
+        for repo_dir in &project.repo_dirs {
             println!("      {}", repo_dir.display());
         }
         println!();

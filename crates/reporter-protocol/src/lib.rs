@@ -1,9 +1,9 @@
 mod hook;
-mod room;
+mod project;
 mod summary;
 
 pub use hook::{FeedResponse, HookTurnReport, IngestResponse, StoredHookEvent};
-pub use room::{CreateRoomRequest, CreateRoomResponse, Room, RoomMetadataResponse};
+pub use project::{CreateProjectRequest, CreateProjectResponse, Project, ProjectMetadataResponse};
 pub use summary::{
-    EmployeeSnapshot, OrganizationSnapshot, RoomBlufSnapshot, RoomSnapshot, SummaryStatus,
+    EmployeeSnapshot, OrganizationSnapshot, ProjectBlufSnapshot, ProjectSnapshot, SummaryStatus,
 };

@@ -1,5 +1,5 @@
 import { DropdownButton } from "../dropdown-button";
-import { roomMetaClass, sectionLabelClass } from "../../ui";
+import { projectMetaClass, sectionLabelClass } from "../../ui";
 
 interface WorkspaceHeaderProps {
   activeOrganizationName: string | null;
@@ -28,7 +28,7 @@ export function WorkspaceHeader({
           {activeOrganizationName || "Workspace"}
         </h1>
         {userEmail && (
-          <p className={roomMetaClass}>
+          <p className={projectMetaClass}>
             <span>{userEmail}</span>
             {activeOrganizationSlug && <span>{activeOrganizationSlug}</span>}
           </p>

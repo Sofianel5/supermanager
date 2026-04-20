@@ -83,34 +83,34 @@ export class FeedStreamClient {
 }
 
 export class FeedStreamHub {
-  private readonly rooms = new Map<string, Set<FeedStreamClient>>();
+  private readonly projects = new Map<string, Set<FeedStreamClient>>();
   private readonly allowedOrigins: Set<string>;
 
   constructor(allowedOrigins: string[] = []) {
     this.allowedOrigins = new Set(allowedOrigins);
   }
 
-  register(roomId: string, origin: string | null): FeedStreamClient {
+  register(projectId: string, origin: string | null): FeedStreamClient {
     const validatedOrigin = origin && this.allowedOrigins.has(origin) ? origin : null;
     let client: FeedStreamClient;
-    const listeners = this.rooms.get(roomId) ?? new Set<FeedStreamClient>();
+    const listeners = this.projects.get(projectId) ?? new Set<FeedStreamClient>();
 
     const cleanup = () => {
       listeners.delete(client);
       if (!listeners.size) {
-        this.rooms.delete(roomId);
+        this.projects.delete(projectId);
       }
     };
 
     client = new FeedStreamClient(cleanup, validatedOrigin);
     listeners.add(client);
-    this.rooms.set(roomId, listeners);
+    this.projects.set(projectId, listeners);
 
     return client;
   }
 
-  publishHookEvent(roomId: string, event: StoredHookEvent): void {
-    const listeners = this.rooms.get(roomId);
+  publishHookEvent(projectId: string, event: StoredHookEvent): void {
+    const listeners = this.projects.get(projectId);
     if (!listeners) {
       return;
     }

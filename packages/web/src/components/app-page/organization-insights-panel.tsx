@@ -6,8 +6,8 @@ import { formatRelativeTime } from "../../lib/format-relative-time";
 import type {
   EmployeeSnapshot,
   OrganizationSnapshot,
-  RoomBlufSnapshot,
-  RoomListEntry,
+  ProjectBlufSnapshot,
+  ProjectListEntry,
   SummaryStatus,
   OrganizationMembership,
 } from "../../api";
@@ -27,7 +27,7 @@ interface OrganizationInsightsPanelProps {
   error: string | null;
   isLoading: boolean;
   organizationSummary: OrganizationSnapshot | null;
-  rooms: RoomListEntry[];
+  projects: ProjectListEntry[];
   summaryStatus: SummaryStatus;
 }
 
@@ -36,14 +36,14 @@ export function OrganizationInsightsPanel({
   error,
   isLoading,
   organizationSummary,
-  rooms,
+  projects,
   summaryStatus,
 }: OrganizationInsightsPanelProps) {
   const [clock, setClock] = useState(() => Date.now());
   const employees = organizationSummary?.employees ?? [];
-  const roomBlufs = organizationSummary?.rooms ?? [];
-  const roomNames = new Map(rooms.map((room) => [room.room_id, room.name]));
-  const roomMetadata = new Map(rooms.map((room) => [room.room_id, room]));
+  const projectBlufs = organizationSummary?.projects ?? [];
+  const projectNames = new Map(projects.map((project) => [project.project_id, project.name]));
+  const projectMetadata = new Map(projects.map((project) => [project.project_id, project]));
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -87,7 +87,7 @@ export function OrganizationInsightsPanel({
                       clock={clock}
                       employee={employee}
                       key={employeeCardKey(employee)}
-                      roomNames={roomNames}
+                      projectNames={projectNames}
                     />
                   ))}
                 </div>
@@ -98,25 +98,25 @@ export function OrganizationInsightsPanel({
 
             <section className={cx(subduedSurfaceClass, "p-[18px]")}>
               <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <span className={sectionLabelClass}>Rooms</span>
+                <span className={sectionLabelClass}>Projects</span>
                 <span className={`${pillBaseClass} border-border text-ink-dim`}>
-                  {formatCount(roomBlufs.length, "summary", "summaries")}
+                  {formatCount(projectBlufs.length, "summary", "summaries")}
                 </span>
               </div>
 
-              {roomBlufs.length > 0 ? (
+              {projectBlufs.length > 0 ? (
                 <div className="grid gap-4">
-                  {roomBlufs.map((roomBluf) => (
-                    <RoomBlufCard
+                  {projectBlufs.map((projectBluf) => (
+                    <ProjectBlufCard
                       clock={clock}
-                      key={roomBluf.room_id}
-                      roomBluf={roomBluf}
-                      roomMetadata={roomMetadata.get(roomBluf.room_id)}
+                      key={projectBluf.project_id}
+                      projectBluf={projectBluf}
+                      projectMetadata={projectMetadata.get(projectBluf.project_id)}
                     />
                   ))}
                 </div>
               ) : (
-                <p className={messageClass}>No room summaries yet.</p>
+                <p className={messageClass}>No project summaries yet.</p>
               )}
             </section>
           </div>
@@ -129,11 +129,11 @@ export function OrganizationInsightsPanel({
 function EmployeeBlufCard({
   clock,
   employee,
-  roomNames,
+  projectNames,
 }: {
   clock: number;
   employee: EmployeeSnapshot;
-  roomNames: Map<string, string>;
+  projectNames: Map<string, string>;
 }) {
   return (
     <article className="border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px]">
@@ -150,13 +150,13 @@ function EmployeeBlufCard({
           </time>
         </div>
         <div className="flex flex-wrap gap-2">
-          {employee.room_ids.map((roomId) => (
+          {employee.project_ids.map((projectId) => (
             <Link
               className="inline-flex min-h-[28px] items-center border border-border px-2.5 font-mono text-[11px] uppercase text-ink-dim no-underline transition duration-150 hover:border-border-strong hover:text-ink"
-              key={roomId}
-              to={`/r/${roomId}`}
+              key={projectId}
+              to={`/p/${projectId}`}
             >
-              {roomNames.get(roomId) ?? roomId}
+              {projectNames.get(projectId) ?? projectId}
             </Link>
           ))}
         </div>
@@ -166,14 +166,14 @@ function EmployeeBlufCard({
   );
 }
 
-function RoomBlufCard({
+function ProjectBlufCard({
   clock,
-  roomBluf,
-  roomMetadata,
+  projectBluf,
+  projectMetadata,
 }: {
   clock: number;
-  roomBluf: RoomBlufSnapshot;
-  roomMetadata?: RoomListEntry;
+  projectBluf: ProjectBlufSnapshot;
+  projectMetadata?: ProjectListEntry;
 }) {
   return (
     <article className="border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px]">
@@ -182,33 +182,33 @@ function RoomBlufCard({
           <div className="min-w-0">
             <Link
               className="text-[1.05rem] font-semibold text-ink no-underline transition hover:text-accent"
-              to={`/r/${roomBluf.room_id}`}
+              to={`/p/${projectBluf.project_id}`}
             >
-              {roomMetadata?.name ?? roomBluf.room_id}
+              {projectMetadata?.name ?? projectBluf.project_id}
             </Link>
-            {roomMetadata?.name ? (
+            {projectMetadata?.name ? (
               <p className="mt-2 font-mono text-[0.72rem] text-ink-muted">
-                {roomBluf.room_id}
+                {projectBluf.project_id}
               </p>
             ) : null}
           </div>
           <time
             className="font-mono text-[0.72rem] text-ink-muted"
-            dateTime={roomBluf.last_update_at}
+            dateTime={projectBluf.last_update_at}
           >
-            {formatRelativeTime(roomBluf.last_update_at, clock)}
+            {formatRelativeTime(projectBluf.last_update_at, clock)}
           </time>
         </div>
 
-        {roomMetadata ? (
+        {projectMetadata ? (
           <p className="font-mono text-[0.76rem] text-ink-dim">
-            {roomMetadata.employee_count} employee
-            {roomMetadata.employee_count === 1 ? "" : "s"}
+            {projectMetadata.employee_count} employee
+            {projectMetadata.employee_count === 1 ? "" : "s"}
           </p>
         ) : null}
       </div>
 
-      <MarkdownBlock markdown={roomBluf.bluf_markdown} />
+      <MarkdownBlock markdown={projectBluf.bluf_markdown} />
     </article>
   );
 }

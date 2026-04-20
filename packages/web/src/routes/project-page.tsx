@@ -11,8 +11,8 @@ import {
 import {
   api,
   type FeedResponse,
-  type RoomSnapshot,
-  type RoomSummaryResponse,
+  type ProjectSnapshot,
+  type ProjectSummaryResponse,
   type StoredHookEvent,
   type SummaryStatus,
 } from "../api";
@@ -20,10 +20,10 @@ import { CopyPanel } from "../components/copy-panel";
 import { DropdownButton } from "../components/dropdown-button";
 import {
   FEED_LIMIT,
-  roomFeedQueryKey,
-  roomSummaryQueryOptions,
-  useRoomData,
-} from "../queries/room";
+  projectFeedQueryKey,
+  projectSummaryQueryOptions,
+  useProjectData,
+} from "../queries/project";
 import { findOrganizationBySlug, viewerQueryOptions } from "../queries/workspace";
 import {
   accentSurfaceClass,
@@ -31,7 +31,7 @@ import {
   messageClass,
   pageShellClass,
   pillBaseClass,
-  roomMetaClass,
+  projectMetaClass,
   secondaryButtonClass,
   sectionLabelClass,
   subduedSurfaceClass,
@@ -46,25 +46,25 @@ type FeedMessageKind = "model" | "update" | "user";
 const FEED_MESSAGE_PREVIEW_LENGTH = 320;
 const FEED_FILE_PREVIEW_LIMIT = 4;
 
-export function RoomPage() {
-  const { roomId = "" } = useParams();
+export function ProjectPage() {
+  const { projectId = "" } = useParams();
   const queryClient = useQueryClient();
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("connecting");
   const { copiedValue, copy } = useCopyHandler();
   const [clock, setClock] = useState(() => Date.now());
-  const { feedQuery, roomQuery, summaryQuery } = useRoomData(roomId);
+  const { feedQuery, projectQuery, summaryQuery } = useProjectData(projectId);
   const viewerQuery = useQuery(viewerQueryOptions());
 
-  const room = roomQuery.data ?? null;
+  const project = projectQuery.data ?? null;
   const events = flattenFeedEvents(feedQuery.data?.pages);
   const totalEventCount = feedQuery.data?.pages[0]?.total_count ?? events.length;
-  const summary = summaryQuery.data ?? emptyRoomSummaryResponse();
+  const summary = summaryQuery.data ?? emptyProjectSummaryResponse();
   const snapshot = summary.summary;
   const latestEventSeq = events[0]?.seq ?? 0;
   const organization = findOrganizationBySlug(
     viewerQuery.data?.organizations ?? [],
-    room?.organization_slug ?? null,
+    project?.organization_slug ?? null,
   );
   const summaryStatus =
     !summaryQuery.data && summaryQuery.isPending
@@ -75,22 +75,24 @@ export function RoomPage() {
       ? readMessage(feedQuery.error)
       : null;
   const error =
-    !roomId
-      ? "Room not found."
-      : roomQuery.isError && !room
-        ? readMessage(roomQuery.error)
+    !projectId
+      ? "Project not found."
+      : projectQuery.isError && !project
+        ? readMessage(projectQuery.error)
         : feedQuery.isError && events.length === 0
           ? readMessage(feedQuery.error)
           : summaryQuery.isError && !summaryQuery.data
             ? readMessage(summaryQuery.error)
             : null;
 
-  const canonicalRoomId = room?.room_id || roomId;
+  const canonicalProjectId = project?.project_id || projectId;
   const organizationLabel = formatOrganizationLabel(
     organization?.organization_name ?? null,
-    room?.organization_slug ?? null,
+    project?.organization_slug ?? null,
   );
-  const organizationHref = buildOrganizationHref(room?.organization_slug ?? null);
+  const organizationHref = buildOrganizationHref(
+    project?.organization_slug ?? null,
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -103,14 +105,14 @@ export function RoomPage() {
   }, []);
 
   useEffect(() => {
-    if (!roomId) {
+    if (!projectId) {
       return;
     }
 
     let disposed = false;
     setConnectionStatus("connecting");
 
-    const stream = api.openRoomStream(roomId);
+    const stream = api.openProjectStream(projectId);
 
     stream.onopen = () => {
       if (!disposed) {
@@ -122,7 +124,7 @@ export function RoomPage() {
       try {
         const nextEvent = JSON.parse(event.data) as StoredHookEvent;
         queryClient.setQueryData<InfiniteData<FeedResponse, number | undefined>>(
-          roomFeedQueryKey(roomId),
+          projectFeedQueryKey(projectId),
           (current) => prependFeedEvent(current, nextEvent),
         );
       } catch {
@@ -140,10 +142,10 @@ export function RoomPage() {
       disposed = true;
       stream.close();
     };
-  }, [queryClient, roomId]);
+  }, [projectId, queryClient]);
 
   useEffect(() => {
-    if (!roomId) {
+    if (!projectId) {
       return;
     }
     if (
@@ -157,7 +159,7 @@ export function RoomPage() {
     const refreshSummary = () => {
       void queryClient
         .fetchQuery({
-          ...roomSummaryQueryOptions(roomId),
+          ...projectSummaryQueryOptions(projectId),
           staleTime: 0,
         })
         .catch(() => undefined);
@@ -176,8 +178,8 @@ export function RoomPage() {
     };
   }, [
     latestEventSeq,
+    projectId,
     queryClient,
-    roomId,
     summary.last_processed_seq,
     summary.status,
   ]);
@@ -185,9 +187,9 @@ export function RoomPage() {
   if (error) {
     return (
       <main className={cx(pageShellClass, "grid min-h-[60vh] content-center gap-3")}>
-        <div className={sectionLabelClass}>Room</div>
+        <div className={sectionLabelClass}>Project</div>
         <h1 className="m-0 text-4xl font-semibold leading-none text-ink sm:text-5xl">
-          {roomId || "unknown"}
+          {projectId || "unknown"}
         </h1>
         <p className="m-0 text-[0.95rem] leading-7 text-danger">{error}</p>
         <Link className={secondaryButtonClass} to={organizationHref}>
@@ -211,17 +213,17 @@ export function RoomPage() {
             <span>{`Back to ${organizationLabel}`}</span>
           </Link>
           <h1 className="mt-5 max-w-full text-4xl font-semibold leading-none text-ink sm:text-5xl lg:text-6xl">
-            {room?.name || roomId}
+            {project?.name || projectId}
           </h1>
-          <p className={cx(roomMetaClass, "mt-4")}>
-            <span>{canonicalRoomId}</span>
+          <p className={cx(projectMetaClass, "mt-4")}>
+            <span>{canonicalProjectId}</span>
             <span className={cx(pillBaseClass, connectionToneClass(connectionStatus))}>
               {connectionStatus}
             </span>
           </p>
         </div>
         <div className="w-full md:max-w-[19rem]">
-          <DropdownButton label="Room info">
+          <DropdownButton label="Project info">
             <>
               <CopyPanel
                 copiedValue={copiedValue}
@@ -233,7 +235,10 @@ export function RoomPage() {
                 copiedValue={copiedValue}
                 label="Join another repo"
                 onCopy={copy}
-                value={room?.join_command ?? `supermanager join ${canonicalRoomId}`}
+                value={
+                  project?.join_command ??
+                  `supermanager join ${canonicalProjectId}`
+                }
               />
             </>
           </DropdownButton>
@@ -461,7 +466,7 @@ function SummaryContent({
   summaryStatus,
 }: {
   clock: number;
-  snapshot: RoomSnapshot;
+  snapshot: ProjectSnapshot;
   summaryStatus: UiSummaryStatus;
 }) {
   const hasContent = hasSnapshotContent(snapshot);
@@ -559,7 +564,7 @@ function SummaryContent({
   );
 }
 
-function emptyRoomSnapshot(): RoomSnapshot {
+function emptyProjectSnapshot(): ProjectSnapshot {
   return {
     bluf_markdown: "",
     detailed_summary_markdown: "",
@@ -567,15 +572,15 @@ function emptyRoomSnapshot(): RoomSnapshot {
   };
 }
 
-function emptyRoomSummaryResponse(): RoomSummaryResponse {
+function emptyProjectSummaryResponse(): ProjectSummaryResponse {
   return {
     last_processed_seq: 0,
     status: "ready",
-    summary: emptyRoomSnapshot(),
+    summary: emptyProjectSnapshot(),
   };
 }
 
-function hasSnapshotContent(snapshot: RoomSnapshot) {
+function hasSnapshotContent(snapshot: ProjectSnapshot) {
   return Boolean(
     snapshot.bluf_markdown.trim() ||
       snapshot.detailed_summary_markdown.trim() ||
@@ -591,7 +596,7 @@ function employeeSummaryKey(employee: {
 }
 
 function getSummaryStatus(
-  summary: RoomSummaryResponse,
+  summary: ProjectSummaryResponse,
   latestEventSeq: number,
 ): UiSummaryStatus {
   if (summary.status === "error") {

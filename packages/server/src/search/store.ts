@@ -1,5 +1,5 @@
 import type { Db } from "../db";
-import { normalizeRoomId } from "../db";
+import { normalizeProjectId } from "../db";
 import type { StoredHookEvent } from "../types";
 import { embedText } from "./embeddings";
 import { buildHookEventSearchText } from "./text";
@@ -34,7 +34,7 @@ interface SearchResultRow extends EventResultRow {
 
 export interface EventQueryFilters {
   organizationId: string;
-  roomId?: string;
+  projectId?: string;
   employeeName?: string;
   repoRoot?: string;
   branch?: string;
@@ -117,10 +117,10 @@ export async function queryOrganizationEvents(
       h.branch,
       h.payload_json
     FROM hook_events AS h
-    INNER JOIN rooms AS r ON r.room_id = h.room_id
+    INNER JOIN projects AS r ON r.project_id = h.project_id
     LEFT JOIN "user" AS u ON u.id = h.employee_user_id
     WHERE r.organization_id = ${filters.organizationId}
-      AND (${normalizeOptionalRoomId(filters.roomId)}::text IS NULL OR h.room_id = ${normalizeOptionalRoomId(filters.roomId)}::text)
+      AND (${normalizeOptionalProjectId(filters.projectId)}::text IS NULL OR h.project_id = ${normalizeOptionalProjectId(filters.projectId)}::text)
       AND (${filters.employeeName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) = ${filters.employeeName ?? null}::text)
       AND (${filters.repoRoot ?? null}::text IS NULL OR h.repo_root = ${filters.repoRoot ?? null}::text)
       AND (${filters.branch ?? null}::text IS NULL OR h.branch = ${filters.branch ?? null}::text)
@@ -155,11 +155,11 @@ export async function searchEvents(
       h.search_text,
       (1 - (h.embedding <=> ${vector}::vector)) AS score
     FROM hook_events AS h
-    INNER JOIN rooms AS r ON r.room_id = h.room_id
+    INNER JOIN projects AS r ON r.project_id = h.project_id
     LEFT JOIN "user" AS u ON u.id = h.employee_user_id
     WHERE r.organization_id = ${filters.organizationId}
       AND h.embedding IS NOT NULL
-      AND (${normalizeOptionalRoomId(filters.roomId)}::text IS NULL OR h.room_id = ${normalizeOptionalRoomId(filters.roomId)}::text)
+      AND (${normalizeOptionalProjectId(filters.projectId)}::text IS NULL OR h.project_id = ${normalizeOptionalProjectId(filters.projectId)}::text)
       AND (${filters.employeeName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) = ${filters.employeeName ?? null}::text)
       AND (${filters.repoRoot ?? null}::text IS NULL OR h.repo_root = ${filters.repoRoot ?? null}::text)
       AND (${filters.branch ?? null}::text IS NULL OR h.branch = ${filters.branch ?? null}::text)
@@ -199,11 +199,11 @@ async function indexRow(db: Db, row: EventIndexRow): Promise<void> {
   `;
 }
 
-function normalizeOptionalRoomId(roomId: string | undefined): string | null {
-  if (!roomId) {
+function normalizeOptionalProjectId(projectId: string | undefined): string | null {
+  if (!projectId) {
     return null;
   }
-  return normalizeRoomId(roomId);
+  return normalizeProjectId(projectId);
 }
 
 function mapStoredHookEvent(row: EventResultRow): StoredHookEvent {

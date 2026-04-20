@@ -19,7 +19,9 @@ use crate::{
         ensure_object_field, path_basename, read_json_object, read_optional_text,
         run_clipboard_command, write_json_object, write_private_text, write_text,
     },
-    types::{HomeRepoConfig, LeaveOutcome, ListRoomEntry, ListRoomsOutcome, RepoRoomConfig},
+    types::{
+        HomeRepoConfig, LeaveOutcome, ListProjectEntry, ListProjectsOutcome, RepoProjectConfig,
+    },
 };
 
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
@@ -60,7 +62,7 @@ pub fn leave_repo(repo_dir: &Path, home_dir: &Path) -> Result<LeaveOutcome> {
     if remove_command_hook(&repo_dir.join(CODEX_HOOKS_JSON), CODEX_HOOK_COMMAND)? {
         removed_paths.push(CODEX_HOOKS_JSON.to_owned());
     }
-    if remove_repo_room_config(home_dir, &repo_dir)? {
+    if remove_repo_project_config(home_dir, &repo_dir)? {
         removed_paths.push("$HOME/.supermanager/repos.json".to_owned());
     }
 
@@ -70,30 +72,30 @@ pub fn leave_repo(repo_dir: &Path, home_dir: &Path) -> Result<LeaveOutcome> {
     })
 }
 
-pub fn list_rooms(home_dir: &Path) -> Result<ListRoomsOutcome> {
+pub fn list_projects(home_dir: &Path) -> Result<ListProjectsOutcome> {
     let path = home_repo_config_path(home_dir);
     let config = read_home_repo_config(&path)?;
     let mut grouped = BTreeMap::<(String, String, String), Vec<PathBuf>>::new();
 
-    for (repo_dir, room_config) in config.repos {
+    for (repo_dir, project_config) in config.repos {
         grouped
             .entry((
-                room_config.room_id,
-                room_config.server_url,
-                room_config.organization_slug,
+                project_config.project_id,
+                project_config.server_url,
+                project_config.organization_slug,
             ))
             .or_default()
             .push(PathBuf::from(repo_dir));
     }
 
-    let rooms = grouped
+    let projects = grouped
         .into_iter()
         .map(
-            |((room_id, server_url, organization_slug), mut repo_dirs)| {
+            |((project_id, server_url, organization_slug), mut repo_dirs)| {
                 repo_dirs.sort();
-                ListRoomEntry {
+                ListProjectEntry {
                     organization_slug,
-                    room_id,
+                    project_id,
                     server_url,
                     repo_dirs,
                 }
@@ -101,7 +103,7 @@ pub fn list_rooms(home_dir: &Path) -> Result<ListRoomsOutcome> {
         )
         .collect();
 
-    Ok(ListRoomsOutcome { rooms })
+    Ok(ListProjectsOutcome { projects })
 }
 
 pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
@@ -110,20 +112,20 @@ pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
         return Ok(());
     };
 
-    let Some(room_config) = get_repo_room_config(home_dir, &repo_dir)? else {
+    let Some(project_config) = get_repo_project_config(home_dir, &repo_dir)? else {
         return Ok(());
     };
 
     let url = format!(
         "{}/v1/hooks/turn",
-        room_config.server_url.trim_end_matches('/')
+        project_config.server_url.trim_end_matches('/')
     );
 
     let http = build_http_client(REPORT_TIMEOUT_SECONDS)?;
 
     let response = http
         .post(url)
-        .header("x-api-key", &room_config.api_key)
+        .header("x-api-key", &project_config.api_key)
         .json(&report)
         .send()
         .context("failed to post hook turn report")?;
@@ -135,8 +137,8 @@ pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn default_room_name(repo_dir: &Path) -> String {
-    path_basename(repo_dir).unwrap_or_else(|| "supermanager room".to_owned())
+pub(crate) fn default_project_name(repo_dir: &Path) -> String {
+    path_basename(repo_dir).unwrap_or_else(|| "supermanager project".to_owned())
 }
 
 pub(crate) fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
@@ -232,24 +234,24 @@ fn git_command_value(repo_dir: &Path, args: &[&str]) -> Result<Option<String>> {
     }
 }
 
-pub(crate) fn upsert_repo_room_config(
+pub(crate) fn upsert_repo_project_config(
     home_dir: &Path,
     repo_dir: &Path,
-    room_config: RepoRoomConfig,
+    project_config: RepoProjectConfig,
 ) -> Result<()> {
     let path = home_repo_config_path(home_dir);
     let mut config = read_home_repo_config(&path)?;
-    config.repos.insert(repo_key(repo_dir), room_config);
+    config.repos.insert(repo_key(repo_dir), project_config);
     write_home_repo_config(&path, &config)
 }
 
-fn get_repo_room_config(home_dir: &Path, repo_dir: &Path) -> Result<Option<RepoRoomConfig>> {
+fn get_repo_project_config(home_dir: &Path, repo_dir: &Path) -> Result<Option<RepoProjectConfig>> {
     let path = home_repo_config_path(home_dir);
     let config = read_home_repo_config(&path)?;
     Ok(config.repos.get(&repo_key(repo_dir)).cloned())
 }
 
-fn remove_repo_room_config(home_dir: &Path, repo_dir: &Path) -> Result<bool> {
+fn remove_repo_project_config(home_dir: &Path, repo_dir: &Path) -> Result<bool> {
     let path = home_repo_config_path(home_dir);
     if !path.exists() {
         return Ok(false);
@@ -652,22 +654,22 @@ mod tests {
     }
 
     #[test]
-    fn default_room_name_prefers_repo_root_name() {
-        let root = test_dir("default-room-name");
+    fn default_project_name_prefers_repo_root_name() {
+        let root = test_dir("default-project-name");
         let repo_dir = root.join("repo-name");
         let nested_dir = repo_dir.join("nested");
         fs::create_dir_all(&nested_dir).unwrap();
         init_git_repo(&repo_dir);
 
         let resolved_repo_dir = resolve_repo_root(&nested_dir).unwrap();
-        assert_eq!(default_room_name(&resolved_repo_dir), "repo-name");
+        assert_eq!(default_project_name(&resolved_repo_dir), "repo-name");
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn list_rooms_groups_repo_memberships_by_room() {
-        let root = test_dir("list-rooms");
+    fn list_projects_groups_repo_memberships_by_project() {
+        let root = test_dir("list-projects");
         let home_dir = root.join("home");
         let repo_a = root.join("repo-a");
         let repo_b = root.join("repo-b");
@@ -680,55 +682,58 @@ mod tests {
         let mut config = HomeRepoConfig::default();
         config.repos.insert(
             repo_key(&repo_b),
-            RepoRoomConfig {
+            RepoProjectConfig {
                 api_key: "key-b".to_owned(),
                 api_key_id: "key-b-id".to_owned(),
                 organization_slug: "acme".to_owned(),
                 server_url: "https://api.supermanager.dev".to_owned(),
-                room_id: "ALPHA1".to_owned(),
+                project_id: "ALPHA1".to_owned(),
             },
         );
         config.repos.insert(
             repo_key(&repo_a),
-            RepoRoomConfig {
+            RepoProjectConfig {
                 api_key: "key-a".to_owned(),
                 api_key_id: "key-a-id".to_owned(),
                 organization_slug: "acme".to_owned(),
                 server_url: "https://api.supermanager.dev".to_owned(),
-                room_id: "ALPHA1".to_owned(),
+                project_id: "ALPHA1".to_owned(),
             },
         );
         config.repos.insert(
             repo_key(&repo_c),
-            RepoRoomConfig {
+            RepoProjectConfig {
                 api_key: "key-c".to_owned(),
                 api_key_id: "key-c-id".to_owned(),
                 organization_slug: "beta".to_owned(),
                 server_url: "http://127.0.0.1:8787".to_owned(),
-                room_id: "BETA22".to_owned(),
+                project_id: "BETA22".to_owned(),
             },
         );
 
         write_home_repo_config(&home_repo_config_path(&home_dir), &config).unwrap();
 
-        let outcome = list_rooms(&home_dir).unwrap();
+        let outcome = list_projects(&home_dir).unwrap();
 
-        assert_eq!(outcome.rooms.len(), 2);
-        assert_eq!(outcome.rooms[0].room_id, "ALPHA1");
-        assert_eq!(outcome.rooms[0].organization_slug, "acme");
-        assert_eq!(outcome.rooms[0].server_url, "https://api.supermanager.dev");
+        assert_eq!(outcome.projects.len(), 2);
+        assert_eq!(outcome.projects[0].project_id, "ALPHA1");
+        assert_eq!(outcome.projects[0].organization_slug, "acme");
         assert_eq!(
-            outcome.rooms[0].repo_dirs,
+            outcome.projects[0].server_url,
+            "https://api.supermanager.dev"
+        );
+        assert_eq!(
+            outcome.projects[0].repo_dirs,
             vec![
                 canonicalize_best_effort(&repo_a),
                 canonicalize_best_effort(&repo_b)
             ]
         );
-        assert_eq!(outcome.rooms[1].room_id, "BETA22");
-        assert_eq!(outcome.rooms[1].organization_slug, "beta");
-        assert_eq!(outcome.rooms[1].server_url, "http://127.0.0.1:8787");
+        assert_eq!(outcome.projects[1].project_id, "BETA22");
+        assert_eq!(outcome.projects[1].organization_slug, "beta");
+        assert_eq!(outcome.projects[1].server_url, "http://127.0.0.1:8787");
         assert_eq!(
-            outcome.rooms[1].repo_dirs,
+            outcome.projects[1].repo_dirs,
             vec![canonicalize_best_effort(&repo_c)]
         );
 
@@ -736,14 +741,14 @@ mod tests {
     }
 
     #[test]
-    fn list_rooms_returns_empty_when_not_joined_anywhere() {
-        let root = test_dir("list-rooms-empty");
+    fn list_projects_returns_empty_when_not_joined_anywhere() {
+        let root = test_dir("list-projects-empty");
         let home_dir = root.join("home");
         fs::create_dir_all(&home_dir).unwrap();
 
-        let outcome = list_rooms(&home_dir).unwrap();
+        let outcome = list_projects(&home_dir).unwrap();
 
-        assert!(outcome.rooms.is_empty());
+        assert!(outcome.projects.is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -5,19 +5,19 @@ use serde::{Deserialize, Serialize};
 pub struct JoinConfig {
     pub server_url: String,
     pub organization_slug: Option<String>,
-    pub room_id: String,
+    pub project_id: String,
     pub repo_dir: PathBuf,
     pub home_dir: PathBuf,
 }
 
 pub struct JoinOutcome {
-    pub room_id: String,
-    pub display_name: String,
+    pub project_id: String,
+    pub employee_name: String,
     pub dashboard_url: String,
     pub repo_dir: PathBuf,
 }
 
-pub struct CreateRoomConfig {
+pub struct CreateProjectConfig {
     pub home_dir: PathBuf,
     pub organization_slug: Option<String>,
     pub server_url: String,
@@ -97,9 +97,9 @@ pub enum ConfigFileUpdateStatus {
     Unchanged,
 }
 
-pub struct CreateRoomOutcome {
-    pub room_id: String,
-    pub room_name: String,
+pub struct CreateProjectOutcome {
+    pub project_id: String,
+    pub project_name: String,
     pub dashboard_url: String,
     pub join_command: String,
     pub repo_dir: PathBuf,
@@ -110,24 +110,24 @@ pub struct LeaveOutcome {
     pub removed_paths: Vec<String>,
 }
 
-pub struct ListRoomsOutcome {
-    pub rooms: Vec<ListRoomEntry>,
+pub struct ListProjectsOutcome {
+    pub projects: Vec<ListProjectEntry>,
 }
 
-pub struct ListRoomEntry {
+pub struct ListProjectEntry {
     pub organization_slug: String,
-    pub room_id: String,
+    pub project_id: String,
     pub server_url: String,
     pub repo_dirs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct RepoRoomConfig {
+pub(crate) struct RepoProjectConfig {
     pub(crate) api_key: String,
     pub(crate) api_key_id: String,
     pub(crate) organization_slug: String,
     pub(crate) server_url: String,
-    pub(crate) room_id: String,
+    pub(crate) project_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -140,7 +140,7 @@ pub(crate) struct AuthState {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct HomeRepoConfig {
     #[serde(default)]
-    pub(crate) repos: BTreeMap<String, RepoRoomConfig>,
+    pub(crate) repos: BTreeMap<String, RepoProjectConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import type {
-  RoomListEntry,
+  ProjectListEntry,
   OrganizationMembership,
 } from "../../api";
 import {
@@ -16,18 +16,18 @@ interface WorkspacePanelProps {
   activeOrganization: OrganizationMembership | null;
   error: string | null;
   isLoading: boolean;
-  isCreatingRoom: boolean;
-  rooms: RoomListEntry[];
-  onCreateRoom(): void;
+  isCreatingProject: boolean;
+  projects: ProjectListEntry[];
+  onCreateProject(): void;
 }
 
 export function WorkspacePanel({
   activeOrganization,
   error,
-  isCreatingRoom,
+  isCreatingProject,
   isLoading,
-  rooms,
-  onCreateRoom,
+  projects,
+  onCreateProject,
 }: WorkspacePanelProps) {
   return (
     <section className={cx(surfaceClass, "p-[22px]")}>
@@ -40,47 +40,47 @@ export function WorkspacePanel({
       ) : (
         <section className="grid gap-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <span className={sectionLabelClass}>Rooms</span>
+            <span className={sectionLabelClass}>Projects</span>
             <div className="flex flex-wrap items-center justify-end gap-3">
               <button
                 className={primaryButtonClass}
                 type="button"
-                disabled={isCreatingRoom}
-                onClick={onCreateRoom}
+                disabled={isCreatingProject}
+                onClick={onCreateProject}
               >
-                {isCreatingRoom ? "Creating..." : "Create room"}
+                {isCreatingProject ? "Creating..." : "Create project"}
               </button>
             </div>
           </div>
 
-          {rooms.length > 0 ? (
+          {projects.length > 0 ? (
             <div className="grid gap-3.5">
-              {rooms.map((room) => (
+              {projects.map((project) => (
                 <Link
                   className="block border border-border bg-[rgba(6,9,15,0.74)] p-[18px] no-underline transition duration-150 hover:-translate-y-px hover:border-border-strong"
-                  key={room.room_id}
-                  to={`/r/${room.room_id}`}
+                  key={project.project_id}
+                  to={`/p/${project.project_id}`}
                 >
                   <div className="flex flex-col gap-2 text-ink sm:flex-row sm:items-center sm:justify-between">
-                    <strong>{room.name}</strong>
+                    <strong>{project.name}</strong>
                     <span className="font-mono text-[0.78rem] text-ink-muted">
-                      {room.room_id}
+                      {project.project_id}
                     </span>
                   </div>
                   <p className="mt-2.5 flex flex-wrap gap-2.5 font-mono text-[0.76rem] text-ink-dim">
                     <span>
-                      {room.employee_count} employee{room.employee_count === 1 ? "" : "s"}
+                      {project.employee_count} employee{project.employee_count === 1 ? "" : "s"}
                     </span>
-                    <span>{formatDate(room.created_at)}</span>
+                    <span>{formatDate(project.created_at)}</span>
                   </p>
                   <p className="mt-3.5 text-base leading-7 text-ink-dim">
-                    {readBlufPreview(room.bluf_markdown)}
+                    {readBlufPreview(project.bluf_markdown)}
                   </p>
                 </Link>
               ))}
             </div>
           ) : (
-            <p className={messageClass}>No rooms yet.</p>
+            <p className={messageClass}>No projects yet.</p>
           )}
         </section>
       )}

@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use indicatif::ProgressBar;
-use reporter_protocol::RoomMetadataResponse;
+use reporter_protocol::ProjectMetadataResponse;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::json;
@@ -278,21 +278,21 @@ pub(crate) fn get_viewer(
         .context("failed to parse current-account response JSON")
 }
 
-pub(crate) fn fetch_room(
+pub(crate) fn fetch_project(
     http: &Client,
     server_url: &str,
     access_token: &str,
-    room_id: &str,
-) -> Result<RoomMetadataResponse> {
+    project_id: &str,
+) -> Result<ProjectMetadataResponse> {
     let response = authed(http, access_token)
-        .get(format!("{server_url}/v1/rooms/{room_id}"))
+        .get(format!("{server_url}/v1/projects/{project_id}"))
         .send()
-        .with_context(|| format!("failed to fetch room {room_id}"))?;
-    let response = ensure_success(response, "get room")?;
+        .with_context(|| format!("failed to fetch project {project_id}"))?;
+    let response = ensure_success(response, "get project")?;
 
     response
         .json()
-        .context("failed to parse room response JSON")
+        .context("failed to parse project response JSON")
 }
 
 pub(crate) fn create_organization(

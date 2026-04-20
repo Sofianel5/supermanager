@@ -3,7 +3,7 @@ use ts_rs::TS;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export, export_to = "../../../packages/common/summary-protocol/")]
-pub struct RoomSnapshot {
+pub struct ProjectSnapshot {
     #[serde(default)]
     pub bluf_markdown: String,
     #[serde(default)]
@@ -18,7 +18,7 @@ pub struct EmployeeSnapshot {
     pub employee_user_id: String,
     pub employee_name: String,
     #[serde(default)]
-    pub room_ids: Vec<String>,
+    pub project_ids: Vec<String>,
     #[serde(default)]
     pub bluf_markdown: String,
     #[serde(default)]
@@ -27,8 +27,8 @@ pub struct EmployeeSnapshot {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export, export_to = "../../../packages/common/summary-protocol/")]
-pub struct RoomBlufSnapshot {
-    pub room_id: String,
+pub struct ProjectBlufSnapshot {
+    pub project_id: String,
     #[serde(default)]
     pub bluf_markdown: String,
     #[serde(default)]
@@ -41,7 +41,7 @@ pub struct OrganizationSnapshot {
     #[serde(default)]
     pub bluf_markdown: String,
     #[serde(default)]
-    pub rooms: Vec<RoomBlufSnapshot>,
+    pub projects: Vec<ProjectBlufSnapshot>,
     #[serde(default)]
     pub employees: Vec<EmployeeSnapshot>,
 }

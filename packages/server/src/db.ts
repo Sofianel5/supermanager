@@ -3,27 +3,27 @@ import {
   type OrganizationMembership,
   type OrganizationSummaryResponse,
   type OrganizationSnapshot,
-  type RoomListEntry,
-  type RoomBlufSnapshot,
-  type RoomSummaryResponse,
-  type RoomSnapshot,
+  type ProjectListEntry,
+  type ProjectBlufSnapshot,
+  type ProjectSummaryResponse,
+  type ProjectSnapshot,
   type StoredHookEvent,
   type SummaryStatus,
   emptyOrganizationSnapshot,
-  emptyRoomSnapshot,
+  emptyProjectSnapshot,
   formatError,
 } from "./types";
 import { CLI_DEVICE_CLIENT_ID, CLI_USER_AGENT_PREFIX } from "./auth";
 
-const ROOM_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const ROOM_CODE_LENGTH = 6;
+const PROJECT_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const PROJECT_CODE_LENGTH = 6;
 
-interface CreateRoomRow {
+interface CreateProjectRow {
   created_at: unknown;
 }
 
-interface RoomRow {
-  room_id: unknown;
+interface ProjectRow {
+  project_id: unknown;
   name: unknown;
   created_at: unknown;
   organization_id: unknown;
@@ -53,7 +53,7 @@ interface InsertHookEventRow {
 interface HookEventRow {
   seq: unknown;
   event_id: unknown;
-  room_id?: unknown;
+  project_id?: unknown;
   employee_user_id: unknown;
   employee_name: unknown;
   client: unknown;
@@ -73,12 +73,16 @@ interface SummaryRow {
   updated_at?: string | Date | null;
 }
 
-interface RoomSummaryRow {
-  room_id?: unknown;
-  content_json?: RoomSnapshot;
+interface ProjectSummaryRow {
+  project_id?: unknown;
+  content_json?: ProjectSnapshot;
   last_processed_seq?: unknown;
   status: unknown;
   updated_at?: unknown;
+}
+
+interface SummaryStatusRow {
+  status: unknown;
 }
 
 interface HookEventInsert {
@@ -90,12 +94,12 @@ interface HookEventInsert {
   payload: unknown;
 }
 
-interface HookEventWriteContextRow extends RoomRow {
+interface HookEventWriteContextRow extends ProjectRow {
   has_access: unknown;
   user_exists: unknown;
   employee_name: unknown;
 }
-export interface RoomRecord extends RoomListEntry {
+export interface ProjectRecord extends ProjectListEntry {
   created_by_user_id: string;
   organization_id: string;
 }
@@ -232,23 +236,23 @@ export class Db {
     return row ? mapOrganizationMembership(row) : null;
   }
 
-  async createRoom(
+  async createProject(
     organizationId: string,
     createdByUserId: string,
     name: string,
-  ): Promise<{ room_id: string; name: string; created_at: string }> {
+  ): Promise<{ project_id: string; name: string; created_at: string }> {
     for (let attempt = 0; attempt < 10; attempt += 1) {
-      const roomId = generateRoomCode();
+      const projectId = generateProjectCode();
 
       try {
-        const [row] = await this.client<CreateRoomRow[]>`
-          INSERT INTO rooms (room_id, organization_id, created_by_user_id, name)
-          VALUES (${roomId}, ${organizationId}, ${createdByUserId}, ${name})
+        const [row] = await this.client<CreateProjectRow[]>`
+          INSERT INTO projects (project_id, organization_id, created_by_user_id, name)
+          VALUES (${projectId}, ${organizationId}, ${createdByUserId}, ${name})
           RETURNING created_at
         `;
 
         return {
-          room_id: roomId,
+          project_id: projectId,
           name,
           created_at: toRfc3339(row?.created_at),
         };
@@ -257,124 +261,124 @@ export class Db {
           continue;
         }
         throw new Error(
-          `failed to insert room into PostgreSQL: ${formatError(error)}`,
+          `failed to insert project into PostgreSQL: ${formatError(error)}`,
         );
       }
     }
 
-    throw new Error("failed to generate unique room code after 10 attempts");
+    throw new Error("failed to generate unique project code after 10 attempts");
   }
 
-  async listRoomsForOrganization(
+  async listProjectsForOrganization(
     organizationId: string,
-  ): Promise<RoomListEntry[]> {
-    const [rows, roomSummaries] = await Promise.all([
-      this.client<RoomRow[]>`
+  ): Promise<ProjectListEntry[]> {
+    const [rows, projectSummaries] = await Promise.all([
+      this.client<ProjectRow[]>`
         SELECT
-          rooms.room_id,
-          rooms.name,
-          rooms.created_at,
-          rooms.organization_id,
+          projects.project_id,
+          projects.name,
+          projects.created_at,
+          projects.organization_id,
           organization.slug AS organization_slug,
-          rooms.created_by_user_id
-        FROM rooms
-        INNER JOIN organization ON organization.id = rooms.organization_id
-        WHERE rooms.organization_id = ${organizationId}
-        ORDER BY rooms.created_at DESC, rooms.room_id DESC
+          projects.created_by_user_id
+        FROM projects
+        INNER JOIN organization ON organization.id = projects.organization_id
+        WHERE projects.organization_id = ${organizationId}
+        ORDER BY projects.created_at DESC, projects.project_id DESC
       `,
-      this.listStoredRoomSummariesForOrganization(organizationId),
+      this.listStoredProjectSummariesForOrganization(organizationId),
     ]);
 
-    const roomBlufMap = new Map(
-      roomSummaries.map((room) => [room.room_id, room.snapshot.bluf_markdown]),
+    const projectBlufMap = new Map(
+      projectSummaries.map((project) => [project.project_id, project.snapshot.bluf_markdown]),
     );
     const employeeCounts = new Map(
-      roomSummaries.map((room) => [
-        room.room_id,
-        room.snapshot.employees.length,
+      projectSummaries.map((project) => [
+        project.project_id,
+        project.snapshot.employees.length,
       ]),
     );
 
     return rows.map((row) => {
-      const room = mapRoom(row);
+      const project = mapProject(row);
       return {
-        ...room,
-        bluf_markdown: roomBlufMap.get(room.room_id) ?? "",
-        employee_count: employeeCounts.get(room.room_id) ?? 0,
+        ...project,
+        bluf_markdown: projectBlufMap.get(project.project_id) ?? "",
+        employee_count: employeeCounts.get(project.project_id) ?? 0,
       };
     });
   }
 
-  async getRoomWithAccessCheck(
-    roomId: string,
+  async getProjectWithAccessCheck(
+    projectId: string,
     userId: string,
-  ): Promise<RoomRecord | null> {
-    const [row] = await this.client<RoomRow[]>`
+  ): Promise<ProjectRecord | null> {
+    const [row] = await this.client<ProjectRow[]>`
       SELECT
-        rooms.room_id,
-        rooms.name,
-        rooms.created_at,
-        rooms.organization_id,
+        projects.project_id,
+        projects.name,
+        projects.created_at,
+        projects.organization_id,
         organization.slug AS organization_slug,
-        rooms.created_by_user_id
-      FROM rooms
-      INNER JOIN organization ON organization.id = rooms.organization_id
-      INNER JOIN member ON member."organizationId" = rooms.organization_id AND member."userId" = ${userId}
-      WHERE rooms.room_id = ${normalizeRoomId(roomId)}
+        projects.created_by_user_id
+      FROM projects
+      INNER JOIN organization ON organization.id = projects.organization_id
+      INNER JOIN member ON member."organizationId" = projects.organization_id AND member."userId" = ${userId}
+      WHERE projects.project_id = ${normalizeProjectId(projectId)}
     `;
 
-    return row ? mapRoom(row) : null;
+    return row ? mapProject(row) : null;
   }
 
-  async getRoom(roomId: string): Promise<RoomRecord | null> {
-    const [row] = await this.client<RoomRow[]>`
+  async getProject(projectId: string): Promise<ProjectRecord | null> {
+    const [row] = await this.client<ProjectRow[]>`
       SELECT
-        rooms.room_id,
-        rooms.name,
-        rooms.created_at,
-        rooms.organization_id,
+        projects.project_id,
+        projects.name,
+        projects.created_at,
+        projects.organization_id,
         organization.slug AS organization_slug,
-        rooms.created_by_user_id
-      FROM rooms
-      INNER JOIN organization ON organization.id = rooms.organization_id
-      WHERE rooms.room_id = ${normalizeRoomId(roomId)}
+        projects.created_by_user_id
+      FROM projects
+      INNER JOIN organization ON organization.id = projects.organization_id
+      WHERE projects.project_id = ${normalizeProjectId(projectId)}
     `;
 
-    return row ? mapRoom(row) : null;
+    return row ? mapProject(row) : null;
   }
 
   async getHookEventWriteContext(
-    roomId: string,
+    projectId: string,
     userId: string,
   ): Promise<{
-    room: RoomRecord | null;
+    project: ProjectRecord | null;
     hasAccess: boolean;
     userExists: boolean;
     employeeName: string | null;
   }> {
     const [row] = await this.client<HookEventWriteContextRow[]>`
       SELECT
-        rooms.room_id,
-        rooms.name,
-        rooms.created_at,
-        rooms.organization_id,
+        projects.project_id,
+        projects.name,
+        projects.created_at,
+        projects.organization_id,
         organization.slug AS organization_slug,
-        rooms.created_by_user_id,
+        projects.created_by_user_id,
         (member."userId" IS NOT NULL) AS has_access,
         ("user".id IS NOT NULL) AS user_exists,
         COALESCE(
           NULLIF(BTRIM("user".name), ''),
           NULLIF(BTRIM("user".email), '')
         ) AS employee_name
-      FROM rooms
-      INNER JOIN organization ON organization.id = rooms.organization_id
-      LEFT JOIN member ON member."organizationId" = rooms.organization_id AND member."userId" = ${userId}
+      FROM projects
+      INNER JOIN organization ON organization.id = projects.organization_id
+      LEFT JOIN member ON member."organizationId" = projects.organization_id AND member."userId" = ${userId}
       LEFT JOIN "user" ON "user".id = ${userId}
-      WHERE rooms.room_id = ${normalizeRoomId(roomId)}
+      WHERE projects.project_id = ${normalizeProjectId(projectId)}
     `;
 
     return {
-      room: row ? mapRoom(row) : null,
+      project: row ? mapProject(row) : null,
       hasAccess: row ? readBoolean(row.has_access, "has_access") : false,
       userExists: row ? readBoolean(row.user_exists, "user_exists") : false,
       employeeName:
@@ -411,15 +415,15 @@ export class Db {
   }
 
   async insertHookEvent(
-    roomId: string,
+    projectId: string,
     report: HookEventInsert,
   ): Promise<StoredHookEvent> {
-    const normalizedRoomId = normalizeRoomId(roomId);
+    const normalizedProjectId = normalizeProjectId(projectId);
     const eventId = crypto.randomUUID();
     const [row] = await this.client<InsertHookEventRow[]>`
       INSERT INTO hook_events (
         event_id,
-        room_id,
+        project_id,
         employee_user_id,
         employee_name,
         client,
@@ -429,7 +433,7 @@ export class Db {
       )
       VALUES (
         ${eventId},
-        ${normalizedRoomId},
+        ${normalizedProjectId},
         ${report.employee_user_id},
         ${report.employee_name},
         ${report.client},
@@ -454,7 +458,7 @@ export class Db {
   }
 
   async getHookEvents(
-    roomId: string,
+    projectId: string,
     before: number | undefined,
     after: number | undefined,
     limit: number | undefined,
@@ -473,7 +477,7 @@ export class Db {
         h.received_at
       FROM hook_events AS h
       LEFT JOIN "user" AS u ON u.id = h.employee_user_id
-      WHERE h.room_id = ${normalizeRoomId(roomId)}
+      WHERE h.project_id = ${normalizeProjectId(projectId)}
         AND (${before ?? null}::bigint IS NULL OR h.seq < ${before ?? null})
         AND (${after ?? null}::bigint IS NULL OR h.seq > ${after ?? null})
       ORDER BY h.seq DESC
@@ -483,11 +487,11 @@ export class Db {
     return rows.map(mapStoredHookEvent);
   }
 
-  async countHookEvents(roomId: string): Promise<number> {
+  async countHookEvents(projectId: string): Promise<number> {
     const [row] = await this.client<CountRow[]>`
       SELECT COUNT(*)::INT AS count
       FROM hook_events
-      WHERE room_id = ${normalizeRoomId(roomId)}
+      WHERE project_id = ${normalizeProjectId(projectId)}
     `;
 
     return row == null ? 0 : toNumber(row.count);
@@ -496,9 +500,9 @@ export class Db {
   async getOrganizationSummaryResponse(
     organizationId: string,
   ): Promise<OrganizationSummaryResponse> {
-    const [row, rooms] = await Promise.all([
+    const [row, projects] = await Promise.all([
       this.getStoredOrganizationSummaryRow(organizationId),
-      this.listRoomBlufsForOrganization(organizationId),
+      this.listProjectBlufsForOrganization(organizationId),
     ]);
     const snapshot = normalizeStoredOrganizationSummary(row?.content_json);
 
@@ -507,23 +511,23 @@ export class Db {
       updated_at: toOptionalRfc3339(row?.updated_at),
       summary: {
         ...(await this.resolveSnapshotEmployeeNames(snapshot)),
-        rooms,
+        projects,
       },
     };
   }
 
-  async getRoomSummary(roomId: string): Promise<RoomSnapshot> {
+  async getProjectSummary(projectId: string): Promise<ProjectSnapshot> {
     return this.resolveSnapshotEmployeeNames(
-      await this.getStoredRoomSummary(normalizeRoomId(roomId)),
+      await this.getStoredProjectSummary(normalizeProjectId(projectId)),
     );
   }
 
-  async getRoomSummaryResponse(roomId: string): Promise<RoomSummaryResponse> {
-    const normalizedRoomId = normalizeRoomId(roomId);
-    const [row] = await this.client<RoomSummaryRow[]>`
+  async getProjectSummaryResponse(projectId: string): Promise<ProjectSummaryResponse> {
+    const normalizedProjectId = normalizeProjectId(projectId);
+    const [row] = await this.client<ProjectSummaryRow[]>`
       SELECT content_json, last_processed_seq, status
-      FROM room_summaries
-      WHERE room_id = ${normalizedRoomId}
+      FROM project_summaries
+      WHERE project_id = ${normalizedProjectId}
     `;
 
     return {
@@ -531,33 +535,44 @@ export class Db {
         row?.last_processed_seq == null ? 0 : toNumber(row.last_processed_seq),
       status: row ? parseSummaryStatus(row.status) : "ready",
       summary: await this.resolveSnapshotEmployeeNames(
-        normalizeStoredRoomSummary(row?.content_json),
+        normalizeStoredProjectSummary(row?.content_json),
       ),
     };
   }
 
-  async listRoomBlufsForOrganization(
+  async getOrganizationSummaryStatus(
     organizationId: string,
-  ): Promise<RoomBlufSnapshot[]> {
+  ): Promise<SummaryStatus> {
+    const [row] = await this.client<SummaryStatusRow[]>`
+      SELECT status
+      FROM organization_summaries
+      WHERE organization_id = ${organizationId}
+    `;
+    return row ? parseSummaryStatus(row.status) : "ready";
+  }
+
+  async listProjectBlufsForOrganization(
+    organizationId: string,
+  ): Promise<ProjectBlufSnapshot[]> {
     const rows =
-      await this.listStoredRoomSummariesForOrganization(organizationId);
+      await this.listStoredProjectSummariesForOrganization(organizationId);
     return rows.map((row) =>
-      toRoomBlufSnapshot(row.room_id, row.snapshot, row.updated_at),
+      toProjectBlufSnapshot(row.project_id, row.snapshot, row.updated_at),
     );
   }
 
-  async getRoomBlufSnapshot(roomId: string): Promise<RoomBlufSnapshot> {
-    const normalizedRoomId = normalizeRoomId(roomId);
+  async getProjectBlufSnapshot(projectId: string): Promise<ProjectBlufSnapshot> {
+    const normalizedProjectId = normalizeProjectId(projectId);
     const [row] = await this.client<
-      Pick<RoomSummaryRow, "content_json" | "updated_at">[]
+      Pick<ProjectSummaryRow, "content_json" | "updated_at">[]
     >`
       SELECT content_json, updated_at
-      FROM room_summaries
-      WHERE room_id = ${normalizedRoomId}
+      FROM project_summaries
+      WHERE project_id = ${normalizedProjectId}
     `;
 
-    return toRoomBlufSnapshot(
-      normalizedRoomId,
+    return toProjectBlufSnapshot(
+      normalizedProjectId,
       row?.content_json,
       row?.updated_at,
     );
@@ -574,40 +589,40 @@ export class Db {
     return row;
   }
 
-  private async getStoredRoomSummary(roomId: string): Promise<RoomSnapshot> {
-    const [row] = await this.client<Pick<RoomSummaryRow, "content_json">[]>`
+  private async getStoredProjectSummary(projectId: string): Promise<ProjectSnapshot> {
+    const [row] = await this.client<Pick<ProjectSummaryRow, "content_json">[]>`
       SELECT content_json
-      FROM room_summaries
-      WHERE room_id = ${normalizeRoomId(roomId)}
+      FROM project_summaries
+      WHERE project_id = ${normalizeProjectId(projectId)}
     `;
 
-    return normalizeStoredRoomSummary(row?.content_json);
+    return normalizeStoredProjectSummary(row?.content_json);
   }
 
-  private async listStoredRoomSummariesForOrganization(
+  private async listStoredProjectSummariesForOrganization(
     organizationId: string,
   ): Promise<
-    Array<{ room_id: string; snapshot: RoomSnapshot; updated_at: string }>
+    Array<{ project_id: string; snapshot: ProjectSnapshot; updated_at: string }>
   > {
-    const rows = await this.client<RoomSummaryRow[]>`
+    const rows = await this.client<ProjectSummaryRow[]>`
       SELECT
-        rooms.room_id,
-        room_summaries.content_json,
-        room_summaries.updated_at
-      FROM rooms
-      LEFT JOIN room_summaries ON room_summaries.room_id = rooms.room_id
-      WHERE rooms.organization_id = ${organizationId}
-      ORDER BY rooms.created_at DESC, rooms.room_id DESC
+        projects.project_id,
+        project_summaries.content_json,
+        project_summaries.updated_at
+      FROM projects
+      LEFT JOIN project_summaries ON project_summaries.project_id = projects.project_id
+      WHERE projects.organization_id = ${organizationId}
+      ORDER BY projects.created_at DESC, projects.project_id DESC
     `;
 
     return rows.map((row) => ({
-      room_id: normalizeRoomId(readString(row.room_id, "room_id")),
-      snapshot: normalizeStoredRoomSummary(row.content_json),
+      project_id: normalizeProjectId(readString(row.project_id, "project_id")),
+      snapshot: normalizeStoredProjectSummary(row.content_json),
       updated_at: toOptionalRfc3339(row.updated_at),
     }));
   }
 
-  private async resolveSnapshotEmployeeNames<T extends OrganizationSnapshot | RoomSnapshot>(
+  private async resolveSnapshotEmployeeNames<T extends OrganizationSnapshot | ProjectSnapshot>(
     snapshot: T,
   ): Promise<T> {
     const userNames = await this.getUserDisplayNames(
@@ -625,8 +640,8 @@ export class Db {
   }
 }
 
-export function normalizeRoomId(roomId: string): string {
-  return roomId.trim().toUpperCase();
+export function normalizeProjectId(projectId: string): string {
+  return projectId.trim().toUpperCase();
 }
 
 function parseSummaryStatus(value: unknown): SummaryStatus {
@@ -648,9 +663,9 @@ function mapOrganizationMembership(
   };
 }
 
-function mapRoom(row: RoomRow): RoomRecord {
+function mapProject(row: ProjectRow): ProjectRecord {
   return {
-    room_id: readString(row.room_id, "room_id"),
+    project_id: readString(row.project_id, "project_id"),
     name: readString(row.name, "name"),
     created_at: toRfc3339(row.created_at),
     organization_id: readString(row.organization_id, "organization_id"),
@@ -686,8 +701,8 @@ function normalizeOrganizationSnapshot(
   return {
     bluf_markdown:
       typeof base.bluf_markdown === "string" ? base.bluf_markdown : "",
-    rooms: Array.isArray(base.rooms)
-      ? base.rooms.map((room) => normalizeOrganizationRoomBlufSnapshot(room))
+    projects: Array.isArray(base.projects)
+      ? base.projects.map((project) => normalizeOrganizationProjectBlufSnapshot(project))
       : [],
     employees: Array.isArray(base.employees)
       ? base.employees.map(normalizeEmployeeSnapshot)
@@ -701,14 +716,14 @@ function normalizeStoredOrganizationSummary(
   const normalized = normalizeOrganizationSnapshot(snapshot);
   return {
     ...normalized,
-    rooms: [],
+    projects: [],
   };
 }
 
-function normalizeRoomSnapshot(
-  snapshot: RoomSnapshot | undefined,
-): RoomSnapshot {
-  const base = snapshot ?? emptyRoomSnapshot();
+function normalizeProjectSnapshot(
+  snapshot: ProjectSnapshot | undefined,
+): ProjectSnapshot {
+  const base = snapshot ?? emptyProjectSnapshot();
   return {
     bluf_markdown:
       typeof base.bluf_markdown === "string" ? base.bluf_markdown : "",
@@ -722,16 +737,16 @@ function normalizeRoomSnapshot(
   };
 }
 
-function normalizeStoredRoomSummary(snapshot?: RoomSnapshot): RoomSnapshot {
-  return normalizeRoomSnapshot(snapshot);
+function normalizeStoredProjectSummary(snapshot?: ProjectSnapshot): ProjectSnapshot {
+  return normalizeProjectSnapshot(snapshot);
 }
 
-function normalizeOrganizationRoomBlufSnapshot(
-  snapshot: RoomBlufSnapshot,
-): RoomBlufSnapshot {
+function normalizeOrganizationProjectBlufSnapshot(
+  snapshot: ProjectBlufSnapshot,
+): ProjectBlufSnapshot {
   return {
-    room_id: normalizeRoomId(
-      typeof snapshot.room_id === "string" ? snapshot.room_id : "",
+    project_id: normalizeProjectId(
+      typeof snapshot.project_id === "string" ? snapshot.project_id : "",
     ),
     bluf_markdown:
       typeof snapshot.bluf_markdown === "string" ? snapshot.bluf_markdown : "",
@@ -742,14 +757,14 @@ function normalizeOrganizationRoomBlufSnapshot(
   };
 }
 
-function toRoomBlufSnapshot(
-  roomId: string,
-  snapshot: RoomSnapshot | undefined,
+function toProjectBlufSnapshot(
+  projectId: string,
+  snapshot: ProjectSnapshot | undefined,
   updatedAt?: unknown,
-): RoomBlufSnapshot {
-  const normalized = normalizeStoredRoomSummary(snapshot);
+): ProjectBlufSnapshot {
+  const normalized = normalizeStoredProjectSummary(snapshot);
   return {
-    room_id: normalizeRoomId(roomId),
+    project_id: normalizeProjectId(projectId),
     bluf_markdown: normalized.bluf_markdown,
     last_update_at: toOptionalRfc3339(updatedAt),
   };
@@ -761,12 +776,12 @@ function normalizeEmployeeSnapshot(snapshot: EmployeeSnapshot): EmployeeSnapshot
     employee_user_id: employeeUserId,
     employee_name:
       typeof snapshot.employee_name === "string" ? snapshot.employee_name : "",
-    room_ids: Array.isArray(snapshot.room_ids)
+    project_ids: Array.isArray(snapshot.project_ids)
       ? Array.from(
           new Set(
-            snapshot.room_ids
-              .filter((roomId): roomId is string => typeof roomId === "string")
-              .map(normalizeRoomId),
+            snapshot.project_ids
+              .filter((projectId): projectId is string => typeof projectId === "string")
+              .map(normalizeProjectId),
           ),
         )
       : [],
@@ -779,23 +794,23 @@ function normalizeEmployeeSnapshot(snapshot: EmployeeSnapshot): EmployeeSnapshot
   };
 }
 
-function generateRoomCode(): string {
-  let roomCode = "";
-  while (roomCode.length < ROOM_CODE_LENGTH) {
+function generateProjectCode(): string {
+  let projectCode = "";
+  while (projectCode.length < PROJECT_CODE_LENGTH) {
     const bytes = crypto.getRandomValues(
-      new Uint8Array(ROOM_CODE_LENGTH - roomCode.length),
+      new Uint8Array(PROJECT_CODE_LENGTH - projectCode.length),
     );
     for (const byte of bytes) {
       if (byte >= 252) {
         continue;
       }
-      roomCode += ROOM_CODE_ALPHABET[byte % ROOM_CODE_ALPHABET.length];
-      if (roomCode.length === ROOM_CODE_LENGTH) {
+      projectCode += PROJECT_CODE_ALPHABET[byte % PROJECT_CODE_ALPHABET.length];
+      if (projectCode.length === PROJECT_CODE_LENGTH) {
         break;
       }
     }
   }
-  return roomCode;
+  return projectCode;
 }
 
 function readString(value: unknown, key: string): string {
