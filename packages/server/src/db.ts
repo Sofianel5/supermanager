@@ -441,7 +441,6 @@ export class Db {
       FROM hook_events AS h
       LEFT JOIN "user" AS u ON u.id = h.employee_user_id
       WHERE h.room_id = ${normalizeRoomId(roomId)}
-        AND h.employee_user_id IS NOT NULL
         AND (${before ?? null}::bigint IS NULL OR h.seq < ${before ?? null})
         AND (${after ?? null}::bigint IS NULL OR h.seq > ${after ?? null})
       ORDER BY h.seq DESC
@@ -456,7 +455,6 @@ export class Db {
       SELECT COUNT(*)::INT AS count
       FROM hook_events
       WHERE room_id = ${normalizeRoomId(roomId)}
-        AND employee_user_id IS NOT NULL
     `;
 
     return row == null ? 0 : toNumber(row.count);
@@ -659,9 +657,7 @@ function normalizeOrganizationSnapshot(
       ? base.rooms.map((room) => normalizeOrganizationRoomBlufSnapshot(room))
       : [],
     employees: Array.isArray(base.employees)
-      ? base.employees
-          .map(normalizeEmployeeSnapshot)
-          .filter((employee): employee is EmployeeSnapshot => employee != null)
+      ? base.employees.map(normalizeEmployeeSnapshot)
       : [],
   };
 }
@@ -688,9 +684,7 @@ function normalizeRoomSnapshot(
         ? base.detailed_summary_markdown
         : "",
     employees: Array.isArray(base.employees)
-      ? base.employees
-          .map(normalizeEmployeeSnapshot)
-          .filter((employee): employee is EmployeeSnapshot => employee != null)
+      ? base.employees.map(normalizeEmployeeSnapshot)
       : [],
   };
 }
@@ -728,17 +722,8 @@ function toRoomBlufSnapshot(
   };
 }
 
-function normalizeEmployeeSnapshot(
-  snapshot: EmployeeSnapshot,
-): EmployeeSnapshot | null {
-  const employeeUserId =
-    typeof snapshot.employee_user_id === "string"
-      ? snapshot.employee_user_id.trim()
-      : "";
-  if (!employeeUserId) {
-    return null;
-  }
-
+function normalizeEmployeeSnapshot(snapshot: EmployeeSnapshot): EmployeeSnapshot {
+  const employeeUserId = snapshot.employee_user_id.trim();
   return {
     employee_user_id: employeeUserId,
     employee_name:

@@ -64,7 +64,6 @@ export async function indexUnembeddedEvents(db: Db): Promise<number> {
         payload_json
       FROM hook_events
       WHERE embedding IS NULL
-        AND employee_user_id IS NOT NULL
       ORDER BY received_at ASC, seq ASC
       LIMIT ${INDEX_BATCH_SIZE}
     `;
@@ -121,7 +120,6 @@ export async function queryOrganizationEvents(
     INNER JOIN rooms AS r ON r.room_id = h.room_id
     LEFT JOIN "user" AS u ON u.id = h.employee_user_id
     WHERE r.organization_id = ${filters.organizationId}
-      AND h.employee_user_id IS NOT NULL
       AND (${normalizeOptionalRoomId(filters.roomId)}::text IS NULL OR h.room_id = ${normalizeOptionalRoomId(filters.roomId)}::text)
       AND (${filters.employeeName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) = ${filters.employeeName ?? null}::text)
       AND (${filters.repoRoot ?? null}::text IS NULL OR h.repo_root = ${filters.repoRoot ?? null}::text)
@@ -161,7 +159,6 @@ export async function searchEvents(
     LEFT JOIN "user" AS u ON u.id = h.employee_user_id
     WHERE r.organization_id = ${filters.organizationId}
       AND h.embedding IS NOT NULL
-      AND h.employee_user_id IS NOT NULL
       AND (${normalizeOptionalRoomId(filters.roomId)}::text IS NULL OR h.room_id = ${normalizeOptionalRoomId(filters.roomId)}::text)
       AND (${filters.employeeName ?? null}::text IS NULL OR COALESCE(NULLIF(BTRIM(u.name), ''), u.email, h.employee_name) = ${filters.employeeName ?? null}::text)
       AND (${filters.repoRoot ?? null}::text IS NULL OR h.repo_root = ${filters.repoRoot ?? null}::text)

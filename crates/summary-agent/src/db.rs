@@ -242,7 +242,6 @@ impl SummaryDb {
             FROM hook_events AS h
             INNER JOIN rooms AS r ON r.room_id = h.room_id
             WHERE r.organization_id = $1
-              AND h.employee_user_id IS NOT NULL
               AND ($2::timestamptz IS NULL OR h.received_at > $2::timestamptz)
               AND ($3::timestamptz IS NULL OR h.received_at <= $3::timestamptz)
             ORDER BY h.received_at ASC, h.seq ASC
@@ -413,7 +412,6 @@ impl SummaryDb {
               received_at
             FROM hook_events
             WHERE room_id = $1
-              AND employee_user_id IS NOT NULL
               AND ($2::bigint IS NULL OR seq > $2)
             ORDER BY seq ASC
             LIMIT COALESCE($3, 9223372036854775807)
@@ -857,7 +855,6 @@ fn normalize_room_snapshot(snapshot: RoomSnapshot) -> RoomSnapshot {
             .employees
             .into_iter()
             .map(normalize_employee_snapshot)
-            .filter(|employee| !employee.employee_user_id.is_empty())
             .collect(),
     }
 }
@@ -870,7 +867,6 @@ fn normalize_organization_snapshot(snapshot: OrganizationSnapshot) -> Organizati
             .employees
             .into_iter()
             .map(normalize_employee_snapshot)
-            .filter(|employee| !employee.employee_user_id.is_empty())
             .collect(),
     }
 }
