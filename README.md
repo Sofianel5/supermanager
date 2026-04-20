@@ -228,8 +228,8 @@ infra/aws/                # Terraform for the AWS backend
 
 - Workflow generation runs on the server after new hook turns arrive and on periodic timers. The current workflows are project summaries, organization summaries, organization memories, and organization skills.
 - Stop-hook reports can embed a bounded transcript excerpt. The server stores that attachment separately from the hook event body so transcript-driven workflows can process it later without inflating the core event record.
-- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, workflow threads live under `<data-dir>/workflow-threads/{project-summary|organization-summary|organization-memories|organization-skills}/<ID>/`, and organization-scoped writable workspaces live under `<data-dir>/organization-workspaces/<org-id>/`.
-- Organization memory workflows write only under `<data-dir>/organization-workspaces/<org-id>/memories/`. Organization skills workflows write only under `<data-dir>/organization-workspaces/<org-id>/.codex/skills/`.
+- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps per-workflow thread state under `<data-dir>/workflow-threads/{project-summary|organization-summary|organization-memories|organization-skills}/<ID>/`.
+- Organization memory and organization skills workflow documents are stored in PostgreSQL, not in the summary-agent sandbox filesystem.
 - The stored org summary is structured JSON. Summary workflows receive the current snapshot plus fresh updates and can return partial section updates instead of rewriting the whole summary each time.
 
 ## Licensing
