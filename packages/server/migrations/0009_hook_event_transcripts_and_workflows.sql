@@ -1,13 +1,20 @@
 CREATE TABLE hook_event_transcripts (
-    event_id UUID PRIMARY KEY REFERENCES hook_events(event_id) ON DELETE CASCADE,
+    session_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+    last_event_id UUID NOT NULL,
+    member_user_id TEXT NOT NULL,
+    member_name TEXT NOT NULL,
+    client TEXT NOT NULL,
+    repo_root TEXT NOT NULL,
+    branch TEXT,
     transcript_path TEXT NOT NULL,
     content_text TEXT NOT NULL,
-    truncated BOOLEAN NOT NULL DEFAULT FALSE,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_hook_event_transcripts_created_at
-    ON hook_event_transcripts (created_at DESC);
+CREATE INDEX idx_hook_event_transcripts_project_received_at
+    ON hook_event_transcripts (project_id, received_at DESC);
 
 CREATE TABLE organization_workflows (
     organization_id TEXT NOT NULL REFERENCES organization(id) ON DELETE CASCADE,

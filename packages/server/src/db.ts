@@ -93,9 +93,9 @@ interface HookEventInsert {
   branch: string | null;
   payload: unknown;
   transcript?: {
+    session_id: string;
     transcript_path: string;
     content_text: string;
-    truncated: boolean;
   } | null;
 }
 
@@ -454,17 +454,42 @@ export class Db {
       if (transcript) {
         await tx`
           INSERT INTO hook_event_transcripts (
-            event_id,
+            session_id,
+            project_id,
+            last_event_id,
+            member_user_id,
+            member_name,
+            client,
+            repo_root,
+            branch,
             transcript_path,
             content_text,
-            truncated
+            received_at
           )
           VALUES (
+            ${transcript.session_id},
+            ${normalizedProjectId},
             ${eventId},
+            ${report.member_user_id},
+            ${report.member_name},
+            ${report.client},
+            ${report.repo_root},
+            ${report.branch},
             ${transcript.transcript_path},
             ${transcript.content_text},
-            ${transcript.truncated}
+            NOW()
           )
+          ON CONFLICT (session_id) DO UPDATE SET
+            project_id = EXCLUDED.project_id,
+            last_event_id = EXCLUDED.last_event_id,
+            member_user_id = EXCLUDED.member_user_id,
+            member_name = EXCLUDED.member_name,
+            client = EXCLUDED.client,
+            repo_root = EXCLUDED.repo_root,
+            branch = EXCLUDED.branch,
+            transcript_path = EXCLUDED.transcript_path,
+            content_text = EXCLUDED.content_text,
+            received_at = EXCLUDED.received_at
         `;
       }
 
@@ -894,9 +919,9 @@ function toOptionalRfc3339(value: unknown): string {
 function normalizeTranscriptAttachment(
   transcript:
     | {
+        session_id: string;
         transcript_path: string;
         content_text: string;
-        truncated: boolean;
       }
     | null
     | undefined,
@@ -905,16 +930,17 @@ function normalizeTranscriptAttachment(
     return null;
   }
 
+  const sessionId = transcript.session_id.trim();
   const transcriptPath = transcript.transcript_path.trim();
   const contentText = transcript.content_text.trim();
-  if (!transcriptPath || !contentText) {
+  if (!sessionId || !transcriptPath || !contentText) {
     return null;
   }
 
   return {
+    session_id: sessionId,
     transcript_path: transcriptPath,
     content_text: contentText,
-    truncated: Boolean(transcript.truncated),
   };
 }
 

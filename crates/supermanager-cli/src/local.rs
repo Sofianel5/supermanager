@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeMap,
-    env,
-    fs::{self, File},
+    env, fs,
     io::{self, Read},
     path::{Path, PathBuf},
     process::Command,
@@ -24,9 +23,6 @@ use crate::{
         HomeRepoConfig, LeaveOutcome, ListProjectEntry, ListProjectsOutcome, RepoProjectConfig,
     },
 };
-
-const MAX_TRANSCRIPT_BYTES: usize = 256 * 1024;
-const MAX_EMBEDDED_TRANSCRIPT_CHARS: usize = 48_000;
 
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
     let commands: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
@@ -196,6 +192,13 @@ fn load_transcript_attachment(payload: &Value) -> Option<UploadedTranscript> {
         return None;
     }
 
+    let session_id = payload
+        .get("session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_owned();
+
     let transcript_path = payload
         .get("transcript_path")
         .and_then(Value::as_str)
@@ -203,45 +206,14 @@ fn load_transcript_attachment(payload: &Value) -> Option<UploadedTranscript> {
         .filter(|value| !value.is_empty())?;
     let transcript_path = PathBuf::from(transcript_path);
 
-    let file = File::open(&transcript_path).ok()?;
-    let mut bytes = Vec::with_capacity(MAX_TRANSCRIPT_BYTES + 1);
-    file.take((MAX_TRANSCRIPT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    let truncated_to_bytes = bytes.len() > MAX_TRANSCRIPT_BYTES;
-    bytes.truncate(MAX_TRANSCRIPT_BYTES);
-    let mut text: String = String::from_utf8_lossy(&bytes).into();
-    let truncated_to_chars = text.chars().count() > MAX_EMBEDDED_TRANSCRIPT_CHARS;
-
-    if truncated_to_chars {
-        text = truncate_with_head_and_tail(&text, MAX_EMBEDDED_TRANSCRIPT_CHARS);
-    }
+    let bytes = fs::read(&transcript_path).ok()?;
+    let content_text: String = String::from_utf8_lossy(&bytes).into();
 
     Some(UploadedTranscript {
+        session_id,
         transcript_path: transcript_path.display().to_string(),
-        content_text: text,
-        truncated: truncated_to_bytes || truncated_to_chars,
+        content_text,
     })
-}
-
-fn truncate_with_head_and_tail(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_owned();
-    }
-
-    let head_chars = max_chars.saturating_mul(2) / 3;
-    let tail_chars = max_chars.saturating_sub(head_chars);
-    let head = value.chars().take(head_chars).collect::<String>();
-    let tail = value
-        .chars()
-        .rev()
-        .take(tail_chars)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>();
-
-    format!("{head}\n\n[transcript truncated]\n\n{tail}")
 }
 
 fn read_hook_payload() -> Result<Value> {

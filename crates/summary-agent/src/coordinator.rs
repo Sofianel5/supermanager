@@ -379,7 +379,7 @@ impl WorkflowCoordinator {
         let updated_at = received_at_workflow_cutoff(
             &transcripts
                 .iter()
-                .map(|transcript| transcript.event.received_at.as_str())
+                .map(|transcript| transcript.received_at.as_str())
                 .collect::<Vec<_>>(),
             ORGANIZATION_TRANSCRIPT_LIMIT,
             &heartbeat_cutoff,

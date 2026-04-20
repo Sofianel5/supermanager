@@ -56,9 +56,9 @@ const feedStreamHeaders = t.Object({
 });
 
 const uploadedTranscriptBody = t.Object({
+  session_id: t.String(),
   transcript_path: t.String(),
   content_text: t.String(),
-  truncated: t.Boolean(),
 });
 
 const hookTurnBody = t.Object({
