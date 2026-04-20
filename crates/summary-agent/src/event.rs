@@ -2,8 +2,6 @@ use anyhow::Result;
 use reporter_protocol::StoredHookEvent;
 use serde::Deserialize;
 
-const PROMPT_TRANSCRIPT_CHAR_LIMIT: usize = 12_000;
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct OrganizationProject {
     pub(crate) project_id: String,
@@ -20,13 +18,17 @@ pub(crate) struct OrganizationEvent {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct OrganizationTranscript {
+    pub(crate) session_id: String,
     pub(crate) project_id: String,
     pub(crate) project_name: String,
+    pub(crate) member_user_id: String,
+    pub(crate) member_name: String,
+    pub(crate) client: String,
+    pub(crate) repo_root: String,
+    pub(crate) branch: Option<String>,
+    pub(crate) received_at: String,
     pub(crate) transcript_path: String,
     pub(crate) transcript_text: String,
-    pub(crate) transcript_truncated: bool,
-    #[serde(flatten)]
-    pub(crate) event: StoredHookEvent,
 }
 
 pub(crate) fn format_project_event(
@@ -157,47 +159,36 @@ fn format_projects(projects: &[OrganizationProject]) -> String {
 }
 
 fn format_organization_transcript(transcript: &OrganizationTranscript) -> Result<String> {
-    let event_text = format_project_event(
-        &transcript.project_id,
-        &transcript.project_name,
-        &transcript.event,
-    )?;
-    let transcript_text =
-        truncate_with_head_and_tail(&transcript.transcript_text, PROMPT_TRANSCRIPT_CHAR_LIMIT);
-    let transcript_suffix = if transcript.transcript_truncated {
-        "\ntranscript_notice: stored transcript content was truncated before upload"
-    } else {
-        ""
-    };
+    let branch = transcript
+        .branch
+        .as_deref()
+        .filter(|branch| !branch.trim().is_empty())
+        .unwrap_or("(none)");
 
     Ok(format!(
-        "{event_text}\n\
-transcript_path: {path}{suffix}\n\
+        "session_id: {session_id}\n\
+project_id: {project_id}\n\
+project_name: {project_name}\n\
+member_user_id: {member_user_id}\n\
+member_name: {member_name}\n\
+client: {client}\n\
+repo_root: {repo_root}\n\
+branch: {branch}\n\
+received_at: {received_at}\n\
+transcript_path: {transcript_path}\n\
 transcript_text:\n{transcript_text}",
-        path = transcript.transcript_path,
-        suffix = transcript_suffix,
-        transcript_text = transcript_text,
+        session_id = transcript.session_id,
+        project_id = transcript.project_id,
+        project_name = transcript.project_name,
+        member_user_id = transcript.member_user_id,
+        member_name = transcript.member_name,
+        client = transcript.client,
+        repo_root = transcript.repo_root,
+        branch = branch,
+        received_at = transcript.received_at,
+        transcript_path = transcript.transcript_path,
+        transcript_text = transcript.transcript_text,
     ))
-}
-
-fn truncate_with_head_and_tail(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_owned();
-    }
-
-    let head_chars = max_chars / 2;
-    let tail_chars = max_chars.saturating_sub(head_chars);
-    let head = value.chars().take(head_chars).collect::<String>();
-    let tail = value
-        .chars()
-        .rev()
-        .take(tail_chars)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>();
-
-    format!("{head}\n\n[transcript excerpt truncated for workflow input]\n\n{tail}")
 }
 
 #[cfg(test)]
@@ -266,41 +257,30 @@ mod tests {
 
     #[test]
     fn format_organization_memory_request_includes_transcript_text() {
-        let event = StoredHookEvent {
-            seq: 0,
-            event_id: Uuid::nil(),
-            received_at: "2026-04-03T12:00:00Z".to_owned(),
-            member_user_id: "user_123".to_owned(),
-            member_name: "Dana".to_owned(),
-            client: "codex".to_owned(),
-            repo_root: "/tmp/repo".to_owned(),
-            branch: None,
-            payload: json!({ "hook_event_name": "Stop", "session_id": "sess_123" }),
-        };
-
         let rendered = format_organization_memory_request(
             &[OrganizationProject {
                 project_id: "PROJECT42".to_owned(),
                 name: "Operations".to_owned(),
             }],
             &[OrganizationTranscript {
+                session_id: "sess_123".to_owned(),
                 project_id: "PROJECT42".to_owned(),
                 project_name: "Operations".to_owned(),
+                member_user_id: "user_123".to_owned(),
+                member_name: "Dana".to_owned(),
+                client: "codex".to_owned(),
+                repo_root: "/tmp/repo".to_owned(),
+                branch: None,
+                received_at: "2026-04-03T12:00:00Z".to_owned(),
                 transcript_path: "/tmp/transcript.jsonl".to_owned(),
                 transcript_text: "user: ship it\nassistant: done".to_owned(),
-                transcript_truncated: true,
-                event,
             }],
         )
         .unwrap();
 
         assert!(rendered.contains("Organization memory heartbeat fired."));
+        assert!(rendered.contains("session_id: sess_123"));
         assert!(rendered.contains("transcript_path: /tmp/transcript.jsonl"));
-        assert!(
-            rendered.contains(
-                "transcript_notice: stored transcript content was truncated before upload"
-            )
-        );
         assert!(rendered.contains("assistant: done"));
     }
 }

@@ -133,8 +133,7 @@ impl SummaryDb {
             r#"
             SELECT DISTINCT projects.organization_id
             FROM hook_event_transcripts
-            INNER JOIN hook_events ON hook_events.event_id = hook_event_transcripts.event_id
-            INNER JOIN projects ON projects.project_id = hook_events.project_id
+            INNER JOIN projects ON projects.project_id = hook_event_transcripts.project_id
             ORDER BY projects.organization_id ASC
             "#,
         )
@@ -566,27 +565,23 @@ impl SummaryDb {
         let rows = sqlx::query(
             r#"
             SELECT
-              h.seq,
-              h.event_id,
-              h.project_id,
+              t.session_id,
+              t.project_id,
               r.name AS project_name,
-              h.member_user_id,
-              h.member_name,
-              h.client,
-              h.repo_root,
-              h.branch,
-              h.payload_json,
-              h.received_at,
+              t.member_user_id,
+              t.member_name,
+              t.client,
+              t.repo_root,
+              t.branch,
+              t.received_at,
               t.transcript_path,
-              t.content_text,
-              t.truncated
+              t.content_text
             FROM hook_event_transcripts AS t
-            INNER JOIN hook_events AS h ON h.event_id = t.event_id
-            INNER JOIN projects AS r ON r.project_id = h.project_id
+            INNER JOIN projects AS r ON r.project_id = t.project_id
             WHERE r.organization_id = $1
-              AND ($2::timestamptz IS NULL OR h.received_at > $2::timestamptz)
-              AND ($3::timestamptz IS NULL OR h.received_at <= $3::timestamptz)
-            ORDER BY h.received_at ASC, h.seq ASC
+              AND ($2::timestamptz IS NULL OR t.received_at > $2::timestamptz)
+              AND ($3::timestamptz IS NULL OR t.received_at <= $3::timestamptz)
+            ORDER BY t.received_at ASC, t.session_id ASC
             LIMIT COALESCE($4, 9223372036854775807)
             "#,
         )
@@ -603,22 +598,36 @@ impl SummaryDb {
         rows.into_iter()
             .map(|row| {
                 Ok(OrganizationTranscript {
+                    session_id: row
+                        .try_get("session_id")
+                        .context("failed to decode session_id")?,
                     project_id: row
                         .try_get("project_id")
                         .context("failed to decode project_id")?,
                     project_name: row
                         .try_get("project_name")
                         .context("failed to decode project_name")?,
+                    member_user_id: row
+                        .try_get("member_user_id")
+                        .context("failed to decode member_user_id")?,
+                    member_name: row
+                        .try_get("member_name")
+                        .context("failed to decode member_name")?,
+                    client: row.try_get("client").context("failed to decode client")?,
+                    repo_root: row
+                        .try_get("repo_root")
+                        .context("failed to decode repo_root")?,
+                    branch: row.try_get("branch").context("failed to decode branch")?,
+                    received_at: format_timestamp(
+                        row.try_get::<OffsetDateTime, _>("received_at")
+                            .context("failed to decode received_at")?,
+                    )?,
                     transcript_path: row
                         .try_get("transcript_path")
                         .context("failed to decode transcript_path")?,
                     transcript_text: row
                         .try_get("content_text")
                         .context("failed to decode content_text")?,
-                    transcript_truncated: row
-                        .try_get("truncated")
-                        .context("failed to decode transcript truncated flag")?,
-                    event: map_stored_hook_event(&row)?,
                 })
             })
             .collect()

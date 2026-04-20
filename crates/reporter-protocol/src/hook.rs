@@ -34,10 +34,9 @@ pub struct HookTurnReport {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../packages/common/api-protocol/")]
 pub struct UploadedTranscript {
+    pub session_id: String,
     pub transcript_path: String,
     pub content_text: String,
-    #[serde(default)]
-    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
