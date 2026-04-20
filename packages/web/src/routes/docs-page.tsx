@@ -92,9 +92,9 @@ export function DocsPage() {
                 <p className={bodyCopyClass}>
                   The Supermanager CLI runs alongside Claude Code and Codex on
                   your machine. Installing it gives you the{" "}
-                  <code className={inlineCodeClass}>supermanager</code>{" "}
-                  command. Activity starts showing up in Supermanager after you
-                  connect a repo in Step 3.
+                  <code className={inlineCodeClass}>supermanager</code> command.
+                  Activity starts showing up in Supermanager after you connect a
+                  repo in Step 3.
                 </p>
               </div>
               <div className="max-w-[38rem]">
@@ -237,7 +237,7 @@ export function DocsPage() {
                 <div className="max-w-[36rem]">
                   <CommandBlock
                     copyKey="codex-mcp-question"
-                    label="Ask in Codex"
+                    label="Open in Codex"
                     command={CODEX_MCP_QUESTION_COMMAND}
                     copiedValue={copiedValue}
                     onCopy={copy}
@@ -252,7 +252,7 @@ export function DocsPage() {
                 <div className="max-w-[36rem]">
                   <CommandBlock
                     copyKey="claude-mcp-question"
-                    label="Ask in Claude Code"
+                    label="Open in Claude Code"
                     command={CLAUDE_MCP_QUESTION_COMMAND}
                     copiedValue={copiedValue}
                     onCopy={copy}
@@ -266,8 +266,8 @@ export function DocsPage() {
               <div className={sectionLabelClass}>What It Can Access</div>
               <ul className="grid list-disc gap-3 pl-6 text-base leading-7 text-ink-dim marker:text-ink-dim">
                 <li>
-                  <code className={inlineCodeClass}>list_rooms</code> to see
-                  the rooms you can access in your organization.
+                  <code className={inlineCodeClass}>list_rooms</code> to see the
+                  rooms you can access in your organization.
                 </li>
                 <li>
                   <code className={inlineCodeClass}>
@@ -298,22 +298,16 @@ export function DocsPage() {
             <div className="grid gap-4 border-t border-border pt-6">
               <div className={sectionLabelClass}>Example Questions</div>
               <ul className="grid list-disc gap-3 pl-6 text-base leading-7 text-ink-dim marker:text-ink-dim">
-                <li>
-                  What changed across the Frontend and API rooms today?
-                </li>
+                <li>What changed across the Frontend and API rooms today?</li>
                 <li>
                   What did the team try last week before landing on this
                   approach?
                 </li>
-                <li>
-                  Show me recent Codex activity on the release branch.
-                </li>
+                <li>Show me recent Codex activity on the release branch.</li>
                 <li>
                   Find sessions related to the auth migration across the org.
                 </li>
-                <li>
-                  What happened in the Design System room before this PR?
-                </li>
+                <li>What happened in the Design System room before this PR?</li>
               </ul>
             </div>
           </div>
