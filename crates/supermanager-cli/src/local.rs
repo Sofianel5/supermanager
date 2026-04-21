@@ -99,7 +99,7 @@ pub fn list_projects(home_dir: &Path) -> Result<ListProjectsOutcome> {
     let config = read_home_repo_config(&path)?;
     let mut grouped = BTreeMap::<(String, String, String), Vec<PathBuf>>::new();
 
-    for (repo_dir, project_config) in config.repos {
+    for (repo_key, project_config) in config.repos {
         grouped
             .entry((
                 project_config.project_id,
@@ -107,7 +107,7 @@ pub fn list_projects(home_dir: &Path) -> Result<ListProjectsOutcome> {
                 project_config.organization_slug,
             ))
             .or_default()
-            .push(PathBuf::from(repo_dir));
+            .push(configured_repo_root(&repo_key, &project_config));
     }
 
     let projects = grouped
@@ -130,13 +130,14 @@ pub fn list_projects(home_dir: &Path) -> Result<ListProjectsOutcome> {
 
 pub fn report_hook_turn(client: &str, home_dir: &Path) -> Result<()> {
     let payload = read_hook_payload()?;
-    let Some((repo_dir, report)) = build_hook_report(client, &payload)? else {
+    let Some(repo_dir) = resolve_hook_repo_root(&payload)? else {
         return Ok(());
     };
 
     let Some(project_config) = get_repo_project_config(home_dir, &repo_dir)? else {
         return Ok(());
     };
+    let report = build_hook_report(client, &payload, &repo_dir, &project_config)?;
 
     let url = format!(
         "{}/v1/hooks/turn",
@@ -186,28 +187,23 @@ pub(crate) fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn build_hook_report(client: &str, payload: &Value) -> Result<Option<(PathBuf, HookTurnReport)>> {
-    if !payload.is_object() {
-        return Ok(None);
-    }
+fn build_hook_report(
+    client: &str,
+    payload: &Value,
+    repo_dir: &Path,
+    project_config: &RepoProjectConfig,
+) -> Result<HookTurnReport> {
+    // The server binds the API key to the repo root used at join time, so keep
+    // reporting that stable root even when the active session runs from a linked worktree.
+    let report_repo_root = configured_repo_root_from_path(repo_dir, project_config);
 
-    let cwd = payload
-        .get("cwd")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or(env::current_dir().context("failed to resolve current directory")?);
-    let repo_dir = resolve_repo_root(&cwd)?;
-
-    let report = HookTurnReport {
+    Ok(HookTurnReport {
         client: client.to_owned(),
-        repo_root: repo_dir.display().to_string(),
+        repo_root: report_repo_root.display().to_string(),
         branch: git_command_value(&repo_dir, &["branch", "--show-current"])?,
         payload: payload.clone(),
         transcript: load_transcript_attachment(payload),
-    };
-
-    Ok(Some((repo_dir, report)))
+    })
 }
 
 fn load_transcript_attachment(payload: &Value) -> Option<UploadedTranscript> {
@@ -303,6 +299,29 @@ fn git_command_value(repo_dir: &Path, args: &[&str]) -> Result<Option<String>> {
     }
 }
 
+fn git_command_path(repo_dir: &Path, args: &[&str]) -> Result<Option<PathBuf>> {
+    let Some(value) = git_command_value(repo_dir, args)? else {
+        return Ok(None);
+    };
+
+    let path = PathBuf::from(value);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        repo_dir.join(path)
+    };
+    Ok(Some(canonicalize_best_effort(&path)))
+}
+
+fn resolve_repo_common_dir(repo_dir: &Path) -> Result<Option<PathBuf>> {
+    let repo_dir = canonicalize_best_effort(repo_dir);
+    if !repo_dir.exists() {
+        return Ok(None);
+    }
+
+    git_command_path(&repo_dir, &["rev-parse", "--git-common-dir"])
+}
+
 pub(crate) fn upsert_repo_project_config(
     home_dir: &Path,
     repo_dir: &Path,
@@ -340,7 +359,26 @@ fn remove_repo_project_config(home_dir: &Path, repo_dir: &Path) -> Result<bool> 
 }
 
 fn repo_key(repo_dir: &Path) -> String {
-    canonicalize_best_effort(repo_dir).display().to_string()
+    // Linked worktrees have distinct toplevel paths but share one git common dir.
+    resolve_repo_common_dir(repo_dir)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| canonicalize_best_effort(repo_dir))
+        .display()
+        .to_string()
+}
+
+fn configured_repo_root(repo_key: &str, project_config: &RepoProjectConfig) -> PathBuf {
+    configured_repo_root_from_path(Path::new(repo_key), project_config)
+}
+
+fn configured_repo_root_from_path(repo_dir: &Path, project_config: &RepoProjectConfig) -> PathBuf {
+    let configured = project_config.repo_root.trim();
+    if configured.is_empty() {
+        canonicalize_best_effort(repo_dir)
+    } else {
+        canonicalize_best_effort(Path::new(configured))
+    }
 }
 
 fn push_unique_path(paths: &mut Vec<String>, path: &str) {
@@ -364,8 +402,32 @@ pub(crate) fn read_home_repo_config(path: &Path) -> Result<HomeRepoConfig> {
         return Ok(HomeRepoConfig::default());
     }
 
-    serde_json::from_str(&text)
-        .with_context(|| format!("failed to parse JSON in {}", path.display()))
+    let config: HomeRepoConfig = serde_json::from_str(&text)
+        .with_context(|| format!("failed to parse JSON in {}", path.display()))?;
+    normalize_home_repo_config(config, path)
+}
+
+fn normalize_home_repo_config(config: HomeRepoConfig, path: &Path) -> Result<HomeRepoConfig> {
+    let mut repos = BTreeMap::new();
+
+    for (stored_repo_root, mut project_config) in config.repos {
+        if project_config.repo_root.trim().is_empty() {
+            project_config.repo_root = stored_repo_root.clone();
+        }
+
+        let normalized_key = repo_key(Path::new(&stored_repo_root));
+        if let Some(existing) = repos.insert(normalized_key.clone(), project_config.clone())
+            && existing != project_config
+        {
+            bail!(
+                "{} contains multiple repo connections for the same git repository: {}",
+                path.display(),
+                normalized_key
+            );
+        }
+    }
+
+    Ok(HomeRepoConfig { repos })
 }
 
 fn write_home_repo_config(path: &Path, config: &HomeRepoConfig) -> Result<()> {
@@ -693,7 +755,16 @@ mod tests {
             }
         });
 
-        let (resolved_repo, report) = build_hook_report("codex", &payload).unwrap().unwrap();
+        let resolved_repo = resolve_repo_root(&nested_dir).unwrap();
+        let project_config = RepoProjectConfig {
+            repo_root: canonicalize_best_effort(&repo_dir).display().to_string(),
+            api_key: "key".to_owned(),
+            api_key_id: "key-id".to_owned(),
+            organization_slug: "acme".to_owned(),
+            server_url: "https://api.supermanager.dev".to_owned(),
+            project_id: "ALPHA1".to_owned(),
+        };
+        let report = build_hook_report("codex", &payload, &resolved_repo, &project_config).unwrap();
 
         assert_eq!(resolved_repo, canonicalize_best_effort(&repo_dir));
         assert_eq!(report.client, "codex");
@@ -724,10 +795,67 @@ mod tests {
             "cwd": repo_dir.display().to_string(),
         });
 
-        let (resolved_repo, report) = build_hook_report("codex", &payload).unwrap().unwrap();
+        let resolved_repo = resolve_repo_root(&repo_dir).unwrap();
+        let project_config = RepoProjectConfig {
+            repo_root: resolved_repo.display().to_string(),
+            api_key: "key".to_owned(),
+            api_key_id: "key-id".to_owned(),
+            organization_slug: "acme".to_owned(),
+            server_url: "https://api.supermanager.dev".to_owned(),
+            project_id: "ALPHA1".to_owned(),
+        };
+        let report = build_hook_report("codex", &payload, &resolved_repo, &project_config).unwrap();
 
         assert_eq!(resolved_repo, canonicalize_best_effort(&repo_dir));
         assert_eq!(report.client, "codex");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn build_hook_report_uses_joined_repo_root_for_linked_worktrees() {
+        let root = test_dir("hook-report-worktree");
+        let repo_dir = root.join("repo");
+        let worktree_dir = root.join("worktree");
+        fs::create_dir_all(&repo_dir).unwrap();
+        init_git_repo(&repo_dir);
+        create_initial_commit(&repo_dir);
+
+        let add = Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "-q",
+                worktree_dir.to_str().unwrap(),
+                "-b",
+                "feature",
+            ])
+            .current_dir(&repo_dir)
+            .status()
+            .unwrap();
+        assert!(add.success());
+
+        let payload = json!({
+            "hook_event_name": "Stop",
+            "cwd": worktree_dir.display().to_string(),
+        });
+
+        let resolved_repo = resolve_repo_root(&worktree_dir).unwrap();
+        let project_config = RepoProjectConfig {
+            repo_root: canonicalize_best_effort(&repo_dir).display().to_string(),
+            api_key: "key".to_owned(),
+            api_key_id: "key-id".to_owned(),
+            organization_slug: "acme".to_owned(),
+            server_url: "https://api.supermanager.dev".to_owned(),
+            project_id: "ALPHA1".to_owned(),
+        };
+        let report = build_hook_report("codex", &payload, &resolved_repo, &project_config).unwrap();
+
+        assert_eq!(resolved_repo, canonicalize_best_effort(&worktree_dir));
+        assert_eq!(
+            report.repo_root,
+            canonicalize_best_effort(&repo_dir).display().to_string()
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -762,6 +890,7 @@ mod tests {
         config.repos.insert(
             repo_key(&repo_b),
             RepoProjectConfig {
+                repo_root: repo_b.display().to_string(),
                 api_key: "key-b".to_owned(),
                 api_key_id: "key-b-id".to_owned(),
                 organization_slug: "acme".to_owned(),
@@ -772,6 +901,7 @@ mod tests {
         config.repos.insert(
             repo_key(&repo_a),
             RepoProjectConfig {
+                repo_root: repo_a.display().to_string(),
                 api_key: "key-a".to_owned(),
                 api_key_id: "key-a-id".to_owned(),
                 organization_slug: "acme".to_owned(),
@@ -782,6 +912,7 @@ mod tests {
         config.repos.insert(
             repo_key(&repo_c),
             RepoProjectConfig {
+                repo_root: repo_c.display().to_string(),
                 api_key: "key-c".to_owned(),
                 api_key_id: "key-c-id".to_owned(),
                 organization_slug: "beta".to_owned(),
@@ -832,6 +963,41 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn read_home_repo_config_normalizes_legacy_repo_root_keys() {
+        let root = test_dir("normalize-home-repo-config");
+        let home_dir = root.join("home");
+        let repo_dir = root.join("repo");
+        fs::create_dir_all(&home_dir).unwrap();
+        fs::create_dir_all(&repo_dir).unwrap();
+        init_git_repo(&repo_dir);
+
+        let legacy_path = home_repo_config_path(&home_dir);
+        write_private_text(
+            &legacy_path,
+            &format!(
+                "{{\n  \"repos\": {{\n    \"{}\": {{\n      \"api_key\": \"key\",\n      \"api_key_id\": \"key-id\",\n      \"organization_slug\": \"acme\",\n      \"server_url\": \"https://api.supermanager.dev\",\n      \"project_id\": \"ALPHA1\"\n    }}\n  }}\n}}\n",
+                repo_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let config = read_home_repo_config(&legacy_path).unwrap();
+        let normalized_key = resolve_repo_common_dir(&repo_dir)
+            .unwrap()
+            .unwrap()
+            .display()
+            .to_string();
+        let project_config = config.repos.get(&normalized_key).unwrap();
+
+        assert_eq!(
+            project_config.repo_root,
+            canonicalize_best_effort(&repo_dir).display().to_string()
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn test_dir(name: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -859,5 +1025,30 @@ mod tests {
             .status()
             .unwrap();
         assert!(user.success());
+
+        let email = Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(path)
+            .status()
+            .unwrap();
+        assert!(email.success());
+    }
+
+    fn create_initial_commit(path: &Path) {
+        write_text(&path.join("README.md"), "init\n").unwrap();
+
+        let add = Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(path)
+            .status()
+            .unwrap();
+        assert!(add.success());
+
+        let commit = Command::new("git")
+            .args(["commit", "-q", "-m", "initial"])
+            .current_dir(path)
+            .status()
+            .unwrap();
+        assert!(commit.success());
     }
 }

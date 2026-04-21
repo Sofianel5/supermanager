@@ -119,6 +119,7 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
         .context("failed to parse repo-connection response JSON")?;
 
     let project_config = RepoProjectConfig {
+        repo_root: repo_dir.display().to_string(),
         api_key: connection.api_key,
         api_key_id: connection.api_key_id,
         organization_slug: project.organization_slug.clone(),
