@@ -474,8 +474,8 @@ export class Db {
       if (transcript) {
         await tx`
           INSERT INTO hook_event_transcripts (
-            session_id,
             project_id,
+            session_id,
             last_event_id,
             member_user_id,
             member_name,
@@ -487,8 +487,8 @@ export class Db {
             received_at
           )
           VALUES (
-            ${transcript.session_id},
             ${normalizedProjectId},
+            ${transcript.session_id},
             ${eventId},
             ${report.member_user_id},
             ${report.member_name},
@@ -499,8 +499,7 @@ export class Db {
             ${transcript.content_text},
             NOW()
           )
-          ON CONFLICT (session_id) DO UPDATE SET
-            project_id = EXCLUDED.project_id,
+          ON CONFLICT (project_id, session_id) DO UPDATE SET
             last_event_id = EXCLUDED.last_event_id,
             member_user_id = EXCLUDED.member_user_id,
             member_name = EXCLUDED.member_name,

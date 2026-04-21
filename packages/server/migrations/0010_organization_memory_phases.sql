@@ -7,8 +7,8 @@
 -- consolidator reads and then deletes them).
 
 CREATE TABLE hook_event_transcripts (
-    session_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
     last_event_id UUID NOT NULL,
     member_user_id TEXT NOT NULL,
     member_name TEXT NOT NULL,
@@ -18,7 +18,8 @@ CREATE TABLE hook_event_transcripts (
     transcript_path TEXT NOT NULL,
     content_text TEXT NOT NULL,
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (project_id, session_id)
 );
 
 CREATE INDEX idx_hook_event_transcripts_project_received_at
@@ -50,8 +51,20 @@ CREATE TABLE project_workflows (
     status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready', 'generating', 'error')),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_processed_received_at TIMESTAMPTZ NOT NULL DEFAULT TO_TIMESTAMP(0),
+    -- Tiebreaker for batches that hit the row limit at a `received_at` value
+    -- shared by multiple transcripts. NULL means the cursor advanced past the
+    -- entire `received_at` instant (no further rows at that instant).
+    last_processed_session_id TEXT,
     PRIMARY KEY (project_id, workflow_kind)
 );
+
+-- Tiebreaker on organization_summaries for the org-summary cursor. The org
+-- summary cursor lives in `organization_summaries.updated_at`; this column
+-- disambiguates rows that share the same `received_at` when a batch hits the
+-- row limit at that instant. NULL means the cursor advanced past the entire
+-- `received_at` instant.
+ALTER TABLE organization_summaries
+    ADD COLUMN last_processed_seq BIGINT;
 
 -- Raw per-transcript memory candidates staged by project_memory_extract and
 -- consumed by project_memory_consolidate.
