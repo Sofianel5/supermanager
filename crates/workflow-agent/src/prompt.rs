@@ -5,10 +5,11 @@ Your job is to maintain the manager-facing snapshot for a single project and der
 The project snapshot has three editable parts:
 
 1. `bluf_markdown`
-- Prefer 1-3 bullets.
+- Choose the number of bullets dynamically based on how many distinct important workstreams are active right now.
 - Focus on the work that matters in this project right now.
-- Each bullet should summarize a workstream, project state, or manager takeaway — not narrate one recent event.
+- Usually, each bullet should summarize one important workstream, high-level task, release track, or cluster of related PRs — not narrate one recent event.
 - Collapse low-level evidence into a higher-level takeaway whenever possible.
+- Merge related PRs or sub-tasks when they roll up to the same manager takeaway.
 - Emphasize progress, blockers, decisions, handoffs, risk, and next steps when supported by evidence.
 - Avoid commit hashes, branch names, room/thread ids, sweep names, deploy-run ids, and exact error codes unless the specific identifier is necessary for a manager to coordinate action.
 - Do not include the project name as a heading.
@@ -72,7 +73,9 @@ HIGH-LEVEL TLDR BAR
 
 The project BLUF is a manager TLDR, not an event log.
 
-- BLUF bullets should answer "what matters now in this project?" not "what happened most recently?"
+- BLUF bullets should answer "what are the important workstreams or tasks in this project right now?" not "what happened most recently?"
+- Use as many bullets as needed to cover the distinct important workstreams, and no more.
+- One bullet per important workstream / task family is usually right; merge related PRs when they support the same takeaway.
 - If a fact is only interesting because it appeared in one recent event, it probably belongs in the derived update log, not in the BLUF.
 - Prefer thematic takeaways over incident narration.
 - Before keeping a BLUF bullet, ask whether a manager unfamiliar with the room/thread would still find it useful.
@@ -171,10 +174,11 @@ The organization snapshot has three parts:
 
 1. `bluf_markdown`
 This is the organization-wide "bottom line up front".
-- Prefer 1-3 bullets.
+- Choose the number of bullets dynamically based on how many important projects or cross-project themes currently matter at org scope.
 - Focus on overall momentum, important changes, blockers, risk, and what needs attention across projects.
-- Each bullet should capture an org-level takeaway, not a project event written at slightly higher altitude.
-- Do not allocate one bullet per project. Mention a specific project only when its state changes org priorities, staffing, dependencies, or risk.
+- Each bullet should capture an org-level takeaway, anchored in a specific important project or a cross-project theme.
+- Usually, use one bullet per important project or cross-project theme; skip quiet projects.
+- Mention a specific project when its current state changes org priorities, staffing, dependencies, or risk.
 - Avoid commit hashes, room ids, branch names, deploy-run ids, and exact error codes unless the identifier is necessary for a manager to act.
 
 2. Project BLUFs
@@ -225,6 +229,8 @@ HIGH-LEVEL TLDR BAR
 The organization BLUF is a leadership summary, not a merged feed of project events.
 
 - BLUF bullets should answer "what matters across the organization right now?" not "which project had the latest notable event?"
+- Use as many bullets as needed to cover the important projects or cross-project themes, and no more.
+- Usually, one bullet per important project or cross-project theme is right; skip projects that are quiet or unchanged in manager-relevant ways.
 - If one active project dominates current org attention, summarize the org implication, not the room-level mechanics.
 - Do not spend bullets on inactive projects, absence-of-evidence, or isolated project churn that stays contained inside one project.
 - Before keeping an org BLUF bullet, ask whether it changes what a manager would prioritize across projects.
@@ -430,7 +436,15 @@ mod tests {
     fn project_summary_prompt_mentions_evidence_hierarchy_and_wording_preservation() {
         assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("HIGH-LEVEL TLDR BAR"));
         assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("not an event log"));
-        assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("what matters now in this project?"));
+        assert!(
+            PROJECT_SUMMARY_SYSTEM_PROMPT
+                .contains("what are the important workstreams or tasks in this project right now?")
+        );
+        assert!(
+            PROJECT_SUMMARY_SYSTEM_PROMPT.contains(
+                "Use as many bullets as needed to cover the distinct important workstreams"
+            )
+        );
         assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("EVIDENCE DISCIPLINE"));
         assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("Do not treat an assistant proposal"));
         assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("SPARSITY GUARD"));
@@ -454,6 +468,11 @@ mod tests {
         assert!(
             ORGANIZATION_SUMMARY_SYSTEM_PROMPT
                 .contains("what matters across the organization right now?")
+        );
+        assert!(
+            ORGANIZATION_SUMMARY_SYSTEM_PROMPT.contains(
+                "Usually, one bullet per important project or cross-project theme is right"
+            )
         );
         assert!(ORGANIZATION_SUMMARY_SYSTEM_PROMPT.contains("EVIDENCE DISCIPLINE"));
         assert!(ORGANIZATION_SUMMARY_SYSTEM_PROMPT.contains("Do not treat a proposal, plan"));
