@@ -32,6 +32,10 @@ export type {
   ProjectSnapshot,
   SummaryStatus,
 } from "@supermanager/common/summary-protocol";
+export type {
+  Update,
+  UpdateScope,
+} from "@supermanager/common/updates-protocol";
 
 export interface ConnectionResponse {
   api_key: string;

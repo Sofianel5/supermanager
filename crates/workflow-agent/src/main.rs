@@ -80,6 +80,18 @@ struct Cli {
         default_value_t = 1_800
     )]
     organization_skills_interval_seconds: u64,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_PROJECT_UPDATES_EMIT_INTERVAL_SECONDS",
+        default_value_t = 60
+    )]
+    project_updates_emit_interval_seconds: u64,
+    #[arg(
+        long,
+        env = "SUPERMANAGER_ORGANIZATION_UPDATES_EMIT_INTERVAL_SECONDS",
+        default_value_t = 600
+    )]
+    organization_updates_emit_interval_seconds: u64,
 }
 
 #[tokio::main]
@@ -138,6 +150,8 @@ async fn main() -> Result<()> {
         Duration::from_secs(cli.project_skills_interval_seconds),
         Duration::from_secs(cli.organization_memory_consolidate_interval_seconds),
         Duration::from_secs(cli.organization_skills_interval_seconds),
+        Duration::from_secs(cli.project_updates_emit_interval_seconds),
+        Duration::from_secs(cli.organization_updates_emit_interval_seconds),
     );
     let coordinator_result = coordinator.run().await;
 

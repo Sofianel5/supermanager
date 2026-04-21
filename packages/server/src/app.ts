@@ -52,6 +52,30 @@ const feedQuery = t.Object({
   limit: t.Optional(t.Numeric()),
 });
 
+const updatesQuery = t.Object({
+  before: t.Optional(t.Numeric()),
+  limit: t.Optional(t.Numeric()),
+});
+
+const organizationUpdatesQuery = t.Object({
+  scope: t.Optional(
+    t.Union([
+      t.Literal("organization"),
+      t.Literal("project"),
+      t.Literal("member"),
+    ]),
+  ),
+  project_id: t.Optional(t.String()),
+  member_user_id: t.Optional(t.String()),
+  before: t.Optional(t.Numeric()),
+  limit: t.Optional(t.Numeric()),
+});
+
+const memberParams = t.Object({
+  organizationSlug: t.String(),
+  memberUserId: t.String(),
+});
+
 const feedStreamHeaders = t.Object({
   "last-event-id": t.Optional(t.Numeric()),
 });
@@ -527,6 +551,99 @@ export function createApp(context: AppContext) {
       },
       {
         params: projectParams,
+      },
+    )
+    .get(
+      "/v1/projects/:projectId/updates",
+      async ({ params, query, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const project = await requireProjectAccess(
+          context.db,
+          viewer.user.id,
+          params.projectId,
+        );
+
+        const filters = {
+          scope: "project" as const,
+          projectId: project.project_id,
+        };
+        const limit = clampLimit(query.limit);
+        const [updates, totalCount] = await Promise.all([
+          context.db.getUpdates(project.organization_id, {
+            ...filters,
+            beforeSeq: query.before,
+            limit,
+          }),
+          context.db.countUpdates(project.organization_id, filters),
+        ]);
+        return { updates, total_count: totalCount };
+      },
+      {
+        params: projectParams,
+        query: updatesQuery,
+      },
+    )
+    .get(
+      "/v1/organizations/:organizationSlug/updates",
+      async ({ params, query, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          params.organizationSlug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+
+        const filters = {
+          scope: query.scope,
+          projectId: query.project_id,
+          memberUserId: query.member_user_id,
+        };
+        const limit = clampLimit(query.limit);
+        const [updates, totalCount] = await Promise.all([
+          context.db.getUpdates(membership.organization_id, {
+            ...filters,
+            beforeSeq: query.before,
+            limit,
+          }),
+          context.db.countUpdates(membership.organization_id, filters),
+        ]);
+        return { updates, total_count: totalCount };
+      },
+      {
+        params: organizationParams,
+        query: organizationUpdatesQuery,
+      },
+    )
+    .get(
+      "/v1/organizations/:organizationSlug/members/:memberUserId/updates",
+      async ({ params, query, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          params.organizationSlug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+
+        const filters = {
+          scope: "member" as const,
+          memberUserId: params.memberUserId,
+        };
+        const limit = clampLimit(query.limit);
+        const [updates, totalCount] = await Promise.all([
+          context.db.getUpdates(membership.organization_id, {
+            ...filters,
+            beforeSeq: query.before,
+            limit,
+          }),
+          context.db.countUpdates(membership.organization_id, filters),
+        ]);
+        return { updates, total_count: totalCount };
+      },
+      {
+        params: memberParams,
+        query: updatesQuery,
       },
     );
 }

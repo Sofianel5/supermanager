@@ -54,6 +54,26 @@ struct DeleteSkillArgs {
     name: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct EmitBodyArgs {
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmitMemberUpdateArgs {
+    member_user_id: String,
+    member_name: String,
+    body: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct GetRecentUpdatesArgs {
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
 pub(crate) enum SummaryTool {
     ProjectGetSnapshot,
     SetProjectBluf {
@@ -96,6 +116,21 @@ pub(crate) enum SummaryTool {
     },
     DeleteSkill {
         name: String,
+    },
+    EmitProjectUpdate {
+        body: String,
+    },
+    EmitMemberUpdate {
+        member_user_id: String,
+        member_name: String,
+        body: String,
+    },
+    EmitOrgUpdate {
+        body: String,
+    },
+    GetRecentUpdates {
+        scope: Option<String>,
+        limit: Option<i64>,
     },
 }
 
@@ -273,6 +308,36 @@ impl SummaryTool {
         ]
     }
 
+    pub(crate) fn project_updates_emit_specs() -> Vec<DynamicToolSpec> {
+        vec![
+            spec(
+                "emit_project_update",
+                "Emit one project-scoped update statement. `body` is one short sentence (target <180 chars) about something noteworthy that just happened on this project.",
+                emit_body_schema(),
+            ),
+            spec(
+                "emit_member_update",
+                "Emit one member-scoped update statement. Use the `member_user_id` and `member_name` taken verbatim from the transcript metadata. `body` is one short sentence (target <180 chars) about what this member did.",
+                emit_member_update_schema(),
+            ),
+        ]
+    }
+
+    pub(crate) fn organization_updates_emit_specs() -> Vec<DynamicToolSpec> {
+        vec![
+            spec(
+                "get_recent_updates",
+                "Read recent updates for this organization. `scope` filters to 'organization', 'project', or 'member'; omit it for all scopes. `limit` defaults to 25.",
+                get_recent_updates_schema(),
+            ),
+            spec(
+                "emit_org_update",
+                "Emit one organization-scoped update statement. `body` is one short sentence (target <180 chars) summarising org-level signal that spans projects or members.",
+                emit_body_schema(),
+            ),
+        ]
+    }
+
     pub(crate) fn organization_skills_specs() -> Vec<DynamicToolSpec> {
         vec![
             spec(
@@ -428,6 +493,45 @@ impl SummaryTool {
         }
     }
 
+    pub(crate) fn parse_project_updates_emit(params: &DynamicToolCallParams) -> Result<Self> {
+        match params.tool.as_str() {
+            "emit_project_update" => {
+                let args: EmitBodyArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid emit_project_update arguments")?;
+                Ok(Self::EmitProjectUpdate { body: args.body })
+            }
+            "emit_member_update" => {
+                let args: EmitMemberUpdateArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid emit_member_update arguments")?;
+                Ok(Self::EmitMemberUpdate {
+                    member_user_id: args.member_user_id,
+                    member_name: args.member_name,
+                    body: args.body,
+                })
+            }
+            other => anyhow::bail!("unknown project updates emit tool: {other}"),
+        }
+    }
+
+    pub(crate) fn parse_organization_updates_emit(params: &DynamicToolCallParams) -> Result<Self> {
+        match params.tool.as_str() {
+            "get_recent_updates" => {
+                let args: GetRecentUpdatesArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid get_recent_updates arguments")?;
+                Ok(Self::GetRecentUpdates {
+                    scope: args.scope,
+                    limit: args.limit,
+                })
+            }
+            "emit_org_update" => {
+                let args: EmitBodyArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid emit_org_update arguments")?;
+                Ok(Self::EmitOrgUpdate { body: args.body })
+            }
+            other => anyhow::bail!("unknown organization updates emit tool: {other}"),
+        }
+    }
+
     pub(crate) fn parse_organization_memory_consolidate(
         params: &DynamicToolCallParams,
     ) -> Result<Self> {
@@ -522,5 +626,40 @@ fn delete_by_name_schema() -> Value {
         "additionalProperties": false,
         "required": ["name"],
         "properties": { "name": { "type": "string" } }
+    })
+}
+
+fn emit_body_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["body"],
+        "properties": {
+            "body": { "type": "string" }
+        }
+    })
+}
+
+fn emit_member_update_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["member_user_id", "member_name", "body"],
+        "properties": {
+            "member_user_id": { "type": "string" },
+            "member_name": { "type": "string" },
+            "body": { "type": "string" }
+        }
+    })
+}
+
+fn get_recent_updates_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "scope": { "type": "string", "enum": ["organization", "project", "member"] },
+            "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+        }
     })
 }

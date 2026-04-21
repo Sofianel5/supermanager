@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -13,14 +13,17 @@ import { OrganizationKnowledgePanel } from "../components/app-page/organization-
 import { OrganizationMembersPanel } from "../components/app-page/organization-members-panel";
 import { OrganizationOnboarding } from "../components/app-page/organization-onboarding";
 import { OrgWideBlufCard } from "../components/app-page/org-wide-bluf-card";
+import { UpdatesList } from "../components/app-page/updates-list";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
 import { InnerTabNav, type InnerTabItem } from "../components/inner-tab-nav";
 import {
+  buildOrganizationActivityHref,
   buildOrganizationHref,
   buildOrganizationKnowledgeHref,
   buildOrganizationMembersHref,
 } from "../lib/organization";
+import { organizationUpdatesQueryOptions } from "../queries/updates";
 import {
   deviceStatusQueryKey,
   normalizeUserCode,
@@ -36,7 +39,7 @@ import {
 import { pageShellClass } from "../ui";
 import { readAuthError, readMessage } from "../utils";
 
-export type AppPageView = "projects" | "members" | "knowledge";
+export type AppPageView = "projects" | "activity" | "members" | "knowledge";
 
 interface AppPageProps {
   view?: AppPageView;
@@ -77,6 +80,7 @@ export function AppPage({ view = "projects" }: AppPageProps) {
   const deviceStatusQuery = useDeviceStatus(userCode);
   const organizationSlug = activeOrganization?.organization_slug ?? null;
   const isKnowledgeView = view === "knowledge";
+  const isActivityView = view === "activity";
   const memoriesQuery = useOrganizationDocuments(
     "memories",
     organizationSlug,
@@ -87,6 +91,15 @@ export function AppPage({ view = "projects" }: AppPageProps) {
     organizationSlug,
     isKnowledgeView,
   );
+  const updatesQuery = useQuery({
+    enabled: isActivityView && Boolean(organizationSlug),
+    ...(organizationSlug
+      ? organizationUpdatesQueryOptions(organizationSlug, "organization")
+      : {
+          queryKey: ["organization", "(none)", "updates", "organization"] as const,
+          queryFn: async () => ({ updates: [], total_count: 0 }),
+        }),
+  });
 
   const viewer = viewerQuery.data ?? null;
   const isFirstRun = viewer !== null && viewer.organizations.length === 0;
@@ -239,6 +252,12 @@ export function AppPage({ view = "projects" }: AppPageProps) {
       count: projects.length || undefined,
     },
     {
+      id: "activity",
+      label: "Activity",
+      to: buildOrganizationActivityHref(organizationSlug),
+      count: updatesQuery.data?.total_count || undefined,
+    },
+    {
       id: "members",
       label: "Members",
       to: buildOrganizationMembersHref(organizationSlug),
@@ -303,7 +322,24 @@ export function AppPage({ view = "projects" }: AppPageProps) {
             <CliSetupBanner />
           )}
 
-          {view === "members" ? (
+          {view === "activity" ? (
+            <UpdatesList
+              error={
+                updatesQuery.error instanceof Error
+                  ? updatesQuery.error.message
+                  : null
+              }
+              isLoading={updatesQuery.isLoading}
+              organizationSlug={organizationSlug}
+              showProjectChip
+              totalCount={
+                updatesQuery.data?.total_count ??
+                updatesQuery.data?.updates.length ??
+                0
+              }
+              updates={updatesQuery.data?.updates ?? []}
+            />
+          ) : view === "members" ? (
             <OrganizationMembersPanel
               activeOrganization={activeOrganization}
               error={workspaceError}

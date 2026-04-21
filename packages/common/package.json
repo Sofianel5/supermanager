@@ -9,6 +9,7 @@
     ".": "./index.ts",
     "./api-protocol": "./api-protocol/index.ts",
     "./http-types": "./http-types/index.ts",
-    "./summary-protocol": "./summary-protocol/index.ts"
+    "./summary-protocol": "./summary-protocol/index.ts",
+    "./updates-protocol": "./updates-protocol/index.ts"
   }
 }

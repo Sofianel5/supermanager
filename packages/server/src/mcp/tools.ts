@@ -22,14 +22,16 @@ const SERVER_INFO = {
 } as const;
 
 const SERVER_INSTRUCTIONS =
-  "Use get_organization_summary for the org-level snapshot, get_project_summary for a single project view, and query_events or search_events for raw historical evidence.";
+  "Use get_organization_summary for the org-level snapshot, get_project_summary for a single project view, query_events or search_events for raw historical evidence, and get_updates for recent timestamped statements scoped to org / project / member.";
 
 const DEFAULT_FEED_LIMIT = 25;
 const DEFAULT_QUERY_LIMIT = 25;
 const DEFAULT_SEARCH_LIMIT = 10;
+const DEFAULT_UPDATES_LIMIT = 25;
 const MAX_FEED_LIMIT = 100;
 const MAX_QUERY_LIMIT = 100;
 const MAX_SEARCH_LIMIT = 25;
+const MAX_UPDATES_LIMIT = 100;
 
 const READ_ONLY_TOOL = {
   readOnlyHint: true,
@@ -66,6 +68,33 @@ const getProjectFeedSchema = z.object({
     DEFAULT_FEED_LIMIT,
     MAX_FEED_LIMIT,
     "Optional number of events to return.",
+  ),
+});
+
+const getUpdatesSchema = z.object({
+  organization_slug: optionalString(
+    "Optional organization slug. Defaults to the active organization.",
+  ),
+  scope: z
+    .enum(["organization", "project", "member"])
+    .describe("Optional scope filter.")
+    .optional(),
+  project_id: optionalString(
+    "Optional project filter. Required when scope='project'.",
+  ),
+  member_user_id: optionalString(
+    "Optional member user id filter. Required when scope='member'.",
+  ),
+  before_seq: z
+    .number()
+    .int()
+    .min(1)
+    .describe("Optional sequence cursor for pagination.")
+    .optional(),
+  limit: boundedLimit(
+    DEFAULT_UPDATES_LIMIT,
+    MAX_UPDATES_LIMIT,
+    "Optional number of updates to return.",
   ),
 });
 
@@ -206,6 +235,49 @@ export function createMcpServer(options: McpToolOptions, headers: Headers) {
           undefined,
           limit ?? DEFAULT_FEED_LIMIT,
         ),
+      });
+    },
+  );
+
+  server.registerTool(
+    "get_updates",
+    {
+      title: "Get Updates",
+      description:
+        "Read recent timestamped updates emitted by the workflow agents, scoped to organization, project, or member.",
+      inputSchema: getUpdatesSchema,
+      annotations: READ_ONLY_TOOL,
+    },
+    async ({
+      organization_slug,
+      scope,
+      project_id,
+      member_user_id,
+      before_seq,
+      limit,
+    }) => {
+      const membership = await loadOrganizationMembership(
+        options,
+        headers,
+        organization_slug,
+      );
+
+      if (project_id != null) {
+        await loadAccessibleProject(options, headers, project_id);
+      }
+
+      const updates = await options.db.getUpdates(membership.organization_id, {
+        scope,
+        projectId: project_id,
+        memberUserId: member_user_id,
+        beforeSeq: before_seq,
+        limit: limit ?? DEFAULT_UPDATES_LIMIT,
+      });
+
+      return jsonToolResult({
+        organization_slug: membership.organization_slug,
+        scope: scope ?? null,
+        updates,
       });
     },
   );

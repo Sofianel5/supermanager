@@ -14,6 +14,7 @@ export type {
   ProjectListEntry,
   ProjectListResponse,
   ProjectSummaryResponse,
+  UpdatesResponse,
   ViewerResponse,
   ViewerUser,
 } from "./http-types";
@@ -24,3 +25,4 @@ export type {
   ProjectSnapshot,
   SummaryStatus,
 } from "./summary-protocol";
+export type { Update, UpdateScope } from "./updates-protocol";

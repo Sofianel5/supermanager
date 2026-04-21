@@ -437,6 +437,10 @@ impl AgentLoop {
             WorkflowKind::OrganizationMemoryConsolidate => {
                 SummaryTool::parse_organization_memory_consolidate(params)
             }
+            WorkflowKind::ProjectUpdatesEmit => SummaryTool::parse_project_updates_emit(params),
+            WorkflowKind::OrganizationUpdatesEmit => {
+                SummaryTool::parse_organization_updates_emit(params)
+            }
         };
         let tool = match tool {
             Ok(tool) => tool,

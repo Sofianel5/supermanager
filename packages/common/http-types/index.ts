@@ -5,6 +5,12 @@ import type {
   ProjectSnapshot,
   SummaryStatus,
 } from "../summary-protocol";
+import type { Update } from "../updates-protocol";
+
+export interface UpdatesResponse {
+  updates: Update[];
+  total_count: number;
+}
 
 export interface ProjectSummaryResponse {
   last_processed_seq: number;

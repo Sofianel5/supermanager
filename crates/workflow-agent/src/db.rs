@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use anyhow::{Context, Result};
 use reporter_protocol::{
     MemberSnapshot, OrganizationSnapshot, ProjectBlufSnapshot, ProjectSnapshot, StoredHookEvent,
-    SummaryStatus,
+    SummaryStatus, Update, UpdateScope,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -1776,6 +1776,119 @@ impl SummaryDb {
                     },
                 })
             }
+            (WorkflowKind::ProjectUpdatesEmit, SummaryTool::EmitProjectUpdate { body }) => {
+                let body = body.trim();
+                if body.is_empty() {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        message: "body must be a non-empty string".to_owned(),
+                    });
+                }
+                let organization_id = self.organization_id_for_project(&normalized_id).await?;
+                self.insert_update(
+                    &organization_id,
+                    UpdateScope::Project,
+                    Some(&normalized_id),
+                    None,
+                    body,
+                    WorkflowKind::ProjectUpdatesEmit,
+                )
+                .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: format!("emitted project update for {normalized_id}"),
+                })
+            }
+            (
+                WorkflowKind::ProjectUpdatesEmit,
+                SummaryTool::EmitMemberUpdate {
+                    member_user_id,
+                    member_name,
+                    body,
+                },
+            ) => {
+                let body = body.trim();
+                let member_user_id = member_user_id.trim();
+                if body.is_empty() || member_user_id.is_empty() {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        message: "member_user_id and body must be non-empty strings".to_owned(),
+                    });
+                }
+                let organization_id = self.organization_id_for_project(&normalized_id).await?;
+                match self
+                    .insert_update(
+                        &organization_id,
+                        UpdateScope::Member,
+                        None,
+                        Some(member_user_id),
+                        body,
+                        WorkflowKind::ProjectUpdatesEmit,
+                    )
+                    .await
+                {
+                    Ok(_) => Ok(ToolExecutionResult {
+                        success: true,
+                        message: format!(
+                            "emitted member update for {} ({member_user_id})",
+                            member_name.trim()
+                        ),
+                    }),
+                    Err(err) => Ok(ToolExecutionResult {
+                        success: false,
+                        message: format!(
+                            "failed to insert member update for {member_user_id}: {err}"
+                        ),
+                    }),
+                }
+            }
+            (WorkflowKind::OrganizationUpdatesEmit, SummaryTool::EmitOrgUpdate { body }) => {
+                let body = body.trim();
+                if body.is_empty() {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        message: "body must be a non-empty string".to_owned(),
+                    });
+                }
+                self.insert_update(
+                    &normalized_id,
+                    UpdateScope::Organization,
+                    None,
+                    None,
+                    body,
+                    WorkflowKind::OrganizationUpdatesEmit,
+                )
+                .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: format!("emitted organization update for {normalized_id}"),
+                })
+            }
+            (
+                WorkflowKind::OrganizationUpdatesEmit,
+                SummaryTool::GetRecentUpdates { scope, limit },
+            ) => {
+                let scope = match scope.as_deref() {
+                    None => None,
+                    Some(value) => match parse_update_scope(value) {
+                        Ok(parsed) => Some(parsed),
+                        Err(err) => {
+                            return Ok(ToolExecutionResult {
+                                success: false,
+                                message: format!("invalid scope: {err}"),
+                            });
+                        }
+                    },
+                };
+                let limit = limit.unwrap_or(25).clamp(1, 200);
+                let updates = self
+                    .list_recent_updates(&normalized_id, scope, limit)
+                    .await?;
+                serialize_snapshot(
+                    &serde_json::json!({ "updates": updates }),
+                    "recent updates snapshot",
+                )
+            }
             (kind, _) => Ok(ToolExecutionResult {
                 success: false,
                 message: format!("tool is not available for {} workflow", kind.as_str()),
@@ -1853,6 +1966,102 @@ impl SummaryDb {
                 })
             })
             .collect()
+    }
+
+    pub(crate) async fn organization_id_for_project(&self, project_id: &str) -> Result<String> {
+        let normalized_project_id = normalize_project_id(project_id);
+        sqlx::query_scalar::<_, String>(
+            "SELECT organization_id FROM projects WHERE project_id = $1",
+        )
+        .bind(&normalized_project_id)
+        .fetch_one(&self.pool)
+        .await
+        .with_context(|| format!("failed to resolve organization for project {normalized_project_id}"))
+    }
+
+    pub(crate) async fn insert_update(
+        &self,
+        organization_id: &str,
+        scope: UpdateScope,
+        project_id: Option<&str>,
+        member_user_id: Option<&str>,
+        body_text: &str,
+        source_workflow_kind: WorkflowKind,
+    ) -> Result<Update> {
+        let normalized_project_id = project_id.map(normalize_project_id);
+        let row = sqlx::query(
+            r#"
+            INSERT INTO updates (
+              organization_id,
+              scope,
+              project_id,
+              member_user_id,
+              body_text,
+              source_workflow_kind
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING
+              seq,
+              update_id,
+              organization_id,
+              scope,
+              project_id,
+              member_user_id,
+              body_text,
+              source_workflow_kind,
+              created_at
+            "#,
+        )
+        .bind(organization_id)
+        .bind(update_scope_str(scope))
+        .bind(normalized_project_id.as_deref())
+        .bind(member_user_id)
+        .bind(body_text)
+        .bind(source_workflow_kind.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to insert {} update for organization {organization_id}",
+                source_workflow_kind.as_str()
+            )
+        })?;
+        decode_update_row(&row)
+    }
+
+    pub(crate) async fn list_recent_updates(
+        &self,
+        organization_id: &str,
+        scope: Option<UpdateScope>,
+        limit: i64,
+    ) -> Result<Vec<Update>> {
+        let scope_filter = scope.map(update_scope_str);
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              seq,
+              update_id,
+              organization_id,
+              scope,
+              project_id,
+              member_user_id,
+              body_text,
+              source_workflow_kind,
+              created_at
+            FROM updates
+            WHERE organization_id = $1
+              AND ($2::text IS NULL OR scope = $2::text)
+            ORDER BY created_at DESC, seq DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(organization_id)
+        .bind(scope_filter)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| format!("failed to list recent updates for {organization_id}"))?;
+        rows.iter().map(decode_update_row).collect()
     }
 }
 
@@ -2110,4 +2319,51 @@ fn format_timestamp(timestamp: OffsetDateTime) -> Result<String> {
 
 pub(crate) fn now_rfc3339() -> Result<String> {
     format_timestamp(OffsetDateTime::now_utc())
+}
+
+fn update_scope_str(scope: UpdateScope) -> &'static str {
+    match scope {
+        UpdateScope::Organization => "organization",
+        UpdateScope::Project => "project",
+        UpdateScope::Member => "member",
+    }
+}
+
+fn parse_update_scope(value: &str) -> Result<UpdateScope> {
+    match value {
+        "organization" => Ok(UpdateScope::Organization),
+        "project" => Ok(UpdateScope::Project),
+        "member" => Ok(UpdateScope::Member),
+        other => Err(anyhow::anyhow!("unknown update scope: {other}")),
+    }
+}
+
+fn decode_update_row(row: &sqlx::postgres::PgRow) -> Result<Update> {
+    let scope_str: String = row.try_get("scope").context("failed to decode updates.scope")?;
+    Ok(Update {
+        seq: row.try_get("seq").context("failed to decode updates.seq")?,
+        update_id: row
+            .try_get::<Uuid, _>("update_id")
+            .context("failed to decode updates.update_id")?,
+        organization_id: row
+            .try_get("organization_id")
+            .context("failed to decode updates.organization_id")?,
+        scope: parse_update_scope(&scope_str)?,
+        project_id: row
+            .try_get("project_id")
+            .context("failed to decode updates.project_id")?,
+        member_user_id: row
+            .try_get("member_user_id")
+            .context("failed to decode updates.member_user_id")?,
+        body_text: row
+            .try_get("body_text")
+            .context("failed to decode updates.body_text")?,
+        source_workflow_kind: row
+            .try_get("source_workflow_kind")
+            .context("failed to decode updates.source_workflow_kind")?,
+        created_at: format_timestamp(
+            row.try_get::<OffsetDateTime, _>("created_at")
+                .context("failed to decode updates.created_at")?,
+        )?,
+    })
 }

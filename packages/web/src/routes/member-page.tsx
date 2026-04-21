@@ -1,14 +1,20 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import type { MemberSnapshot, ProjectListEntry } from "../api";
+import type { MemberSnapshot, ProjectListEntry, UpdatesResponse } from "../api";
+import { UpdatesList } from "../components/app-page/updates-list";
+import { InnerTabNav, type InnerTabItem } from "../components/inner-tab-nav";
 import { MemberAvatar } from "../components/member-avatar";
 import { MarkdownBlock } from "../components/markdown-block";
 import { displayMemberName } from "../lib/display-member-name";
 import { formatRelativeTime } from "../lib/format-relative-time";
 import {
+  buildMemberActivityHref,
+  buildMemberHref,
   buildOrganizationHref,
   formatOrganizationLabel,
 } from "../lib/organization";
+import { memberUpdatesQueryOptions } from "../queries/updates";
 import { useWorkspaceData } from "../queries/workspace";
 import {
   accentSurfaceClass,
@@ -21,7 +27,13 @@ import {
   subduedSurfaceClass,
 } from "../ui";
 
-export function MemberPage() {
+export type MemberPageView = "summary" | "activity";
+
+interface MemberPageProps {
+  view?: MemberPageView;
+}
+
+export function MemberPage({ view = "summary" }: MemberPageProps) {
   const { memberId = "" } = useParams();
   const location = useLocation();
   const [clock, setClock] = useState(() => Date.now());
@@ -31,6 +43,16 @@ export function MemberPage() {
   const { activeOrganization, projects, summaryQuery } = useWorkspaceData(
     preferredOrganizationSlug,
   );
+  const organizationSlug = activeOrganization?.organization_slug ?? null;
+  const updatesQuery = useQuery({
+    enabled: view === "activity" && Boolean(organizationSlug) && Boolean(memberId),
+    ...(organizationSlug
+      ? memberUpdatesQueryOptions(organizationSlug, memberId)
+      : {
+          queryKey: ["organization", "(none)", "members", memberId, "updates"] as const,
+          queryFn: async () => ({ updates: [], total_count: 0 }),
+        }),
+  });
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -42,7 +64,6 @@ export function MemberPage() {
     };
   }, []);
 
-  const organizationSlug = activeOrganization?.organization_slug ?? null;
   const organizationHref = buildOrganizationHref(organizationSlug);
   const organizationLabel = formatOrganizationLabel(
     activeOrganization?.organization_name ?? null,
@@ -83,6 +104,8 @@ export function MemberPage() {
 
   const memberName = displayMemberName(member.member_name);
   const hasBluf = Boolean(member.bluf_markdown.trim());
+  const updatesTotal = memberUpdatesTotalCount(updatesQuery.data);
+  const tabs = buildMemberTabs(memberId, organizationSlug, updatesTotal);
 
   return (
     <main className={pageShellClass}>
@@ -113,7 +136,28 @@ export function MemberPage() {
         </div>
       </header>
 
-      <section className="mt-7 grid gap-6">
+      <InnerTabNav
+        activeId={view}
+        ariaLabel="Member sections"
+        items={tabs}
+      />
+
+      {view === "activity" ? (
+        <UpdatesList
+          error={
+            updatesQuery.error instanceof Error
+              ? updatesQuery.error.message
+              : null
+          }
+          isLoading={updatesQuery.isLoading}
+          organizationSlug={organizationSlug}
+          showMemberChip={false}
+          showProjectChip
+          totalCount={updatesTotal}
+          updates={updatesQuery.data?.updates ?? []}
+        />
+      ) : (
+        <section className="mt-7 grid gap-6">
         <section className={cx(accentSurfaceClass, "grid gap-4 p-[18px]")}>
           <div className="flex items-center justify-between gap-3">
             <span className={sectionLabelClass}>Member summary</span>
@@ -156,8 +200,33 @@ export function MemberPage() {
           )}
         </section>
       </section>
+      )}
     </main>
   );
+}
+
+function buildMemberTabs(
+  memberId: string,
+  organizationSlug: string | null,
+  updatesTotal: number,
+): Array<InnerTabItem<MemberPageView>> {
+  return [
+    {
+      id: "summary",
+      label: "Summary",
+      to: buildMemberHref(memberId, organizationSlug),
+    },
+    {
+      id: "activity",
+      label: "Activity",
+      to: buildMemberActivityHref(memberId, organizationSlug),
+      count: updatesTotal || undefined,
+    },
+  ];
+}
+
+function memberUpdatesTotalCount(data: UpdatesResponse | undefined) {
+  return data?.total_count ?? data?.updates.length ?? 0;
 }
 
 function MemberProjectRow({

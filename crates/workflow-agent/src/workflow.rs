@@ -6,9 +6,10 @@ use codex_app_server_protocol::{AskForApproval, DynamicToolSpec, SandboxMode};
 use crate::{
     prompt::{
         ORGANIZATION_MEMORY_CONSOLIDATE_SYSTEM_PROMPT, ORGANIZATION_SKILLS_SYSTEM_PROMPT,
-        ORGANIZATION_SUMMARY_SYSTEM_PROMPT, PROJECT_MEMORY_CONSOLIDATE_SYSTEM_PROMPT,
-        PROJECT_MEMORY_EXTRACT_SYSTEM_PROMPT, PROJECT_SKILLS_SYSTEM_PROMPT,
-        PROJECT_SUMMARY_SYSTEM_PROMPT,
+        ORGANIZATION_SUMMARY_SYSTEM_PROMPT, ORGANIZATION_UPDATES_EMIT_SYSTEM_PROMPT,
+        PROJECT_MEMORY_CONSOLIDATE_SYSTEM_PROMPT, PROJECT_MEMORY_EXTRACT_SYSTEM_PROMPT,
+        PROJECT_SKILLS_SYSTEM_PROMPT, PROJECT_SUMMARY_SYSTEM_PROMPT,
+        PROJECT_UPDATES_EMIT_SYSTEM_PROMPT,
     },
     tools::SummaryTool,
 };
@@ -24,6 +25,8 @@ pub(crate) enum WorkflowKind {
     ProjectSkills,
     OrganizationMemoryConsolidate,
     OrganizationSkills,
+    ProjectUpdatesEmit,
+    OrganizationUpdatesEmit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +45,8 @@ impl WorkflowKind {
             Self::ProjectSkills => "project_skills",
             Self::OrganizationMemoryConsolidate => "organization_memory_consolidate",
             Self::OrganizationSkills => "organization_skills",
+            Self::ProjectUpdatesEmit => "project_updates_emit",
+            Self::OrganizationUpdatesEmit => "organization_updates_emit",
         }
     }
 
@@ -51,10 +56,12 @@ impl WorkflowKind {
             Self::ProjectSummary
             | Self::ProjectMemoryExtract
             | Self::ProjectMemoryConsolidate
-            | Self::ProjectSkills => WorkflowScope::Project,
+            | Self::ProjectSkills
+            | Self::ProjectUpdatesEmit => WorkflowScope::Project,
             Self::OrganizationSummary
             | Self::OrganizationMemoryConsolidate
-            | Self::OrganizationSkills => WorkflowScope::Organization,
+            | Self::OrganizationSkills
+            | Self::OrganizationUpdatesEmit => WorkflowScope::Organization,
         }
     }
 
@@ -67,6 +74,8 @@ impl WorkflowKind {
             Self::ProjectSkills => "project-skills",
             Self::OrganizationMemoryConsolidate => "organization-memory-consolidate",
             Self::OrganizationSkills => "organization-skills",
+            Self::ProjectUpdatesEmit => "project-updates-emit",
+            Self::OrganizationUpdatesEmit => "organization-updates-emit",
         }
     }
 
@@ -79,6 +88,8 @@ impl WorkflowKind {
             Self::ProjectSkills => PROJECT_SKILLS_SYSTEM_PROMPT,
             Self::OrganizationMemoryConsolidate => ORGANIZATION_MEMORY_CONSOLIDATE_SYSTEM_PROMPT,
             Self::OrganizationSkills => ORGANIZATION_SKILLS_SYSTEM_PROMPT,
+            Self::ProjectUpdatesEmit => PROJECT_UPDATES_EMIT_SYSTEM_PROMPT,
+            Self::OrganizationUpdatesEmit => ORGANIZATION_UPDATES_EMIT_SYSTEM_PROMPT,
         }
     }
 
@@ -105,6 +116,8 @@ impl WorkflowKind {
                 Some(SummaryTool::organization_memory_consolidate_specs())
             }
             Self::OrganizationSkills => Some(SummaryTool::organization_skills_specs()),
+            Self::ProjectUpdatesEmit => Some(SummaryTool::project_updates_emit_specs()),
+            Self::OrganizationUpdatesEmit => Some(SummaryTool::organization_updates_emit_specs()),
         }
     }
 }

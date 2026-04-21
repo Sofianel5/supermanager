@@ -10,6 +10,8 @@ import {
   type ProjectSnapshot,
   type StoredHookEvent,
   type SummaryStatus,
+  type Update,
+  type UpdateScope,
   emptyOrganizationSnapshot,
   emptyProjectSnapshot,
   formatError,
@@ -90,6 +92,25 @@ interface WorkflowDocumentRow {
   document_path: unknown;
   content_text: unknown;
   updated_at: unknown;
+}
+
+interface UpdateRow {
+  seq: unknown;
+  update_id: unknown;
+  organization_id: unknown;
+  scope: unknown;
+  project_id: unknown;
+  member_user_id: unknown;
+  body_text: unknown;
+  source_workflow_kind: unknown;
+  created_at: unknown;
+}
+
+export interface UpdateFilters {
+  scope?: UpdateScope;
+  projectId?: string;
+  memberUserId?: string;
+  beforeSeq?: number;
 }
 
 interface HookEventInsert {
@@ -755,6 +776,54 @@ export class Db {
       })),
     };
   }
+
+  async getUpdates(
+    organizationId: string,
+    filters: UpdateFilters & { limit: number },
+  ): Promise<Update[]> {
+    const { scope, projectId, memberUserId, beforeSeq, limit } = filters;
+    const normalizedProjectId = projectId == null ? null : normalizeProjectId(projectId);
+    const rows = await this.client<UpdateRow[]>`
+      SELECT
+        seq,
+        update_id,
+        organization_id,
+        scope,
+        project_id,
+        member_user_id,
+        body_text,
+        source_workflow_kind,
+        created_at
+      FROM updates
+      WHERE organization_id = ${organizationId}
+        AND (${scope ?? null}::text IS NULL OR scope = ${scope ?? null})
+        AND (${normalizedProjectId}::text IS NULL OR project_id = ${normalizedProjectId})
+        AND (${memberUserId ?? null}::text IS NULL OR member_user_id = ${memberUserId ?? null})
+        AND (${beforeSeq ?? null}::bigint IS NULL OR seq < ${beforeSeq ?? null})
+      ORDER BY seq DESC
+      LIMIT ${limit}
+    `;
+
+    return rows.map(mapUpdate);
+  }
+
+  async countUpdates(
+    organizationId: string,
+    filters: UpdateFilters,
+  ): Promise<number> {
+    const { scope, projectId, memberUserId } = filters;
+    const normalizedProjectId = projectId == null ? null : normalizeProjectId(projectId);
+    const [row] = await this.client<CountRow[]>`
+      SELECT COUNT(*)::INT AS count
+      FROM updates
+      WHERE organization_id = ${organizationId}
+        AND (${scope ?? null}::text IS NULL OR scope = ${scope ?? null})
+        AND (${normalizedProjectId}::text IS NULL OR project_id = ${normalizedProjectId})
+        AND (${memberUserId ?? null}::text IS NULL OR member_user_id = ${memberUserId ?? null})
+    `;
+
+    return row == null ? 0 : toNumber(row.count);
+  }
 }
 
 export function normalizeProjectId(projectId: string): string {
@@ -795,6 +864,31 @@ function mapProject(row: ProjectRow): ProjectRecord {
     member_count:
       row.member_count == null ? 0 : toNumber(row.member_count),
   };
+}
+
+function mapUpdate(row: UpdateRow): Update {
+  return {
+    seq: toNumber(row.seq),
+    update_id: readString(row.update_id, "update_id"),
+    organization_id: readString(row.organization_id, "organization_id"),
+    scope: parseUpdateScope(row.scope),
+    project_id: row.project_id == null ? null : String(row.project_id),
+    member_user_id:
+      row.member_user_id == null ? null : String(row.member_user_id),
+    body_text: readString(row.body_text, "body_text"),
+    source_workflow_kind: readString(
+      row.source_workflow_kind,
+      "source_workflow_kind",
+    ),
+    created_at: toRfc3339(row.created_at),
+  };
+}
+
+function parseUpdateScope(value: unknown): UpdateScope {
+  if (value === "organization" || value === "project" || value === "member") {
+    return value;
+  }
+  throw new Error(`unknown update scope: ${String(value)}`);
 }
 
 function mapStoredHookEvent(row: HookEventRow): StoredHookEvent {

@@ -21,16 +21,19 @@ import {
   type ProjectSummaryResponse,
   type StoredHookEvent,
   type SummaryStatus,
+  type UpdatesResponse,
 } from "../api";
 import { CopyPanel } from "../components/copy-panel";
 import { DropdownButton } from "../components/dropdown-button";
 import { InnerTabNav, type InnerTabItem } from "../components/inner-tab-nav";
+import { UpdatesList } from "../components/app-page/updates-list";
 import {
   FEED_LIMIT,
   projectFeedQueryKey,
   projectSummaryQueryOptions,
   useProjectData,
 } from "../queries/project";
+import { projectUpdatesQueryOptions } from "../queries/updates";
 import { findOrganizationBySlug, viewerQueryOptions } from "../queries/workspace";
 import {
   accentSurfaceClass,
@@ -71,6 +74,10 @@ export function ProjectPage({ view = "activity" }: ProjectPageProps) {
   const [clock, setClock] = useState(() => Date.now());
   const { feedQuery, projectQuery, summaryQuery } = useProjectData(projectId);
   const viewerQuery = useQuery(viewerQueryOptions());
+  const updatesQuery = useQuery({
+    enabled: Boolean(projectId) && view === "activity",
+    ...projectUpdatesQueryOptions(projectId),
+  });
 
   const project = projectQuery.data ?? null;
   const events = flattenFeedEvents(feedQuery.data?.pages);
@@ -303,15 +310,28 @@ export function ProjectPage({ view = "activity" }: ProjectPageProps) {
           organizationSlug={project?.organization_slug ?? null}
         />
       ) : (
-        <ProjectActivityTab
-          clock={clock}
-          events={events}
-          feedError={feedError}
-          fetchingMore={feedQuery.isFetchingNextPage}
-          hasMore={feedQuery.hasNextPage ?? false}
-          onLoadMore={() => void feedQuery.fetchNextPage()}
-          totalEventCount={totalEventCount}
-        />
+        <>
+          <UpdatesList
+            error={
+              updatesQuery.error instanceof Error
+                ? updatesQuery.error.message
+                : null
+            }
+            isLoading={updatesQuery.isLoading}
+            organizationSlug={project?.organization_slug ?? null}
+            totalCount={updatesQueryTotalCount(updatesQuery.data)}
+            updates={updatesQuery.data?.updates ?? []}
+          />
+          <ProjectActivityTab
+            clock={clock}
+            events={events}
+            feedError={feedError}
+            fetchingMore={feedQuery.isFetchingNextPage}
+            hasMore={feedQuery.hasNextPage ?? false}
+            onLoadMore={() => void feedQuery.fetchNextPage()}
+            totalEventCount={totalEventCount}
+          />
+        </>
       )}
     </main>
   );
@@ -726,6 +746,10 @@ function SummaryContent({
       </details>
     </div>
   );
+}
+
+function updatesQueryTotalCount(data: UpdatesResponse | undefined) {
+  return data?.total_count ?? data?.updates.length ?? 0;
 }
 
 function emptyProjectSnapshot(): ProjectSnapshot {

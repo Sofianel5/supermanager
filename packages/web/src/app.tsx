@@ -25,6 +25,14 @@ export function App() {
           }
         />
         <Route
+          path="/app/activity"
+          element={
+            <RequireSession>
+              <AppPage view="activity" />
+            </RequireSession>
+          }
+        />
+        <Route
           path="/app/members"
           element={
             <RequireSession>
@@ -53,7 +61,15 @@ export function App() {
           path="/m/:memberId"
           element={
             <RequireSession>
-              <MemberPage />
+              <MemberPage view="summary" />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/m/:memberId/activity"
+          element={
+            <RequireSession>
+              <MemberPage view="activity" />
             </RequireSession>
           }
         />

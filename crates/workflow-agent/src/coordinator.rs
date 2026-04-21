@@ -14,10 +14,12 @@ use crate::{
         ProjectSummaryQueryOptions, SummaryDb, now_rfc3339,
     },
     event::{
-        ProjectSkillsRequest, render_project_skills_request,
+        ProjectSkillsRequest, ProjectUpdatesEmitRequest,
         format_organization_memory_consolidate_request, format_organization_skills_request,
-        format_organization_summary_request, format_project_event,
-        format_project_memory_consolidate_request, format_project_memory_extract_request,
+        format_organization_summary_request, format_organization_updates_emit_request,
+        format_project_event, format_project_memory_consolidate_request,
+        format_project_memory_extract_request, format_project_updates_emit_request,
+        render_project_skills_request,
     },
     workflow::{
         WorkflowCursor, WorkflowCursorSecondary, WorkflowDispatch, WorkflowKind, WorkflowTarget,
@@ -41,6 +43,8 @@ pub(crate) struct WorkflowCoordinator {
     project_skills_interval: Duration,
     organization_memory_consolidate_interval: Duration,
     organization_skills_interval: Duration,
+    project_updates_emit_interval: Duration,
+    organization_updates_emit_interval: Duration,
     pending_workflow_cursor: HashMap<WorkflowTarget, WorkflowCursor>,
 }
 
@@ -57,6 +61,8 @@ impl WorkflowCoordinator {
         project_skills_interval: Duration,
         organization_memory_consolidate_interval: Duration,
         organization_skills_interval: Duration,
+        project_updates_emit_interval: Duration,
+        organization_updates_emit_interval: Duration,
     ) -> Self {
         Self {
             db,
@@ -69,6 +75,8 @@ impl WorkflowCoordinator {
             project_skills_interval,
             organization_memory_consolidate_interval,
             organization_skills_interval,
+            project_updates_emit_interval,
+            organization_updates_emit_interval,
             pending_workflow_cursor: HashMap::new(),
         }
     }
@@ -93,6 +101,10 @@ impl WorkflowCoordinator {
             .await?;
         self.run_organization_periodic_sweep(WorkflowKind::OrganizationSkills)
             .await?;
+        self.run_project_transcript_sweep(WorkflowKind::ProjectUpdatesEmit)
+            .await?;
+        self.run_organization_periodic_sweep(WorkflowKind::OrganizationUpdatesEmit)
+            .await?;
 
         let mut organization_summary_interval =
             create_interval(self.organization_summary_refresh_interval);
@@ -105,6 +117,10 @@ impl WorkflowCoordinator {
         let mut organization_memory_consolidate_interval =
             create_interval(self.organization_memory_consolidate_interval);
         let mut organization_skills_interval = create_interval(self.organization_skills_interval);
+        let mut project_updates_emit_interval =
+            create_interval(self.project_updates_emit_interval);
+        let mut organization_updates_emit_interval =
+            create_interval(self.organization_updates_emit_interval);
         let mut shutdown = Box::pin(shutdown_signal());
 
         loop {
@@ -133,6 +149,12 @@ impl WorkflowCoordinator {
                 }
                 _ = wait_for_interval(&mut organization_skills_interval) => {
                     self.run_organization_periodic_sweep(WorkflowKind::OrganizationSkills).await?;
+                }
+                _ = wait_for_interval(&mut project_updates_emit_interval) => {
+                    self.run_project_transcript_sweep(WorkflowKind::ProjectUpdatesEmit).await?;
+                }
+                _ = wait_for_interval(&mut organization_updates_emit_interval) => {
+                    self.run_organization_periodic_sweep(WorkflowKind::OrganizationUpdatesEmit).await?;
                 }
                 _ = &mut shutdown => break,
             }
@@ -397,7 +419,9 @@ impl WorkflowCoordinator {
     async fn run_project_transcript_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
         debug_assert!(matches!(
             kind,
-            WorkflowKind::ProjectMemoryExtract | WorkflowKind::ProjectSkills
+            WorkflowKind::ProjectMemoryExtract
+                | WorkflowKind::ProjectSkills
+                | WorkflowKind::ProjectUpdatesEmit
         ));
 
         let projects = self.db.list_projects_with_transcripts().await?;
@@ -444,7 +468,9 @@ impl WorkflowCoordinator {
         let heartbeat_cutoff = now_rfc3339()?;
         let transcript_limit = match target.kind {
             WorkflowKind::ProjectMemoryExtract => PROJECT_MEMORY_EXTRACT_TRANSCRIPT_LIMIT,
-            WorkflowKind::ProjectSkills => PROJECT_TRANSCRIPT_LIMIT,
+            WorkflowKind::ProjectSkills | WorkflowKind::ProjectUpdatesEmit => {
+                PROJECT_TRANSCRIPT_LIMIT
+            }
             _ => unreachable!(),
         };
         let transcripts = self
@@ -505,6 +531,31 @@ impl WorkflowCoordinator {
                 self.dispatch_workflow(WorkflowDispatch {
                     target: target.clone(),
                     input: rendered.input,
+                })
+                .await
+            }
+            WorkflowKind::ProjectUpdatesEmit => {
+                let project = crate::event::OrganizationProject {
+                    project_id: target.id.clone(),
+                    name: project_name.to_owned(),
+                };
+                self.pending_workflow_cursor.insert(
+                    target.clone(),
+                    transcript_workflow_cursor(
+                        &transcripts,
+                        transcripts.len(),
+                        transcript_limit,
+                        &heartbeat_cutoff,
+                    ),
+                );
+                self.dispatch_workflow(WorkflowDispatch {
+                    target: target.clone(),
+                    input: format_project_updates_emit_request(ProjectUpdatesEmitRequest {
+                        project: &project,
+                        transcripts: &transcripts,
+                        previous_processed_received_at: previous_processed_received_at.as_deref(),
+                        heartbeat_cutoff: &heartbeat_cutoff,
+                    })?,
                 })
                 .await
             }
@@ -580,7 +631,9 @@ impl WorkflowCoordinator {
     async fn run_organization_periodic_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
         debug_assert!(matches!(
             kind,
-            WorkflowKind::OrganizationMemoryConsolidate | WorkflowKind::OrganizationSkills
+            WorkflowKind::OrganizationMemoryConsolidate
+                | WorkflowKind::OrganizationSkills
+                | WorkflowKind::OrganizationUpdatesEmit
         ));
 
         let organization_ids = self.db.list_organizations_with_projects().await?;
@@ -631,6 +684,9 @@ impl WorkflowCoordinator {
                 }
                 WorkflowKind::OrganizationSkills => {
                     format_organization_skills_request(&projects, &heartbeat_cutoff)
+                }
+                WorkflowKind::OrganizationUpdatesEmit => {
+                    format_organization_updates_emit_request(&projects, &heartbeat_cutoff)
                 }
                 _ => unreachable!(),
             };
