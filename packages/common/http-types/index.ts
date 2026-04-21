@@ -1,19 +1,12 @@
 // Hand-written HTTP response/request types shared between server and web.
-// Types with a Rust counterpart live in ./api-protocol instead.
+// Types with a Rust counterpart are generated into this directory or ./api-protocol.
 import type {
   OrganizationSnapshot,
   ProjectSnapshot,
   SummaryStatus,
 } from "../summary-protocol";
-
-export interface ActivityUpdate {
-  created_at: string;
-  statement_text: string;
-}
-
-export interface ActivityUpdatesResponse {
-  updates: ActivityUpdate[];
-}
+export type { ActivityUpdate } from "./ActivityUpdate";
+export type { ActivityUpdatesResponse } from "./ActivityUpdatesResponse";
 
 export interface ProjectSummaryResponse {
   last_processed_seq: number;
