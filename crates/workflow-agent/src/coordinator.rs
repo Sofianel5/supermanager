@@ -14,10 +14,10 @@ use crate::{
         ProjectSummaryQueryOptions, SummaryDb, now_rfc3339,
     },
     event::{
-        ProjectSkillsRequest, format_organization_memory_consolidate_request,
-        format_organization_skills_request, format_organization_summary_request,
-        format_project_event, format_project_memory_consolidate_request,
-        format_project_memory_extract_request, format_project_skills_request,
+        ProjectSkillsRequest, render_project_skills_request,
+        format_organization_memory_consolidate_request, format_organization_skills_request,
+        format_organization_summary_request, format_project_event,
+        format_project_memory_consolidate_request, format_project_memory_extract_request,
     },
     workflow::{
         WorkflowCursor, WorkflowCursorSecondary, WorkflowDispatch, WorkflowKind, WorkflowTarget,
@@ -26,6 +26,7 @@ use crate::{
 
 const ORGANIZATION_SUMMARY_EVENT_LIMIT: i64 = 500;
 const PROJECT_TRANSCRIPT_LIMIT: i64 = 24;
+const PROJECT_MEMORY_EXTRACT_TRANSCRIPT_LIMIT: i64 = 1;
 const PROJECT_SUMMARY_EVENT_LIMIT: i64 = 200;
 const PROJECT_SUMMARY_SWEEP_LIMIT: i64 = 50;
 
@@ -441,6 +442,11 @@ impl WorkflowCoordinator {
         previous_last_processed_session_id: Option<String>,
     ) -> Result<()> {
         let heartbeat_cutoff = now_rfc3339()?;
+        let transcript_limit = match target.kind {
+            WorkflowKind::ProjectMemoryExtract => PROJECT_MEMORY_EXTRACT_TRANSCRIPT_LIMIT,
+            WorkflowKind::ProjectSkills => PROJECT_TRANSCRIPT_LIMIT,
+            _ => unreachable!(),
+        };
         let transcripts = self
             .db
             .query_project_transcripts_for_workflow(
@@ -449,33 +455,10 @@ impl WorkflowCoordinator {
                     after_received_at: previous_processed_received_at.clone(),
                     after_session_id: previous_last_processed_session_id,
                     before_received_at: Some(heartbeat_cutoff.clone()),
-                    limit: Some(PROJECT_TRANSCRIPT_LIMIT),
+                    limit: Some(transcript_limit),
                 },
             )
             .await?;
-
-        let (updated_at, at_limit) = received_at_workflow_cutoff(
-            &transcripts
-                .iter()
-                .map(|transcript| transcript.received_at.as_str())
-                .collect::<Vec<_>>(),
-            PROJECT_TRANSCRIPT_LIMIT,
-            &heartbeat_cutoff,
-        );
-        let secondary = if at_limit {
-            transcripts
-                .last()
-                .map(|transcript| WorkflowCursorSecondary::SessionId(transcript.session_id.clone()))
-        } else {
-            None
-        };
-        self.pending_workflow_cursor.insert(
-            target.clone(),
-            WorkflowCursor::ReceivedAt {
-                received_at: updated_at.to_owned(),
-                secondary,
-            },
-        );
 
         if transcripts.is_empty() {
             self.persist_workflow_status(target, SummaryStatus::Ready)
@@ -485,6 +468,10 @@ impl WorkflowCoordinator {
 
         match target.kind {
             WorkflowKind::ProjectMemoryExtract => {
+                self.pending_workflow_cursor.insert(
+                    target.clone(),
+                    transcript_workflow_cursor(&transcripts, transcripts.len(), transcript_limit, &heartbeat_cutoff),
+                );
                 for transcript in &transcripts {
                     self.dispatch_workflow(WorkflowDispatch {
                         target: target.clone(),
@@ -499,14 +486,25 @@ impl WorkflowCoordinator {
                     project_id: target.id.clone(),
                     name: project_name.to_owned(),
                 };
+                let rendered = render_project_skills_request(ProjectSkillsRequest {
+                    project: &project,
+                    transcripts: &transcripts,
+                    previous_processed_received_at: previous_processed_received_at.as_deref(),
+                    heartbeat_cutoff: &heartbeat_cutoff,
+                })?;
+                let included_transcript_count = rendered.included_transcript_count.max(1);
+                self.pending_workflow_cursor.insert(
+                    target.clone(),
+                    transcript_workflow_cursor(
+                        &transcripts,
+                        included_transcript_count,
+                        transcript_limit,
+                        &heartbeat_cutoff,
+                    ),
+                );
                 self.dispatch_workflow(WorkflowDispatch {
                     target: target.clone(),
-                    input: format_project_skills_request(ProjectSkillsRequest {
-                        project: &project,
-                        transcripts: &transcripts,
-                        previous_processed_received_at: previous_processed_received_at.as_deref(),
-                        heartbeat_cutoff: &heartbeat_cutoff,
-                    })?,
+                    input: rendered.input,
                 })
                 .await
             }
@@ -740,9 +738,54 @@ fn received_at_workflow_cutoff<'a>(
     }
 }
 
+fn transcript_workflow_cursor(
+    transcripts: &[crate::event::OrganizationTranscript],
+    included_transcript_count: usize,
+    transcript_limit: i64,
+    heartbeat_cutoff: &str,
+) -> WorkflowCursor {
+    let included_transcript_count = included_transcript_count.min(transcripts.len());
+    let included_transcripts = &transcripts[..included_transcript_count];
+    let last_included = included_transcripts
+        .last()
+        .expect("transcript cursor requires at least one transcript");
+    let exhausted_queried_transcripts = included_transcript_count == transcripts.len();
+    let hit_limit = !exhausted_queried_transcripts || included_transcript_count as i64 == transcript_limit;
+
+    if hit_limit {
+        WorkflowCursor::ReceivedAt {
+            received_at: last_included.received_at.clone(),
+            secondary: Some(WorkflowCursorSecondary::SessionId(
+                last_included.session_id.clone(),
+            )),
+        }
+    } else {
+        WorkflowCursor::ReceivedAt {
+            received_at: heartbeat_cutoff.to_owned(),
+            secondary: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_transcript(session_id: &str, received_at: &str) -> crate::event::OrganizationTranscript {
+        crate::event::OrganizationTranscript {
+            session_id: session_id.to_owned(),
+            project_id: "PROJECT42".to_owned(),
+            project_name: "Operations".to_owned(),
+            member_user_id: "user_123".to_owned(),
+            member_name: "Dana".to_owned(),
+            client: "codex".to_owned(),
+            repo_root: "/tmp/repo".to_owned(),
+            branch: None,
+            received_at: received_at.to_owned(),
+            transcript_path: "/tmp/transcript.jsonl".to_owned(),
+            transcript_text: "user: ship it\nassistant: done".to_owned(),
+        }
+    }
 
     #[test]
     fn empty_received_at_batch_uses_heartbeat_cutoff() {
@@ -770,6 +813,29 @@ mod tests {
             received_at_workflow_cutoff(&["2026-04-17T11:59:58Z"], 2, "2026-04-17T12:00:00Z",),
             ("2026-04-17T12:00:00Z", false)
         );
+    }
+
+    #[test]
+    fn transcript_workflow_cursor_uses_last_included_session_when_batch_is_trimmed() {
+        let transcripts = vec![
+            sample_transcript("sess_1", "2026-04-17T11:59:58Z"),
+            sample_transcript("sess_2", "2026-04-17T11:59:59Z"),
+        ];
+
+        let cursor = transcript_workflow_cursor(
+            &transcripts,
+            1,
+            PROJECT_TRANSCRIPT_LIMIT,
+            "2026-04-17T12:00:00Z",
+        );
+
+        assert!(matches!(
+            cursor,
+            WorkflowCursor::ReceivedAt {
+                received_at,
+                secondary: Some(WorkflowCursorSecondary::SessionId(session_id)),
+            } if received_at == "2026-04-17T11:59:58Z" && session_id == "sess_1"
+        ));
     }
 }
 

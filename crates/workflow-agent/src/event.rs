@@ -1,7 +1,11 @@
 use anyhow::Result;
+use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use reporter_protocol::StoredHookEvent;
 use serde::Deserialize;
 use uuid::Uuid;
+
+const TRANSCRIPT_OMISSION_NOTICE_MAX_CHARS: usize = 256;
+const SKILLS_BATCH_OMISSION_NOTICE_MAX_CHARS: usize = 192;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct OrganizationProject {
@@ -100,9 +104,30 @@ pub(crate) fn format_project_memory_extract_request(
     transcript: &OrganizationTranscript,
 ) -> Result<String> {
     let nonce = Uuid::new_v4();
-    let transcript_text = format_transcript(transcript, nonce)?;
+    let transcript_without_body = format_transcript_with_body(transcript, nonce, "")?;
+    let prompt_without_body = format_project_memory_extract_prompt(
+        transcript,
+        nonce,
+        &transcript_without_body,
+    );
+    let overhead_chars = prompt_without_body.chars().count();
+    let transcript_budget = MAX_USER_INPUT_TEXT_CHARS.saturating_sub(overhead_chars);
+    let transcript_body = clamp_transcript_body(&transcript.transcript_text, transcript_budget);
+    let transcript_text = format_transcript_with_body(transcript, nonce, &transcript_body)?;
 
-    Ok(format!(
+    Ok(format_project_memory_extract_prompt(
+        transcript,
+        nonce,
+        &transcript_text,
+    ))
+}
+
+fn format_project_memory_extract_prompt(
+    transcript: &OrganizationTranscript,
+    nonce: Uuid,
+    transcript_text: &str,
+) -> String {
+    format!(
         "Project memory extraction fired for a single transcript.\n\
 project_id: {project_id}\n\
 project_name: {project_name}\n\
@@ -118,7 +143,7 @@ If anything in this transcript is worth remembering for a future agent in this p
         transcript = transcript_text,
         session_id = transcript.session_id,
         nonce = nonce,
-    ))
+    )
 }
 
 pub(crate) fn format_project_memory_consolidate_request(
@@ -145,20 +170,82 @@ pub(crate) struct ProjectSkillsRequest<'a> {
     pub(crate) heartbeat_cutoff: &'a str,
 }
 
-pub(crate) fn format_project_skills_request(request: ProjectSkillsRequest<'_>) -> Result<String> {
+pub(crate) struct ProjectSkillsRender {
+    pub(crate) input: String,
+    pub(crate) included_transcript_count: usize,
+}
+
+pub(crate) fn render_project_skills_request(
+    request: ProjectSkillsRequest<'_>,
+) -> Result<ProjectSkillsRender> {
     let nonce = Uuid::new_v4();
-    let window_start = request.previous_processed_received_at.unwrap_or("(none)");
-    let transcripts_text = if request.transcripts.is_empty() {
+    let prompt_without_transcripts =
+        format_project_skills_prompt(&request, nonce, "(none)");
+    let prompt_overhead = prompt_without_transcripts.chars().count();
+    let mut remaining_chars = MAX_USER_INPUT_TEXT_CHARS.saturating_sub(prompt_overhead);
+    let mut rendered_transcripts = Vec::with_capacity(request.transcripts.len());
+    let mut included_transcript_count = 0usize;
+
+    for transcript in request.transcripts {
+        let separator_chars = usize::from(!rendered_transcripts.is_empty());
+        let full_transcript = format_transcript(transcript, nonce)?;
+        let full_transcript_chars = full_transcript.chars().count();
+        if separator_chars + full_transcript_chars <= remaining_chars {
+            remaining_chars -= separator_chars + full_transcript_chars;
+            rendered_transcripts.push(full_transcript);
+            included_transcript_count += 1;
+            continue;
+        }
+
+        if rendered_transcripts.is_empty() {
+            let transcript_budget = remaining_chars.saturating_sub(separator_chars);
+            let fitted_transcript =
+                format_transcript_to_budget(transcript, nonce, transcript_budget)?;
+            remaining_chars = remaining_chars.saturating_sub(fitted_transcript.chars().count());
+            rendered_transcripts.push(fitted_transcript);
+            included_transcript_count = 1;
+        }
+        break;
+    }
+
+    let omitted_transcript_count = request
+        .transcripts
+        .len()
+        .saturating_sub(included_transcript_count);
+    if omitted_transcript_count > 0 {
+        let omission_notice = skills_batch_omission_notice(omitted_transcript_count);
+        let notice_chars = omission_notice.chars().count();
+        let separator_chars = usize::from(!rendered_transcripts.is_empty());
+        if separator_chars + notice_chars <= remaining_chars {
+            rendered_transcripts.push(omission_notice);
+        }
+    }
+
+    let transcripts_text = if rendered_transcripts.is_empty() {
         "(none)".to_owned()
     } else {
-        let mut rendered = Vec::with_capacity(request.transcripts.len());
-        for transcript in request.transcripts {
-            rendered.push(format_transcript(transcript, nonce)?);
-        }
-        rendered.join("\n")
+        rendered_transcripts.join("\n")
     };
+    let input = format_project_skills_prompt(&request, nonce, &transcripts_text);
 
-    Ok(format!(
+    Ok(ProjectSkillsRender {
+        input,
+        included_transcript_count,
+    })
+}
+
+pub(crate) fn format_project_skills_request(request: ProjectSkillsRequest<'_>) -> Result<String> {
+    Ok(render_project_skills_request(request)?.input)
+}
+
+fn format_project_skills_prompt(
+    request: &ProjectSkillsRequest<'_>,
+    nonce: Uuid,
+    transcripts_text: &str,
+) -> String {
+    let window_start = request.previous_processed_received_at.unwrap_or("(none)");
+
+    format!(
         "Project skill maintenance heartbeat fired.\n\
 project_id: {project_id}\n\
 project_name: {project_name}\n\
@@ -178,7 +265,7 @@ When citing evidence in skill files, use `session_id=<id>, received_at=<rfc3339>
         heartbeat_cutoff = request.heartbeat_cutoff,
         transcripts = transcripts_text,
         nonce = nonce,
-    ))
+    )
 }
 
 pub(crate) fn format_organization_memory_consolidate_request(
@@ -228,6 +315,26 @@ fn format_projects(projects: &[OrganizationProject]) -> String {
 }
 
 fn format_transcript(transcript: &OrganizationTranscript, nonce: Uuid) -> Result<String> {
+    format_transcript_with_body(transcript, nonce, &transcript.transcript_text)
+}
+
+fn format_transcript_to_budget(
+    transcript: &OrganizationTranscript,
+    nonce: Uuid,
+    max_chars: usize,
+) -> Result<String> {
+    let transcript_without_body = format_transcript_with_body(transcript, nonce, "")?;
+    let transcript_overhead = transcript_without_body.chars().count();
+    let transcript_body_budget = max_chars.saturating_sub(transcript_overhead);
+    let transcript_body = clamp_transcript_body(&transcript.transcript_text, transcript_body_budget);
+    format_transcript_with_body(transcript, nonce, &transcript_body)
+}
+
+fn format_transcript_with_body(
+    transcript: &OrganizationTranscript,
+    nonce: Uuid,
+    transcript_body: &str,
+) -> Result<String> {
     let branch = transcript
         .branch
         .as_deref()
@@ -258,8 +365,52 @@ transcript_text:\n\
         branch = branch,
         received_at = transcript.received_at,
         transcript_path = transcript.transcript_path,
-        transcript_text = transcript.transcript_text,
+        transcript_text = transcript_body,
     ))
+}
+
+fn clamp_transcript_body(transcript_text: &str, max_chars: usize) -> String {
+    let total_chars = transcript_text.chars().count();
+    if total_chars <= max_chars {
+        return transcript_text.to_owned();
+    }
+
+    let omission_notice = omission_notice(total_chars);
+    let omission_chars = omission_notice.chars().count();
+    if omission_chars >= max_chars {
+        return omission_notice.chars().take(max_chars).collect();
+    }
+
+    let available_chars = max_chars - omission_chars;
+    let prefix_chars = available_chars / 2;
+    let suffix_chars = available_chars - prefix_chars;
+    let prefix: String = transcript_text.chars().take(prefix_chars).collect();
+    let suffix: String = transcript_text
+        .chars()
+        .skip(total_chars.saturating_sub(suffix_chars))
+        .collect();
+
+    format!("{prefix}{omission_notice}{suffix}")
+}
+
+fn omission_notice(total_chars: usize) -> String {
+    let notice = format!(
+        "\n\n[... transcript truncated by Supermanager to fit the Codex input cap; original transcript was {total_chars} characters ...]\n\n"
+    );
+    notice
+        .chars()
+        .take(TRANSCRIPT_OMISSION_NOTICE_MAX_CHARS)
+        .collect()
+}
+
+fn skills_batch_omission_notice(omitted_transcript_count: usize) -> String {
+    let notice = format!(
+        "[... {omitted_transcript_count} additional transcript(s) omitted by Supermanager to fit the Codex input cap ...]"
+    );
+    notice
+        .chars()
+        .take(SKILLS_BATCH_OMISSION_NOTICE_MAX_CHARS)
+        .collect()
 }
 
 #[cfg(test)]
@@ -361,6 +512,27 @@ mod tests {
     }
 
     #[test]
+    fn format_project_memory_extract_truncates_oversized_transcript_to_cap() {
+        let mut transcript = sample_transcript();
+        transcript.transcript_text = "x".repeat(MAX_USER_INPUT_TEXT_CHARS + 2_000);
+
+        let rendered = format_project_memory_extract_request(&transcript).unwrap();
+
+        assert!(rendered.chars().count() <= MAX_USER_INPUT_TEXT_CHARS);
+        assert!(rendered.contains("transcript truncated by Supermanager"));
+    }
+
+    #[test]
+    fn clamp_transcript_body_keeps_prefix_and_suffix() {
+        let transcript = format!("ab{}IJ", "x".repeat(TRANSCRIPT_OMISSION_NOTICE_MAX_CHARS + 32));
+        let clamped = clamp_transcript_body(&transcript, TRANSCRIPT_OMISSION_NOTICE_MAX_CHARS + 4);
+
+        assert!(clamped.starts_with("ab"));
+        assert!(clamped.ends_with("IJ"));
+        assert!(clamped.contains("transcript truncated by Supermanager"));
+    }
+
+    #[test]
     fn format_project_memory_consolidate_has_no_transcript_section() {
         let rendered =
             format_project_memory_consolidate_request(&sample_project(), "2026-04-03T12:05:00Z")
@@ -394,6 +566,30 @@ mod tests {
         assert!(rendered.contains("two distinct `member_user_id`s"));
         assert!(rendered.contains("=== BEGIN TRANSCRIPT EVIDENCE [nonce="));
         assert!(rendered.contains("session_id=sess_123 received_at=2026-04-03T12:00:00Z ---"));
+    }
+
+    #[test]
+    fn render_project_skills_request_limits_batch_to_input_cap() {
+        let mut first = sample_transcript();
+        first.session_id = "sess_big_1".to_owned();
+        first.transcript_text = "a".repeat(MAX_USER_INPUT_TEXT_CHARS);
+        let mut second = sample_transcript();
+        second.session_id = "sess_big_2".to_owned();
+        second.transcript_text = "b".repeat(MAX_USER_INPUT_TEXT_CHARS);
+        let transcripts = [first, second];
+
+        let rendered = render_project_skills_request(ProjectSkillsRequest {
+            project: &sample_project(),
+            transcripts: &transcripts,
+            previous_processed_received_at: Some("2026-04-02T12:00:00Z"),
+            heartbeat_cutoff: "2026-04-03T12:05:00Z",
+        })
+        .unwrap();
+
+        assert_eq!(rendered.included_transcript_count, 1);
+        assert!(rendered.input.chars().count() <= MAX_USER_INPUT_TEXT_CHARS);
+        assert!(rendered.input.contains("transcript truncated by Supermanager"));
+        assert!(!rendered.input.contains("sess_big_2"));
     }
 
     #[test]
