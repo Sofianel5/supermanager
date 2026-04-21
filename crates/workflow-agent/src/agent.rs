@@ -6,7 +6,8 @@ use codex_app_server_protocol::{
     ClientRequest, DynamicToolCallOutputContentItem, DynamicToolCallParams,
     DynamicToolCallResponse, JSONRPCErrorError, RequestId, ServerNotification, ServerRequest,
     ThreadResumeParams, ThreadResumeResponse, ThreadStartParams, ThreadStartResponse,
-    TurnStartParams, TurnStartResponse, TurnStatus, TurnSteerParams, TurnSteerResponse, UserInput,
+    TurnInterruptParams, TurnInterruptResponse, TurnStartParams, TurnStartResponse, TurnStatus,
+    TurnSteerParams, TurnSteerResponse, UserInput,
 };
 use reporter_protocol::SummaryStatus;
 use serde_json::Value;
@@ -19,6 +20,7 @@ use crate::{
 };
 
 const NO_ACTIVE_TURN_TO_STEER_ERROR: &str = "no active turn to steer";
+const EXPECTED_ACTIVE_TURN_ID_MISMATCH_PREFIX: &str = "expected active turn id `";
 
 pub(crate) enum AgentCommand {
     DispatchWorkflow(WorkflowDispatch),
@@ -28,6 +30,12 @@ pub(crate) enum AgentCommand {
 enum LoopInput {
     Command(Option<AgentCommand>),
     Event(Option<InProcessServerEvent>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SteerFailureRecovery {
+    RestartTurn,
+    InterruptThenRestart,
 }
 
 #[derive(Debug)]
@@ -204,7 +212,7 @@ impl AgentLoop {
                     params: TurnSteerParams {
                         thread_id: thread_id.clone(),
                         input: input.clone(),
-                        expected_turn_id: turn_id,
+                        expected_turn_id: turn_id.clone(),
                     },
                 })
                 .await
@@ -220,7 +228,26 @@ impl AgentLoop {
                         "[workflow-agent] steer failed for {}: {error}",
                         target.label()
                     );
-                    if !is_stale_active_turn_error(&error) {
+                    let Some(recovery) = steer_failure_recovery(&error) else {
+                        if let Some(state) = self.targets.get_mut(target) {
+                            state.active_turn = None;
+                        }
+                        self.emit_workflow_status(target, SummaryStatus::Error)
+                            .await;
+                        return Ok(());
+                    };
+                    if recovery == SteerFailureRecovery::InterruptThenRestart
+                        && let Err(error) = self.interrupt_turn(target, &thread_id, &turn_id).await
+                    {
+                        eprintln!(
+                            "[workflow-agent] interrupt failed for {} after steer error: {error}",
+                            target.label()
+                        );
+                        if let Some(state) = self.targets.get_mut(target) {
+                            state.active_turn = None;
+                        }
+                        self.emit_workflow_status(target, SummaryStatus::Error)
+                            .await;
                         return Ok(());
                     }
                     if let Some(state) = self.targets.get_mut(target) {
@@ -259,6 +286,27 @@ impl AgentLoop {
                     .await;
             }
         }
+
+        Ok(())
+    }
+
+    async fn interrupt_turn(
+        &mut self,
+        target: &WorkflowTarget,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        self.client
+            .request_typed::<TurnInterruptResponse>(ClientRequest::TurnInterrupt {
+                request_id,
+                params: TurnInterruptParams {
+                    thread_id: thread_id.to_owned(),
+                    turn_id: turn_id.to_owned(),
+                },
+            })
+            .await
+            .with_context(|| format!("failed to interrupt active turn for {}", target.label()))?;
 
         Ok(())
     }
@@ -447,12 +495,22 @@ impl AgentLoop {
     }
 }
 
-fn is_stale_active_turn_error(error: &TypedRequestError) -> bool {
-    matches!(
-        error,
+fn steer_failure_recovery(error: &TypedRequestError) -> Option<SteerFailureRecovery> {
+    match error {
         TypedRequestError::Server { source, .. }
-            if source.message == NO_ACTIVE_TURN_TO_STEER_ERROR
-    )
+            if source.message == NO_ACTIVE_TURN_TO_STEER_ERROR =>
+        {
+            Some(SteerFailureRecovery::RestartTurn)
+        }
+        TypedRequestError::Server { source, .. }
+            if source
+                .message
+                .starts_with(EXPECTED_ACTIVE_TURN_ID_MISMATCH_PREFIX) =>
+        {
+            Some(SteerFailureRecovery::InterruptThenRestart)
+        }
+        _ => None,
+    }
 }
 
 async fn read_thread_id(path: &std::path::Path) -> Result<Option<String>> {
@@ -488,16 +546,28 @@ mod tests {
     }
 
     #[test]
-    fn no_active_turn_errors_are_treated_as_stale_state() {
-        assert!(is_stale_active_turn_error(&server_error(
-            NO_ACTIVE_TURN_TO_STEER_ERROR,
-        )));
+    fn no_active_turn_errors_restart_the_turn() {
+        assert_eq!(
+            steer_failure_recovery(&server_error(NO_ACTIVE_TURN_TO_STEER_ERROR)),
+            Some(SteerFailureRecovery::RestartTurn),
+        );
     }
 
     #[test]
-    fn unrelated_steer_errors_do_not_trigger_restart() {
-        assert!(!is_stale_active_turn_error(&server_error(
-            "cannot steer a compact turn",
-        )));
+    fn expected_turn_mismatch_interrupts_before_restart() {
+        assert_eq!(
+            steer_failure_recovery(&server_error(
+                "expected active turn id `expected` but found `actual`",
+            )),
+            Some(SteerFailureRecovery::InterruptThenRestart),
+        );
+    }
+
+    #[test]
+    fn unrelated_steer_errors_fail_the_workflow() {
+        assert_eq!(
+            steer_failure_recovery(&server_error("cannot steer a compact turn")),
+            None,
+        );
     }
 }
