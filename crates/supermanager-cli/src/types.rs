@@ -134,6 +134,8 @@ pub struct ListProjectEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RepoProjectConfig {
+    #[serde(default)]
+    pub(crate) repo_root: String,
     pub(crate) api_key: String,
     pub(crate) api_key_id: String,
     pub(crate) organization_slug: String,
