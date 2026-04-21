@@ -5,7 +5,7 @@ use codex_app_server_client::{InProcessAppServerClient, InProcessServerEvent, Ty
 use codex_app_server_protocol::{
     ClientRequest, DynamicToolCallOutputContentItem, DynamicToolCallParams,
     DynamicToolCallResponse, JSONRPCErrorError, RequestId, ServerNotification, ServerRequest,
-    ThreadResumeParams, ThreadResumeResponse, ThreadStartParams, ThreadStartResponse,
+    Thread, ThreadResumeParams, ThreadResumeResponse, ThreadStartParams, ThreadStartResponse,
     TurnInterruptParams, TurnInterruptResponse, TurnStartParams, TurnStartResponse, TurnStatus,
     TurnSteerParams, TurnSteerResponse, UserInput,
 };
@@ -46,6 +46,7 @@ pub(crate) enum AgentEvent {
     },
 }
 
+#[derive(Default)]
 struct WorkflowTargetState {
     thread_id: Option<String>,
     active_turn: Option<String>,
@@ -158,6 +159,13 @@ impl AgentLoop {
 
     async fn handle_notification(&mut self, notification: ServerNotification) -> Result<()> {
         match notification {
+            ServerNotification::TurnStarted(payload) => {
+                let Some(target) = self.thread_to_target.get(&payload.thread_id).cloned() else {
+                    return Ok(());
+                };
+                let state = self.targets.entry(target).or_default();
+                state.active_turn = Some(payload.turn.id);
+            }
             ServerNotification::TurnCompleted(payload) => {
                 let Some(target) = self.thread_to_target.get(&payload.thread_id).cloned() else {
                     return Ok(());
@@ -329,20 +337,23 @@ impl AgentLoop {
         let thread_id_path = target_dir.join("thread-id");
 
         let stored_thread_id = read_thread_id(&thread_id_path).await?;
-        let thread_id = if let Some(thread_id) = stored_thread_id {
+        let (thread_id, active_turn) = if let Some(thread_id) = stored_thread_id {
             match self.resume_thread(&thread_id, &cwd_str, target.kind).await {
-                Ok(thread_id) => thread_id,
+                Ok(response) => {
+                    let active_turn = active_turn_id(&response.thread);
+                    (response.thread.id, active_turn)
+                }
                 Err(error) => {
                     eprintln!(
                         "[workflow-agent] failed to resume workflow thread {} for {}: {error}. Creating new thread.",
                         thread_id,
                         target.label(),
                     );
-                    self.create_thread(target.kind, &cwd_str).await?
+                    (self.create_thread(target.kind, &cwd_str).await?, None)
                 }
             }
         } else {
-            self.create_thread(target.kind, &cwd_str).await?
+            (self.create_thread(target.kind, &cwd_str).await?, None)
         };
 
         tokio::fs::write(&thread_id_path, &thread_id)
@@ -351,16 +362,13 @@ impl AgentLoop {
                 format!("failed to write thread id to {}", thread_id_path.display())
             })?;
 
-        let state = self
-            .targets
-            .entry(target.clone())
-            .or_insert_with(|| WorkflowTargetState {
-                thread_id: None,
-                active_turn: None,
-            });
-        state.thread_id = Some(thread_id.clone());
-        self.thread_to_target
-            .insert(thread_id.clone(), target.clone());
+        bind_thread_to_target(
+            target,
+            thread_id.clone(),
+            active_turn,
+            &mut self.targets,
+            &mut self.thread_to_target,
+        );
 
         Ok(thread_id)
     }
@@ -394,10 +402,9 @@ impl AgentLoop {
         thread_id: &str,
         cwd: &str,
         kind: WorkflowKind,
-    ) -> Result<String> {
+    ) -> Result<ThreadResumeResponse> {
         let request_id = self.next_request_id();
-        let response = self
-            .client
+        self.client
             .request_typed::<ThreadResumeResponse>(ClientRequest::ThreadResume {
                 request_id,
                 params: ThreadResumeParams {
@@ -408,9 +415,7 @@ impl AgentLoop {
                 },
             })
             .await
-            .with_context(|| format!("failed to resume Codex workflow thread {thread_id}"))?;
-
-        Ok(response.thread.id)
+            .with_context(|| format!("failed to resume Codex workflow thread {thread_id}"))
     }
 
     async fn execute_tool_call(
@@ -513,6 +518,32 @@ fn steer_failure_recovery(error: &TypedRequestError) -> Option<SteerFailureRecov
     }
 }
 
+fn active_turn_id(thread: &Thread) -> Option<String> {
+    thread
+        .turns
+        .iter()
+        .rev()
+        .find(|turn| matches!(turn.status, TurnStatus::InProgress))
+        .map(|turn| turn.id.clone())
+}
+
+fn bind_thread_to_target(
+    target: &WorkflowTarget,
+    thread_id: String,
+    active_turn: Option<String>,
+    targets: &mut HashMap<WorkflowTarget, WorkflowTargetState>,
+    thread_to_target: &mut HashMap<String, WorkflowTarget>,
+) {
+    let state = targets.entry(target.clone()).or_default();
+    if let Some(previous_thread_id) = state.thread_id.replace(thread_id.clone())
+        && previous_thread_id != thread_id
+    {
+        thread_to_target.remove(&previous_thread_id);
+    }
+    state.active_turn = active_turn;
+    thread_to_target.insert(thread_id, target.clone());
+}
+
 async fn read_thread_id(path: &std::path::Path) -> Result<Option<String>> {
     match tokio::fs::read_to_string(path).await {
         Ok(value) => {
@@ -568,6 +599,75 @@ mod tests {
         assert_eq!(
             steer_failure_recovery(&server_error("cannot steer a compact turn")),
             None,
+        );
+    }
+
+    #[test]
+    fn resume_response_prefers_latest_in_progress_turn() {
+        let thread = Thread {
+            id: "thread_123".to_owned(),
+            forked_from_id: None,
+            preview: String::new(),
+            ephemeral: false,
+            model_provider: "openai".to_owned(),
+            created_at: 0,
+            updated_at: 0,
+            status: codex_app_server_protocol::ThreadStatus::Idle,
+            path: None,
+            cwd: std::path::PathBuf::from("/tmp"),
+            cli_version: "0.0.0".to_owned(),
+            source: codex_app_server_protocol::SessionSource::Cli,
+            agent_nickname: None,
+            agent_role: None,
+            git_info: None,
+            name: None,
+            turns: vec![
+                codex_app_server_protocol::Turn {
+                    id: "turn_1".to_owned(),
+                    items: Vec::new(),
+                    status: TurnStatus::Completed,
+                    error: None,
+                },
+                codex_app_server_protocol::Turn {
+                    id: "turn_2".to_owned(),
+                    items: Vec::new(),
+                    status: TurnStatus::InProgress,
+                    error: None,
+                },
+            ],
+        };
+
+        assert_eq!(active_turn_id(&thread), Some("turn_2".to_owned()));
+    }
+
+    #[test]
+    fn replacing_thread_mapping_drops_stale_thread_id() {
+        let target = WorkflowTarget::new(WorkflowKind::ProjectMemoryExtract, "PROJECT42");
+        let mut targets = HashMap::new();
+        let mut thread_to_target = HashMap::new();
+
+        bind_thread_to_target(
+            &target,
+            "thread_1".to_owned(),
+            None,
+            &mut targets,
+            &mut thread_to_target,
+        );
+        bind_thread_to_target(
+            &target,
+            "thread_2".to_owned(),
+            Some("turn_2".to_owned()),
+            &mut targets,
+            &mut thread_to_target,
+        );
+
+        assert!(!thread_to_target.contains_key("thread_1"));
+        assert_eq!(thread_to_target.get("thread_2"), Some(&target));
+        assert_eq!(
+            targets
+                .get(&target)
+                .and_then(|state| state.active_turn.as_deref()),
+            Some("turn_2"),
         );
     }
 }

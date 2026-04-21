@@ -273,7 +273,7 @@ impl WorkflowCoordinator {
             .query_organization_events_for_summary(
                 &target.id,
                 OrganizationSummaryQueryOptions {
-                    after_received_at: previous_summary_updated_at,
+                    after_received_at: previous_summary_updated_at.clone(),
                     after_seq: previous_last_processed_seq,
                     before_received_at: Some(heartbeat_cutoff.clone()),
                     limit: Some(ORGANIZATION_SUMMARY_EVENT_LIMIT),
