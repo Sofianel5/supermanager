@@ -686,20 +686,14 @@ mod tests {
 
         let first = upsert_claude_imports(
             &claude_path,
-            &[
-                "~/.claude/imports/memories.md",
-                "~/.claude/imports/skills.md",
-            ],
+            &["~/.claude/imports/memories.md", "~/.claude/imports/skills.md"],
         )
         .unwrap();
         assert_eq!(first, ConfigFileUpdateStatus::Updated);
 
         let second = upsert_claude_imports(
             &claude_path,
-            &[
-                "~/.claude/imports/memories.md",
-                "~/.claude/imports/skills.md",
-            ],
+            &["~/.claude/imports/memories.md", "~/.claude/imports/skills.md"],
         )
         .unwrap();
         assert_eq!(second, ConfigFileUpdateStatus::Unchanged);
@@ -799,8 +793,12 @@ mod tests {
 
         let claude_md = home_dir.join(".claude").join("CLAUDE.md");
         let contents = fs::read_to_string(&claude_md).unwrap();
-        assert!(contents.contains("- @~/.claude/imports/api-supermanager-dev--acme--memories.md"));
-        assert!(contents.contains("- @~/.claude/imports/api-supermanager-dev--acme--skills.md"));
+        assert!(
+            contents.contains("- @~/.claude/imports/api-supermanager-dev--acme--memories.md")
+        );
+        assert!(
+            contents.contains("- @~/.claude/imports/api-supermanager-dev--acme--skills.md")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
