@@ -6,7 +6,10 @@ export const FEED_LIMIT = 10;
 
 const PROJECT_STALE_TIME_MS = 30_000;
 
-export function useProjectData(projectId: string) {
+export function useProjectData(
+  projectId: string,
+  { updatesEnabled = false }: { updatesEnabled?: boolean } = {},
+) {
   const projectQuery = useQuery({
     enabled: Boolean(projectId),
     ...projectMetadataQueryOptions(projectId),
@@ -20,7 +23,7 @@ export function useProjectData(projectId: string) {
   });
 
   const updatesQuery = useQuery({
-    enabled: Boolean(projectId),
+    enabled: Boolean(projectId) && updatesEnabled,
     ...projectUpdatesQueryOptions(projectId, ACTIVITY_LIMIT),
     refetchInterval: 15_000,
     staleTime: 15_000,

@@ -64,6 +64,7 @@ interface ProjectPageProps {
 export function ProjectPage({ view = "activity" }: ProjectPageProps) {
   const { projectId = "" } = useParams();
   const queryClient = useQueryClient();
+  const isActivityView = view === "activity";
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("connecting");
   const [stickySummaryError, setStickySummaryError] = useState<string | null>(
@@ -73,6 +74,7 @@ export function ProjectPage({ view = "activity" }: ProjectPageProps) {
   const [clock, setClock] = useState(() => Date.now());
   const { feedQuery, projectQuery, summaryQuery, updatesQuery } = useProjectData(
     projectId,
+    { updatesEnabled: isActivityView },
   );
   const viewerQuery = useQuery(viewerQueryOptions());
 
