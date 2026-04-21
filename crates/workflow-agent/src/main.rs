@@ -59,25 +59,25 @@ struct Cli {
     #[arg(
         long,
         env = "SUPERMANAGER_PROJECT_MEMORY_CONSOLIDATE_INTERVAL_SECONDS",
-        default_value_t = 3_600
+        default_value_t = 900
     )]
     project_memory_consolidate_interval_seconds: u64,
     #[arg(
         long,
         env = "SUPERMANAGER_PROJECT_SKILLS_INTERVAL_SECONDS",
-        default_value_t = 86_400
+        default_value_t = 900
     )]
     project_skills_interval_seconds: u64,
     #[arg(
         long,
         env = "SUPERMANAGER_ORGANIZATION_MEMORY_CONSOLIDATE_INTERVAL_SECONDS",
-        default_value_t = 86_400
+        default_value_t = 1_800
     )]
     organization_memory_consolidate_interval_seconds: u64,
     #[arg(
         long,
         env = "SUPERMANAGER_ORGANIZATION_SKILLS_INTERVAL_SECONDS",
-        default_value_t = 86_400
+        default_value_t = 1_800
     )]
     organization_skills_interval_seconds: u64,
 }
