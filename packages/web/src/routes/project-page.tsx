@@ -1,6 +1,6 @@
 import { type InfiniteData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { MarkdownBlock } from "../components/markdown-block";
 import { MemberAvatar } from "../components/member-avatar";
 import { displayMemberName } from "../lib/display-member-name";
@@ -33,10 +33,17 @@ import {
   projectSummaryQueryOptions,
   useProjectData,
 } from "../queries/project";
-import { findOrganizationBySlug, viewerQueryOptions } from "../queries/workspace";
+import {
+  findOrganizationBySlug,
+  organizationSummaryQueryRootKey,
+  projectListQueryRootKey,
+  viewerQueryOptions,
+  workspaceQueryKey,
+} from "../queries/workspace";
 import {
   accentSurfaceClass,
   cx,
+  errorMessageClass,
   messageClass,
   pageShellClass,
   pillBaseClass,
@@ -63,10 +70,13 @@ interface ProjectPageProps {
 
 export function ProjectPage({ view = "activity" }: ProjectPageProps) {
   const { projectId = "" } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isActivityView = view === "activity";
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("connecting");
+  const [deleteProjectError, setDeleteProjectError] = useState<string | null>(null);
+  const [isDeletingProject, setIsDeletingProject] = useState(false);
   const [stickySummaryError, setStickySummaryError] = useState<string | null>(
     null,
   );
@@ -117,6 +127,46 @@ export function ProjectPage({ view = "activity" }: ProjectPageProps) {
   const organizationHref = buildOrganizationHref(
     project?.organization_slug ?? null,
   );
+
+  async function handleDeleteProject(closeDropdown: () => void) {
+    if (!project) {
+      return;
+    }
+
+    closeDropdown();
+    const projectLabel = project.name || project.project_id;
+
+    const confirmed = window.confirm(
+      `Delete ${projectLabel}? This permanently removes the project, its activity, and its generated summaries.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleteProjectError(null);
+    setIsDeletingProject(true);
+
+    try {
+      await api.deleteProject(project.project_id);
+      queryClient.removeQueries({
+        queryKey: ["project", project.project_id],
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: organizationSummaryQueryRootKey(),
+        }),
+        queryClient.invalidateQueries({ queryKey: projectListQueryRootKey() }),
+        queryClient.invalidateQueries({ queryKey: workspaceQueryKey() }),
+      ]);
+      setIsDeletingProject(false);
+      navigate(buildOrganizationHref(project.organization_slug), {
+        replace: true,
+      });
+    } catch (error) {
+      setDeleteProjectError(readMessage(error));
+      setIsDeletingProject(false);
+    }
+  }
 
   useEffect(() => {
     if (summaryQuery.data) {
@@ -259,24 +309,47 @@ export function ProjectPage({ view = "activity" }: ProjectPageProps) {
         </div>
         <div className="w-full md:max-w-[19rem]">
           <DropdownButton label="Project info">
-            <>
-              <CopyPanel
-                copiedValue={copiedValue}
-                label="Install CLI"
-                onCopy={copy}
-                value="curl -fsSL https://supermanager.dev/install.sh | sh"
-              />
-              <CopyPanel
-                copiedValue={copiedValue}
-                label="Join another repo"
-                onCopy={copy}
-                value={
-                  project?.join_command ??
-                  `supermanager join ${canonicalProjectId}`
-                }
-              />
-            </>
+            {({ closeDropdown }) => (
+              <>
+                <CopyPanel
+                  copiedValue={copiedValue}
+                  label="Install CLI"
+                  onCopy={copy}
+                  value="curl -fsSL https://supermanager.dev/install.sh | sh"
+                />
+                <CopyPanel
+                  copiedValue={copiedValue}
+                  label="Join another repo"
+                  onCopy={copy}
+                  value={
+                    project?.join_command ??
+                    `supermanager join ${canonicalProjectId}`
+                  }
+                />
+                <div className="mt-4 border-t border-border pt-4">
+                  <button
+                    className={cx(
+                      secondaryButtonClass,
+                      "w-full border-red-400/30 text-danger",
+                    )}
+                    type="button"
+                    disabled={isDeletingProject || !project}
+                    onClick={() => void handleDeleteProject(closeDropdown)}
+                  >
+                    {isDeletingProject ? "Deleting..." : "Delete project"}
+                  </button>
+                  <p className="mt-3 m-0 text-[0.88rem] leading-6 text-ink-dim">
+                    Permanently removes this project and all of its associated data.
+                  </p>
+                </div>
+              </>
+            )}
           </DropdownButton>
+          {deleteProjectError ? (
+            <p className={cx(errorMessageClass, "mt-3 text-right")}>
+              {deleteProjectError}
+            </p>
+          ) : null}
         </div>
       </header>
 

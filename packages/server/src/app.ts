@@ -389,6 +389,27 @@ export function createApp(context: AppContext) {
         params: projectParams,
       },
     )
+    .delete(
+      "/v1/projects/:projectId",
+      async ({ params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const project = await requireProjectAccess(
+          context.db,
+          viewer.user.id,
+          params.projectId,
+        );
+        const deleted = await context.db.deleteProject(project.project_id);
+
+        if (!deleted) {
+          throw httpError(404, `project not found: ${project.project_id}`);
+        }
+
+        return new Response(null, { status: 204 });
+      },
+      {
+        params: projectParams,
+      },
+    )
     .get(
       "/v1/projects/:projectId/feed",
       async ({ params, query, request }) => {
