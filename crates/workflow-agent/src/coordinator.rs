@@ -31,6 +31,13 @@ const PROJECT_TRANSCRIPT_LIMIT: i64 = 24;
 const PROJECT_MEMORY_EXTRACT_TRANSCRIPT_LIMIT: i64 = 1;
 const PROJECT_SUMMARY_EVENT_LIMIT: i64 = 200;
 const PROJECT_SUMMARY_SWEEP_LIMIT: i64 = 50;
+const STALE_PENDING_WORKFLOW_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+#[derive(Clone)]
+struct PendingWorkflowState {
+    cursor: WorkflowCursor,
+    enqueued_at: Instant,
+}
 
 pub(crate) struct WorkflowCoordinator {
     db: SummaryDb,
@@ -43,7 +50,7 @@ pub(crate) struct WorkflowCoordinator {
     project_skills_interval: Duration,
     organization_memory_consolidate_interval: Duration,
     organization_skills_interval: Duration,
-    pending_workflow_cursor: HashMap<WorkflowTarget, WorkflowCursor>,
+    pending_workflow_cursor: HashMap<WorkflowTarget, PendingWorkflowState>,
 }
 
 impl WorkflowCoordinator {
@@ -159,7 +166,10 @@ impl WorkflowCoordinator {
         status: SummaryStatus,
     ) -> Result<()> {
         if status == SummaryStatus::Ready
-            && let Some(cursor) = self.pending_workflow_cursor.get(target).cloned()
+            && let Some(cursor) = self
+                .pending_workflow_cursor
+                .get(target)
+                .map(|pending| pending.cursor.clone())
         {
             match (target.kind, cursor) {
                 (
@@ -229,6 +239,7 @@ impl WorkflowCoordinator {
     }
 
     async fn run_organization_summary_sweep(&mut self) -> Result<()> {
+        self.expire_stale_pending_workflows().await;
         let organization_ids = self.db.list_organizations_with_projects().await?;
 
         for organization_id in organization_ids {
@@ -297,7 +308,7 @@ impl WorkflowCoordinator {
         } else {
             None
         };
-        self.pending_workflow_cursor.insert(
+        self.record_pending_workflow(
             target.clone(),
             WorkflowCursor::ReceivedAt {
                 received_at: summary_updated_at.to_owned(),
@@ -328,6 +339,7 @@ impl WorkflowCoordinator {
     }
 
     async fn run_project_summary_sweep(&mut self) -> Result<()> {
+        self.expire_stale_pending_workflows().await;
         let projects = self
             .db
             .list_projects_needing_summary(PROJECT_SUMMARY_SWEEP_LIMIT)
@@ -385,8 +397,7 @@ impl WorkflowCoordinator {
             return Ok(());
         };
 
-        self.pending_workflow_cursor
-            .insert(target.clone(), WorkflowCursor::Seq(last_seq));
+        self.record_pending_workflow(target.clone(), WorkflowCursor::Seq(last_seq));
 
         for event in events {
             self.dispatch_workflow(WorkflowDispatch {
@@ -403,6 +414,7 @@ impl WorkflowCoordinator {
     }
 
     async fn run_project_transcript_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
+        self.expire_stale_pending_workflows().await;
         debug_assert!(matches!(
             kind,
             WorkflowKind::ProjectMemoryExtract | WorkflowKind::ProjectSkills
@@ -476,7 +488,7 @@ impl WorkflowCoordinator {
 
         match target.kind {
             WorkflowKind::ProjectMemoryExtract => {
-                self.pending_workflow_cursor.insert(
+                self.record_pending_workflow(
                     target.clone(),
                     transcript_workflow_cursor(
                         &transcripts,
@@ -507,7 +519,7 @@ impl WorkflowCoordinator {
                     heartbeat_cutoff: &heartbeat_cutoff,
                 })?;
                 let included_transcript_count = rendered.included_transcript_count.max(1);
-                self.pending_workflow_cursor.insert(
+                self.record_pending_workflow(
                     target.clone(),
                     transcript_workflow_cursor(
                         &transcripts,
@@ -528,6 +540,7 @@ impl WorkflowCoordinator {
     }
 
     async fn run_project_periodic_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
+        self.expire_stale_pending_workflows().await;
         debug_assert!(matches!(kind, WorkflowKind::ProjectMemoryConsolidate));
 
         let projects = self.db.list_projects_with_pending_memory().await?;
@@ -555,7 +568,7 @@ impl WorkflowCoordinator {
                 }
             };
 
-            self.pending_workflow_cursor.insert(
+            self.record_pending_workflow(
                 target.clone(),
                 WorkflowCursor::ReceivedAt {
                     received_at: heartbeat_cutoff.clone(),
@@ -594,6 +607,7 @@ impl WorkflowCoordinator {
     }
 
     async fn run_organization_periodic_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
+        self.expire_stale_pending_workflows().await;
         debug_assert!(matches!(
             kind,
             WorkflowKind::OrganizationMemoryConsolidate | WorkflowKind::OrganizationSkills
@@ -624,7 +638,7 @@ impl WorkflowCoordinator {
                 }
             };
 
-            self.pending_workflow_cursor.insert(
+            self.record_pending_workflow(
                 target.clone(),
                 WorkflowCursor::ReceivedAt {
                     received_at: heartbeat_cutoff.clone(),
@@ -683,6 +697,54 @@ impl WorkflowCoordinator {
             .with_context(|| format!("failed to dispatch workflow {}", target.label()))
     }
 
+    fn record_pending_workflow(&mut self, target: WorkflowTarget, cursor: WorkflowCursor) {
+        self.pending_workflow_cursor.insert(
+            target,
+            PendingWorkflowState {
+                cursor,
+                enqueued_at: Instant::now(),
+            },
+        );
+    }
+
+    async fn expire_stale_pending_workflows(&mut self) {
+        let stale_targets = stale_pending_targets(
+            &self.pending_workflow_cursor,
+            Instant::now(),
+            STALE_PENDING_WORKFLOW_TIMEOUT,
+        );
+
+        for target in stale_targets {
+            let Some(pending) = self.pending_workflow_cursor.remove(&target) else {
+                continue;
+            };
+
+            eprintln!(
+                "[workflow-agent] stale pending workflow {} exceeded {:?} without completion. Resetting target.",
+                target.label(),
+                pending.enqueued_at.elapsed(),
+            );
+
+            if let Err(error) = self
+                .command_tx
+                .send(AgentCommand::ResetWorkflowTarget(target.clone()))
+                .await
+            {
+                eprintln!(
+                    "[workflow-agent] failed to reset stale workflow {}: {error:#}",
+                    target.label()
+                );
+            }
+
+            let error = anyhow::anyhow!(
+                "workflow exceeded stale pending timeout of {:?}",
+                STALE_PENDING_WORKFLOW_TIMEOUT
+            );
+            self.mark_error(&target, "reset stale pending workflow", &error)
+                .await;
+        }
+    }
+
     async fn mark_error(&self, target: &WorkflowTarget, action: &str, error: &anyhow::Error) {
         eprintln!(
             "[workflow-agent] failed to {action} workflow {}: {error:#}",
@@ -724,6 +786,23 @@ fn create_interval(duration: Duration) -> Option<Interval> {
     let mut interval = time::interval_at(Instant::now() + duration, duration);
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
     Some(interval)
+}
+
+fn stale_pending_targets(
+    pending_workflows: &HashMap<WorkflowTarget, PendingWorkflowState>,
+    now: Instant,
+    stale_after: Duration,
+) -> Vec<WorkflowTarget> {
+    pending_workflows
+        .iter()
+        .filter_map(|(target, pending)| {
+            if now.duration_since(pending.enqueued_at) >= stale_after {
+                Some(target.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 async fn wait_for_interval(interval: &mut Option<Interval>) {
@@ -857,6 +936,37 @@ mod tests {
                 secondary: Some(WorkflowCursorSecondary::SessionId(session_id)),
             } if received_at == "2026-04-17T11:59:58Z" && session_id == "sess_1"
         ));
+    }
+
+    #[test]
+    fn stale_pending_targets_only_returns_expired_workflows() {
+        let now = Instant::now();
+        let stale_target = WorkflowTarget::new(WorkflowKind::OrganizationSummary, "ORG42");
+        let fresh_target = WorkflowTarget::new(WorkflowKind::ProjectSummary, "PROJECT42");
+        let pending = HashMap::from([
+            (
+                stale_target.clone(),
+                PendingWorkflowState {
+                    cursor: WorkflowCursor::ReceivedAt {
+                        received_at: "2026-04-17T12:00:00Z".to_owned(),
+                        secondary: None,
+                    },
+                    enqueued_at: now - STALE_PENDING_WORKFLOW_TIMEOUT - Duration::from_secs(1),
+                },
+            ),
+            (
+                fresh_target,
+                PendingWorkflowState {
+                    cursor: WorkflowCursor::Seq(123),
+                    enqueued_at: now - Duration::from_secs(30),
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            stale_pending_targets(&pending, now, STALE_PENDING_WORKFLOW_TIMEOUT),
+            vec![stale_target]
+        );
     }
 }
 

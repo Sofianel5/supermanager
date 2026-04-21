@@ -26,6 +26,7 @@ const EXPECTED_ACTIVE_TURN_ID_MISMATCH_PREFIX: &str = "expected active turn id `
 
 pub(crate) enum AgentCommand {
     DispatchWorkflow(WorkflowDispatch),
+    ResetWorkflowTarget(WorkflowTarget),
     Shutdown,
 }
 
@@ -101,6 +102,9 @@ impl AgentLoop {
             match input {
                 LoopInput::Command(Some(AgentCommand::DispatchWorkflow(dispatch))) => {
                     self.dispatch_workflow(dispatch).await?;
+                }
+                LoopInput::Command(Some(AgentCommand::ResetWorkflowTarget(target))) => {
+                    self.reset_target(&target).await?;
                 }
                 LoopInput::Command(Some(AgentCommand::Shutdown)) => break,
                 LoopInput::Command(None) => break,
@@ -217,6 +221,23 @@ impl AgentLoop {
         }];
 
         self.send_input(&dispatch.target, thread_id, input).await
+    }
+
+    async fn reset_target(&mut self, target: &WorkflowTarget) -> Result<()> {
+        let target_dir = self.workflow_paths.thread_state_dir(target);
+        let thread_id_path = target_dir.join("thread-id");
+        let thread_contract_path = target_dir.join("thread-contract.json");
+
+        if let Some(state) = self.targets.remove(target) {
+            if let Some(thread_id) = state.thread_id {
+                self.thread_to_target.remove(&thread_id);
+            }
+        }
+
+        remove_optional_file(&thread_id_path).await?;
+        remove_optional_file(&thread_contract_path).await?;
+
+        Ok(())
     }
 
     async fn send_input(
@@ -731,6 +752,16 @@ async fn read_optional_nonempty_file(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error)
             .with_context(|| format!("failed to read {description} from {}", path.display())),
+    }
+}
+
+async fn remove_optional_file(path: &std::path::Path) -> Result<()> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to remove file {}", path.display()))
+        }
     }
 }
 
