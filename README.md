@@ -1,6 +1,6 @@
 # Supermanager
 
-Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, hook ingest, PostgreSQL state, and SSE. A separate Rust summary worker owns project and organization summary orchestration plus Codex runtime state. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live project dashboard.
+Supermanager is an authenticated, organization-scoped coordination system for coding agents. The Bun/Elysia backend owns Better Auth, hook ingest, PostgreSQL state, and SSE. A separate Rust workflow worker owns project and organization workflow orchestration (summaries, memory extraction and consolidation, skills) plus Codex runtime state. The React frontend owns the public sign-in page, organization workspace, device approval flow, invite acceptance, and live project dashboard.
 
 ## Setup
 
@@ -32,13 +32,13 @@ The server reads runtime config from environment variables:
 - `SUPERMANAGER_PUBLIC_APP_URL`
 - `CODEX_API_KEY`
 
-### 2. Start the summary worker
+### 2. Start the workflow worker
 
 ```sh
-cd crates/summary-agent
+cd crates/workflow-agent
 export DATABASE_URL='postgres://supermanager:password@127.0.0.1:5432/supermanager?sslmode=disable'
 export SUPERMANAGER_DATA_DIR='../../.supermanager-data'
-export SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS='300'
+export SUPERMANAGER_ORGANIZATION_SUMMARY_REFRESH_INTERVAL_SECONDS='300'
 export SUPERMANAGER_PROJECT_SUMMARY_POLL_INTERVAL_SECONDS='5'
 export SUPERMANAGER_ORGANIZATION_MEMORY_REFRESH_INTERVAL_SECONDS='86400'
 export SUPERMANAGER_ORGANIZATION_SKILLS_REFRESH_INTERVAL_SECONDS='86400'
@@ -46,11 +46,11 @@ export CODEX_API_KEY='replace-me'
 cargo run -- --database-url "$DATABASE_URL" --data-dir "$SUPERMANAGER_DATA_DIR"
 ```
 
-The summary worker reads these runtime config values:
+The workflow worker reads these runtime config values:
 
 - `DATABASE_URL`
 - `SUPERMANAGER_DATA_DIR`
-- `SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS`
+- `SUPERMANAGER_ORGANIZATION_SUMMARY_REFRESH_INTERVAL_SECONDS`
 - `SUPERMANAGER_PROJECT_SUMMARY_POLL_INTERVAL_SECONDS`
 - `SUPERMANAGER_ORGANIZATION_MEMORY_REFRESH_INTERVAL_SECONDS`
 - `SUPERMANAGER_ORGANIZATION_SKILLS_REFRESH_INTERVAL_SECONDS`
@@ -65,10 +65,10 @@ SUPERMANAGER_PUBLIC_API_URL='https://api.supermanager.dev' \
 SUPERMANAGER_PUBLIC_APP_URL='https://supermanager.dev' \
 ./.build/supermanager-server
 cd ../../
-CARGO_PROFILE_RELEASE_LTO=true cargo build --release -p summary-agent
+CARGO_PROFILE_RELEASE_LTO=true cargo build --release -p workflow-agent
 SUPERMANAGER_DATA_DIR='/srv/supermanager' \
 CODEX_API_KEY='replace-me' \
-./target/release/summary-agent
+./target/release/workflow-agent
 ```
 
 ### 3. Start the frontend
@@ -214,7 +214,7 @@ The MCP endpoint currently exposes these tools:
 ```text
 crates/
   reporter-protocol/      # Shared project and hook-event types
-  summary-agent/          # Rust Codex org summarizer
+  workflow-agent/         # Rust workflow worker (summaries, memory, skills)
   supermanager-cli/       # Global CLI for joining/leaving repos
 packages/
   common/                 # Shared TypeScript types (consumed by server + web)
@@ -228,8 +228,8 @@ infra/aws/                # Terraform for the AWS backend
 
 - Workflow generation runs on the server after new hook turns arrive and on periodic timers. The current workflows are project summaries, organization summaries, organization memories, and organization skills.
 - Stop-hook reports can embed a bounded transcript excerpt. The server stores that attachment separately from the hook event body so transcript-driven workflows can process it later without inflating the core event record.
-- Durable summary-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust summary agent keeps per-workflow thread state under `<data-dir>/workflow-threads/{project-summary|organization-summary|organization-memories|organization-skills}/<ID>/`.
-- Organization memory and organization skills workflow documents are stored in PostgreSQL, not in the summary-agent sandbox filesystem.
+- Durable workflow-agent state lives under `SUPERMANAGER_DATA_DIR`. The Bun server keeps a shared Codex home at `<data-dir>/codex`, and the Rust workflow agent keeps per-workflow thread state under `<data-dir>/workflow-threads/{project-summary|organization-summary|organization-memories|organization-skills}/<ID>/`.
+- Organization memory and organization skills workflow documents are stored in PostgreSQL, not in the workflow-agent sandbox filesystem.
 - The stored org summary is structured JSON. Summary workflows receive the current snapshot plus fresh updates and can return partial section updates instead of rewriting the whole summary each time.
 
 ## Licensing

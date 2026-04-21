@@ -22,27 +22,27 @@ RUN curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 COPY Cargo.toml Cargo.lock ./
 COPY vendor/codex/codex-rs ./vendor/codex/codex-rs
 COPY crates/reporter-protocol/Cargo.toml   crates/reporter-protocol/Cargo.toml
-COPY crates/summary-agent/Cargo.toml       crates/summary-agent/Cargo.toml
+COPY crates/workflow-agent/Cargo.toml      crates/workflow-agent/Cargo.toml
 COPY crates/supermanager-cli/Cargo.toml    crates/supermanager-cli/Cargo.toml
 
-RUN mkdir -p crates/reporter-protocol/src crates/summary-agent/src crates/supermanager-cli/src \
+RUN mkdir -p crates/reporter-protocol/src crates/workflow-agent/src crates/supermanager-cli/src \
  && echo '// stub'       > crates/reporter-protocol/src/lib.rs \
- && echo 'fn main() {}'  > crates/summary-agent/src/main.rs \
+ && echo 'fn main() {}'  > crates/workflow-agent/src/main.rs \
  && echo 'fn main() {}'  > crates/supermanager-cli/src/main.rs
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo build --release -p summary-agent || true
+    cargo build --release -p workflow-agent || true
 
 COPY crates/reporter-protocol ./crates/reporter-protocol
-COPY crates/summary-agent ./crates/summary-agent
-RUN find crates/reporter-protocol crates/summary-agent -name '*.rs' -exec touch {} +
+COPY crates/workflow-agent ./crates/workflow-agent
+RUN find crates/reporter-protocol crates/workflow-agent -name '*.rs' -exec touch {} +
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo build --release -p summary-agent \
- && cp target/release/summary-agent /summary-agent
+    cargo build --release -p workflow-agent \
+ && cp target/release/workflow-agent /summary-agent
 
 FROM oven/bun:1.2.17-slim
 WORKDIR /app/server

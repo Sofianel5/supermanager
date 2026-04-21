@@ -8465,27 +8465,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "summary-agent"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "codex-app-server-client",
- "codex-app-server-protocol",
- "codex-arg0",
- "codex-core",
- "codex-feedback",
- "codex-protocol",
- "reporter-protocol",
- "serde",
- "serde_json",
- "sqlx",
- "time",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "supermanager"
 version = "0.0.20"
 dependencies = [
@@ -10485,6 +10464,27 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "workflow-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "codex-app-server-client",
+ "codex-app-server-protocol",
+ "codex-arg0",
+ "codex-core",
+ "codex-feedback",
+ "codex-protocol",
+ "reporter-protocol",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "time",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

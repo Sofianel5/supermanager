@@ -12,7 +12,7 @@ on:
       - packages/server/**
       - packages/common/**
       - crates/reporter-protocol/**
-      - crates/summary-agent/**
+      - crates/workflow-agent/**
       - vendor/codex
       - vendor/codex/**
       - .gitmodules
