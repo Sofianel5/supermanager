@@ -357,9 +357,39 @@ impl AgentLoop {
         let cwd = self.workflow_paths.prepare_cwd(target).await?;
         let cwd_str = cwd.display().to_string();
         let thread_id_path = target_dir.join("thread-id");
+        let thread_contract_path = target_dir.join("thread-contract.json");
+        let current_contract = target
+            .kind
+            .thread_contract()
+            .context("failed to build workflow thread contract")?;
 
-        let stored_thread_id = read_thread_id(&thread_id_path).await?;
-        let (thread_id, active_turn) = if let Some(thread_id) = stored_thread_id {
+        let reusable_thread_id = match (
+            read_thread_id(&thread_id_path).await?,
+            read_thread_contract(&thread_contract_path).await?,
+        ) {
+            (Some(thread_id), Some(stored_contract)) if stored_contract == current_contract => {
+                Some(thread_id)
+            }
+            (Some(thread_id), Some(_)) => {
+                eprintln!(
+                    "[workflow-agent] workflow thread contract changed for {}. Recreating thread {}.",
+                    target.label(),
+                    thread_id,
+                );
+                None
+            }
+            (Some(thread_id), None) => {
+                eprintln!(
+                    "[workflow-agent] workflow thread contract missing for {}. Recreating thread {}.",
+                    target.label(),
+                    thread_id,
+                );
+                None
+            }
+            (None, _) => None,
+        };
+
+        let (thread_id, active_turn) = if let Some(thread_id) = reusable_thread_id {
             match self.resume_thread(&thread_id, &cwd_str, target.kind).await {
                 Ok(response) => {
                     let active_turn = active_turn_id(&response.thread);
@@ -382,6 +412,14 @@ impl AgentLoop {
             .await
             .with_context(|| {
                 format!("failed to write thread id to {}", thread_id_path.display())
+            })?;
+        tokio::fs::write(&thread_contract_path, &current_contract)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to write thread contract to {}",
+                    thread_contract_path.display()
+                )
             })?;
 
         bind_thread_to_target(
@@ -433,6 +471,7 @@ impl AgentLoop {
                     thread_id: thread_id.to_owned(),
                     cwd: Some(cwd.to_owned()),
                     approval_policy: Some(kind.approval_policy()),
+                    base_instructions: Some(kind.system_prompt().to_owned()),
                     ..Default::default()
                 },
             })
@@ -653,6 +692,17 @@ fn bind_thread_to_target(
 }
 
 async fn read_thread_id(path: &std::path::Path) -> Result<Option<String>> {
+    read_optional_nonempty_file(path, "thread id").await
+}
+
+async fn read_thread_contract(path: &std::path::Path) -> Result<Option<String>> {
+    read_optional_nonempty_file(path, "thread contract").await
+}
+
+async fn read_optional_nonempty_file(
+    path: &std::path::Path,
+    description: &str,
+) -> Result<Option<String>> {
     match tokio::fs::read_to_string(path).await {
         Ok(value) => {
             let trimmed = value.trim().to_owned();
@@ -663,9 +713,8 @@ async fn read_thread_id(path: &std::path::Path) -> Result<Option<String>> {
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => {
-            Err(error).with_context(|| format!("failed to read thread id from {}", path.display()))
-        }
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to read {description} from {}", path.display())),
     }
 }
 

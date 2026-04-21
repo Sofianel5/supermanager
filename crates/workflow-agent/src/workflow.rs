@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use codex_app_server_protocol::{AskForApproval, DynamicToolSpec, SandboxMode};
+use serde::Serialize;
 
 use crate::{
     prompt::{
@@ -30,6 +31,13 @@ pub(crate) enum WorkflowKind {
 pub(crate) enum WorkflowScope {
     Project,
     Organization,
+}
+
+#[derive(Serialize)]
+struct WorkflowThreadContract {
+    kind: &'static str,
+    system_prompt: &'static str,
+    dynamic_tools: Option<Vec<DynamicToolSpec>>,
 }
 
 impl WorkflowKind {
@@ -106,6 +114,15 @@ impl WorkflowKind {
             }
             Self::OrganizationSkills => Some(SummaryTool::organization_skills_specs()),
         }
+    }
+
+    pub(crate) fn thread_contract(self) -> anyhow::Result<String> {
+        serde_json::to_string(&WorkflowThreadContract {
+            kind: self.as_str(),
+            system_prompt: self.system_prompt(),
+            dynamic_tools: self.dynamic_tools(),
+        })
+        .context("failed to serialize workflow thread contract")
     }
 }
 
@@ -207,5 +224,32 @@ impl WorkflowPaths {
             .with_context(|| format!("failed to create workflow cwd: {}", cwd.display()))?;
 
         Ok(cwd)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_summary_contract_tracks_current_prompt_and_tools() {
+        let contract = WorkflowKind::ProjectSummary
+            .thread_contract()
+            .expect("project summary contract should serialize");
+
+        assert!(contract.contains("set_event_updates"));
+        assert!(contract.contains("get_recent_project_updates"));
+        assert!(contract.contains("explicitly decide the update outcome"));
+    }
+
+    #[test]
+    fn organization_summary_contract_tracks_current_prompt_and_tools() {
+        let contract = WorkflowKind::OrganizationSummary
+            .thread_contract()
+            .expect("organization summary contract should serialize");
+
+        assert!(contract.contains("set_window_updates"));
+        assert!(contract.contains("get_recent_org_updates"));
+        assert!(contract.contains("explicitly decide the update outcome"));
     }
 }
