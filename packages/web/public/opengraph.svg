@@ -43,24 +43,24 @@
     SUPERMANAGER
   </text>
 
-  <text x="88" y="188" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="700">
-    Real-time
+  <text x="88" y="200" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="700">
+    Turn AI coding
   </text>
-  <text x="88" y="264" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="700">
-    visibility into
+  <text x="88" y="282" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="700">
+    sessions into
   </text>
-  <text x="88" y="340" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="700">
-    your team's AI
-  </text>
-  <text x="88" y="416" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="700">
-    productivity.
+  <text x="88" y="364" fill="#ECF2FF" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="700">
+    team context.
   </text>
 
-  <text x="92" y="482" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="24">
-    Install the CLI, create a project from the terminal, connect the repos
+  <text x="92" y="460" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="24">
+    Supermanager turns Claude Code and Codex activity
   </text>
-  <text x="92" y="514" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="24">
-    that matter, and watch a live feed and manager summary update as work lands.
+  <text x="92" y="492" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="24">
+    into a private shared workspace with live project feeds,
+  </text>
+  <text x="92" y="524" fill="#8E9BB6" font-family="Arial, Helvetica, sans-serif" font-size="24">
+    fast summaries, and durable team memory.
   </text>
 
   <defs>

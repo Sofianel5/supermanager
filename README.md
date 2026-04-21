@@ -1,6 +1,6 @@
 # Supermanager
 
-> The shared context layer for your team.
+> Turn AI coding sessions into team context.
 
 Supermanager turns Claude Code and Codex activity into a private shared workspace with live project feeds, fast summaries, durable team memory, and a read-only MCP for follow-up questions with evidence.
 

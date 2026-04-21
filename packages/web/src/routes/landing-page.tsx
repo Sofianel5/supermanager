@@ -340,7 +340,7 @@ function Hero() {
                 supermanager
               </p>
               <h1 className="mx-auto mt-5 max-w-[14ch] text-[clamp(2.15rem,5vw,4.3rem)] font-semibold leading-[0.98] tracking-[-0.055em] text-ink">
-                The shared context layer for your team.
+                Turn AI coding sessions into team context.
               </h1>
               <p className="mx-auto mt-5 max-w-[46rem] text-[1.08rem] leading-8 text-ink-dim">
                 Supermanager turns Claude Code and Codex activity into a shared
