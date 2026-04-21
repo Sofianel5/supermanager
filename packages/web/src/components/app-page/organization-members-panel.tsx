@@ -1,5 +1,5 @@
 import { type KeyboardEvent, type MouseEvent, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import type {
   MemberSnapshot,
   OrganizationMembership,
@@ -106,29 +106,24 @@ function MemberCard({
 
   return (
     <article
-      className="cursor-pointer border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px] transition duration-150 hover:-translate-y-px hover:border-border-strong focus:border-accent focus:outline-none"
+      className="group cursor-pointer border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px] transition duration-150 hover:-translate-y-px hover:border-border-strong focus:border-accent focus:outline-none"
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       role="link"
       tabIndex={0}
     >
-      <div className="mb-3.5 flex items-start gap-4">
+      <div className="mb-3.5 flex items-center gap-4">
         <MemberAvatar name={memberName} />
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
-            <Link
-              className="text-[1.05rem] font-semibold text-ink no-underline transition hover:text-accent"
-              to={memberHref}
-            >
-              {memberName}
-            </Link>
-            <time
-              className="font-mono text-[0.72rem] text-ink-muted"
-              dateTime={member.last_update_at}
-            >
-              {formatRelativeTime(member.last_update_at, clock)}
-            </time>
-          </div>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <h3 className="min-w-0 text-[1.05rem] font-semibold text-ink transition group-hover:text-accent group-focus:text-accent">
+            {memberName}
+          </h3>
+          <time
+            className="shrink-0 font-mono text-[0.72rem] text-ink-muted"
+            dateTime={member.last_update_at}
+          >
+            {formatRelativeTime(member.last_update_at, clock)}
+          </time>
         </div>
       </div>
       <MarkdownBlock markdown={member.bluf_markdown} />

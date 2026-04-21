@@ -30,11 +30,10 @@ export function OrgWideBlufCard({
         <span className={sectionLabelClass}>Organization summary</span>
         {showStatusMeta ? (
           <div className="flex flex-wrap gap-2">
-            <span className={cx(pillBaseClass, summaryToneClass(summaryStatus))}>
+            <span
+              className={cx(pillBaseClass, summaryToneClass(summaryStatus))}
+            >
               {summaryStatusLabel(summaryStatus)}
-            </span>
-            <span className={`${pillBaseClass} border-border text-ink-dim`}>
-              Refreshes every 5 min
             </span>
           </div>
         ) : null}
