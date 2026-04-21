@@ -51,6 +51,9 @@ export function ProjectPage() {
   const queryClient = useQueryClient();
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("connecting");
+  const [stickySummaryError, setStickySummaryError] = useState<string | null>(
+    null,
+  );
   const { copiedValue, copy } = useCopyHandler();
   const [clock, setClock] = useState(() => Date.now());
   const { feedQuery, projectQuery, summaryQuery } = useProjectData(projectId);
@@ -62,12 +65,14 @@ export function ProjectPage() {
   const summary = summaryQuery.data ?? emptyProjectSummaryResponse();
   const snapshot = summary.summary;
   const latestEventSeq = events[0]?.seq ?? 0;
+  const summaryError =
+    !summaryQuery.data ? stickySummaryError : null;
   const organization = findOrganizationBySlug(
     viewerQuery.data?.organizations ?? [],
     project?.organization_slug ?? null,
   );
   const summaryStatus =
-    summaryQuery.isError && !summaryQuery.data
+    summaryError
       ? "error"
       : !summaryQuery.data && summaryQuery.isPending
         ? "idle"
@@ -93,6 +98,17 @@ export function ProjectPage() {
   const organizationHref = buildOrganizationHref(
     project?.organization_slug ?? null,
   );
+
+  useEffect(() => {
+    if (summaryQuery.data) {
+      setStickySummaryError(null);
+      return;
+    }
+
+    if (summaryQuery.error) {
+      setStickySummaryError(readMessage(summaryQuery.error));
+    }
+  }, [summaryQuery.data, summaryQuery.error]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -255,6 +271,7 @@ export function ProjectPage() {
           </div>
           <SummaryContent
             clock={clock}
+            errorMessage={summaryError}
             snapshot={snapshot}
             summaryStatus={summaryStatus}
           />
@@ -462,19 +479,29 @@ function RawFeedEvent({
 
 function SummaryContent({
   clock,
+  errorMessage,
   snapshot,
   summaryStatus,
 }: {
   clock: number;
+  errorMessage: string | null;
   snapshot: ProjectSnapshot;
   summaryStatus: UiSummaryStatus;
 }) {
   const hasContent = hasSnapshotContent(snapshot);
 
-  if (summaryStatus === "error" && !hasContent) {
+  if (errorMessage && !hasContent) {
     return (
       <p className="m-0 border border-dashed border-red-400/30 p-[18px] leading-7 text-danger">
         Summary generation failed.
+      </p>
+    );
+  }
+
+  if (summaryStatus === "idle" && !hasContent) {
+    return (
+      <p className="m-0 border border-dashed border-border p-[18px] leading-7 text-ink-dim">
+        Loading summary...
       </p>
     );
   }

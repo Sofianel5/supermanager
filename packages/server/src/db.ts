@@ -396,26 +396,30 @@ export class Db {
       return new Map();
     }
 
-    const requestedUserIdsJson = JSON.stringify(normalizedUserIds);
-    const rows = await this.client<
-      Array<{ user_id: unknown; member_name: unknown }>
-    >`
-      WITH requested_user_ids AS (
-        SELECT jsonb_array_elements_text(${requestedUserIdsJson}::jsonb) AS user_id
-      )
-      SELECT
-        u.id AS user_id,
-        COALESCE(NULLIF(BTRIM(u.name), ''), u.email) AS member_name
-      FROM requested_user_ids
-      INNER JOIN "user" AS u ON u.id = requested_user_ids.user_id
-    `;
+    const entries = await Promise.all(
+      normalizedUserIds.map(async (userId) => {
+        const [row] = await this.client<
+          Array<{ user_id: unknown; member_name: unknown }>
+        >`
+          SELECT
+            id AS user_id,
+            COALESCE(NULLIF(BTRIM(name), ''), email) AS member_name
+          FROM "user"
+          WHERE id = ${userId}
+        `;
 
-    return new Map(
-      rows.map((row) => [
-        readString(row.user_id, "user_id"),
-        readString(row.member_name, "member_name"),
-      ]),
+        if (!row) {
+          return null;
+        }
+
+        return [
+          readString(row.user_id, "user_id"),
+          readString(row.member_name, "member_name"),
+        ] as const;
+      }),
     );
+
+    return new Map(entries.filter((entry) => entry !== null));
   }
 
   async insertHookEvent(
