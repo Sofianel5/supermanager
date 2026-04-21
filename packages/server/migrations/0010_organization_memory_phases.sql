@@ -1,10 +1,10 @@
--- Transcript-backed workflow storage.
+-- Transcript-backed workflow storage and typed memory/skills tables.
 --
--- workflow_kind in *_workflows (tracking) is distinct from workflow_kind in
--- *_workflow_documents (storage namespace). The tracking tables name the agent
--- that ran; the document tables name the shared file namespace that several
--- agents read and write. Memory extract + consolidate share one namespace so the
--- consolidator can read the raw files written by the extractor.
+-- Two tracking tables (organization_workflows, project_workflows) record which
+-- workflow kinds are in flight. The actual memory and skill content lives in
+-- five typed tables below, one per concept. Memory extract and memory
+-- consolidate share project_memory_raw (the extractor stages rows; the
+-- consolidator reads and then deletes them).
 
 CREATE TABLE hook_event_transcripts (
     session_id TEXT PRIMARY KEY,
@@ -38,22 +38,6 @@ CREATE TABLE organization_workflows (
     PRIMARY KEY (organization_id, workflow_kind)
 );
 
--- Organization-scoped document storage. Shared namespaces 'organization_memories'
--- and 'organization_skills'. No CHECK — Rust validates allowed values.
-CREATE TABLE organization_workflow_documents (
-    organization_id TEXT NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
-    workflow_kind TEXT NOT NULL,
-    document_path TEXT NOT NULL,
-    content_text TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (organization_id, workflow_kind, document_path)
-);
-
-CREATE INDEX idx_organization_workflow_documents_updated_at
-    ON organization_workflow_documents (organization_id, workflow_kind, updated_at DESC);
-
--- Project tier: per-project tracking of memory extract, memory consolidate, and skills.
 CREATE TABLE project_workflows (
     project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     workflow_kind TEXT NOT NULL CHECK (
@@ -69,17 +53,58 @@ CREATE TABLE project_workflows (
     PRIMARY KEY (project_id, workflow_kind)
 );
 
--- Project-scoped document storage. Shared namespaces 'project_memories' (raw +
--- consolidated) and 'project_skills'. No CHECK — Rust validates allowed values.
-CREATE TABLE project_workflow_documents (
+-- Raw per-transcript memory candidates staged by project_memory_extract and
+-- consumed by project_memory_consolidate.
+CREATE TABLE project_memory_raw (
     project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-    workflow_kind TEXT NOT NULL,
-    document_path TEXT NOT NULL,
+    session_id TEXT NOT NULL,
     content_text TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (project_id, workflow_kind, document_path)
+    PRIMARY KEY (project_id, session_id)
 );
 
-CREATE INDEX idx_project_workflow_documents_updated_at
-    ON project_workflow_documents (project_id, workflow_kind, updated_at DESC);
+CREATE INDEX idx_project_memory_raw_updated_at
+    ON project_memory_raw (project_id, updated_at DESC);
+
+-- Durable project memory: one row per project. `handbook_text` is the full
+-- handbook; `summary_text` is the short navigational index.
+CREATE TABLE project_memory (
+    project_id TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
+    handbook_text TEXT NOT NULL DEFAULT '',
+    summary_text TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Durable project skills: one row per (project, skill_name). `content_text`
+-- holds the full SKILL.md body.
+CREATE TABLE project_skills (
+    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+    skill_name TEXT NOT NULL,
+    content_text TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (project_id, skill_name)
+);
+
+CREATE INDEX idx_project_skills_updated_at
+    ON project_skills (project_id, updated_at DESC);
+
+-- Durable organization memory: one row per organization.
+CREATE TABLE organization_memory (
+    organization_id TEXT PRIMARY KEY REFERENCES organization(id) ON DELETE CASCADE,
+    handbook_text TEXT NOT NULL DEFAULT '',
+    summary_text TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Durable organization skills: one row per (organization, skill_name).
+CREATE TABLE organization_skills (
+    organization_id TEXT NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    skill_name TEXT NOT NULL,
+    content_text TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (organization_id, skill_name)
+);
+
+CREATE INDEX idx_organization_skills_updated_at
+    ON organization_skills (organization_id, updated_at DESC);

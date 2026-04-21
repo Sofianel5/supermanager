@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    path::{Component, Path},
-};
+use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 use reporter_protocol::{
@@ -47,10 +44,51 @@ pub(crate) struct ProjectSummaryClaim {
 }
 
 #[derive(Serialize)]
-struct WorkflowDocumentRecord {
-    path: String,
+struct RawMemoryEntry {
+    session_id: String,
     content: String,
     updated_at: String,
+}
+
+#[derive(Serialize)]
+struct SkillEntry {
+    name: String,
+    body: String,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+struct ProjectMemorySnapshotView {
+    handbook: String,
+    memory_summary: String,
+    raw: Vec<RawMemoryEntry>,
+}
+
+#[derive(Serialize)]
+struct OrganizationMemorySnapshotView {
+    handbook: String,
+    memory_summary: String,
+    projects: Vec<OrganizationProjectMemoryView>,
+}
+
+#[derive(Serialize)]
+struct OrganizationProjectMemoryView {
+    project_id: String,
+    handbook: String,
+    memory_summary: String,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+struct OrganizationSkillsSnapshotView {
+    skills: Vec<SkillEntry>,
+    projects: Vec<OrganizationProjectSkillsView>,
+}
+
+#[derive(Serialize)]
+struct OrganizationProjectSkillsView {
+    project_id: String,
+    skills: Vec<SkillEntry>,
 }
 
 pub(crate) struct ToolExecutionResult {
@@ -424,140 +462,483 @@ impl SummaryDb {
         Ok(())
     }
 
-    async fn list_workflow_documents(
+    async fn get_project_memory_snapshot(
         &self,
-        subject_id: &str,
-        workflow_kind: WorkflowKind,
-    ) -> Result<Vec<WorkflowDocumentRecord>> {
-        let sql = match workflow_kind.scope() {
-            WorkflowScope::Organization => {
-                r#"
-                SELECT document_path, content_text, updated_at
-                FROM organization_workflow_documents
-                WHERE organization_id = $1
-                  AND workflow_kind = $2
-                ORDER BY document_path ASC
-                "#
-            }
-            WorkflowScope::Project => {
-                r#"
-                SELECT document_path, content_text, updated_at
-                FROM project_workflow_documents
-                WHERE project_id = $1
-                  AND workflow_kind = $2
-                ORDER BY document_path ASC
-                "#
-            }
-        };
-
-        let rows = sqlx::query(sql)
-            .bind(subject_id)
-            .bind(workflow_kind.storage_kind())
-            .fetch_all(&self.pool)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to list workflow documents {} for {subject_id}",
-                    workflow_kind.as_str()
-                )
-            })?;
-
-        rows.into_iter().map(decode_workflow_document_row).collect()
+        project_id: &str,
+    ) -> Result<ProjectMemorySnapshotView> {
+        let (memory, raw) = tokio::try_join!(
+            self.load_project_memory_row(project_id),
+            self.list_project_memory_raw(project_id),
+        )?;
+        Ok(ProjectMemorySnapshotView {
+            handbook: memory.0,
+            memory_summary: memory.1,
+            raw,
+        })
     }
 
-    async fn upsert_workflow_document(
+    async fn load_project_memory_row(&self, project_id: &str) -> Result<(String, String)> {
+        let row = sqlx::query(
+            r#"
+            SELECT handbook_text, summary_text
+            FROM project_memory
+            WHERE project_id = $1
+            "#,
+        )
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| format!("failed to fetch project memory for {project_id}"))?;
+
+        Ok(match row {
+            Some(row) => (
+                row.try_get("handbook_text")
+                    .context("failed to decode project_memory.handbook_text")?,
+                row.try_get("summary_text")
+                    .context("failed to decode project_memory.summary_text")?,
+            ),
+            None => (String::new(), String::new()),
+        })
+    }
+
+    async fn list_project_memory_raw(&self, project_id: &str) -> Result<Vec<RawMemoryEntry>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT session_id, content_text, updated_at
+            FROM project_memory_raw
+            WHERE project_id = $1
+            ORDER BY updated_at ASC, session_id ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| format!("failed to list project_memory_raw for {project_id}"))?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(RawMemoryEntry {
+                    session_id: row
+                        .try_get("session_id")
+                        .context("failed to decode project_memory_raw.session_id")?,
+                    content: row
+                        .try_get("content_text")
+                        .context("failed to decode project_memory_raw.content_text")?,
+                    updated_at: row
+                        .try_get::<OffsetDateTime, _>("updated_at")
+                        .context("failed to decode project_memory_raw.updated_at")
+                        .and_then(format_timestamp)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn stage_raw_project_memory(
         &self,
-        subject_id: &str,
-        workflow_kind: WorkflowKind,
-        normalized_path: &str,
+        project_id: &str,
+        session_id: &str,
         content: &str,
     ) -> Result<()> {
-        let sql = match workflow_kind.scope() {
-            WorkflowScope::Organization => {
-                r#"
-                INSERT INTO organization_workflow_documents (
-                  organization_id,
-                  workflow_kind,
-                  document_path,
-                  content_text
-                )
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT(organization_id, workflow_kind, document_path) DO UPDATE SET
-                  content_text = EXCLUDED.content_text,
-                  updated_at = NOW()
-                "#
-            }
-            WorkflowScope::Project => {
-                r#"
-                INSERT INTO project_workflow_documents (
-                  project_id,
-                  workflow_kind,
-                  document_path,
-                  content_text
-                )
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT(project_id, workflow_kind, document_path) DO UPDATE SET
-                  content_text = EXCLUDED.content_text,
-                  updated_at = NOW()
-                "#
-            }
-        };
-
-        sqlx::query(sql)
-            .bind(subject_id)
-            .bind(workflow_kind.storage_kind())
-            .bind(normalized_path)
-            .bind(content)
-            .execute(&self.pool)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to upsert workflow document {}:{normalized_path} for {subject_id}",
-                    workflow_kind.as_str()
-                )
-            })?;
-
+        sqlx::query(
+            r#"
+            INSERT INTO project_memory_raw (project_id, session_id, content_text)
+            VALUES ($1, $2, $3)
+            ON CONFLICT(project_id, session_id) DO UPDATE SET
+              content_text = EXCLUDED.content_text,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(project_id)
+        .bind(session_id)
+        .bind(content)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to stage raw project memory {session_id} for {project_id}")
+        })?;
         Ok(())
     }
 
-    async fn delete_workflow_document(
+    async fn delete_raw_project_memory(
         &self,
-        subject_id: &str,
-        workflow_kind: WorkflowKind,
-        normalized_path: &str,
+        project_id: &str,
+        session_id: &str,
     ) -> Result<bool> {
-        let sql = match workflow_kind.scope() {
-            WorkflowScope::Organization => {
-                r#"
-                DELETE FROM organization_workflow_documents
-                WHERE organization_id = $1
-                  AND workflow_kind = $2
-                  AND document_path = $3
-                "#
-            }
-            WorkflowScope::Project => {
-                r#"
-                DELETE FROM project_workflow_documents
-                WHERE project_id = $1
-                  AND workflow_kind = $2
-                  AND document_path = $3
-                "#
-            }
-        };
+        let result = sqlx::query(
+            r#"
+            DELETE FROM project_memory_raw
+            WHERE project_id = $1 AND session_id = $2
+            "#,
+        )
+        .bind(project_id)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to delete raw project memory {session_id} for {project_id}")
+        })?;
+        Ok(result.rows_affected() > 0)
+    }
 
-        let result = sqlx::query(sql)
-            .bind(subject_id)
-            .bind(workflow_kind.storage_kind())
-            .bind(normalized_path)
-            .execute(&self.pool)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to delete workflow document {}:{normalized_path} for {subject_id}",
-                    workflow_kind.as_str()
-                )
-            })?;
+    async fn set_project_handbook(&self, project_id: &str, handbook: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO project_memory (project_id, handbook_text, summary_text, updated_at)
+            VALUES ($1, $2, '', NOW())
+            ON CONFLICT(project_id) DO UPDATE SET
+              handbook_text = EXCLUDED.handbook_text,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(project_id)
+        .bind(handbook)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("failed to persist project handbook for {project_id}"))?;
+        Ok(())
+    }
 
+    async fn set_project_memory_summary(&self, project_id: &str, summary: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO project_memory (project_id, handbook_text, summary_text, updated_at)
+            VALUES ($1, '', $2, NOW())
+            ON CONFLICT(project_id) DO UPDATE SET
+              summary_text = EXCLUDED.summary_text,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(project_id)
+        .bind(summary)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("failed to persist project memory summary for {project_id}"))?;
+        Ok(())
+    }
+
+    async fn list_project_skills(&self, project_id: &str) -> Result<Vec<SkillEntry>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT skill_name, content_text, updated_at
+            FROM project_skills
+            WHERE project_id = $1
+            ORDER BY skill_name ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| format!("failed to list project_skills for {project_id}"))?;
+
+        rows.into_iter().map(decode_skill_row).collect()
+    }
+
+    async fn upsert_project_skill(
+        &self,
+        project_id: &str,
+        skill_name: &str,
+        body: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO project_skills (project_id, skill_name, content_text)
+            VALUES ($1, $2, $3)
+            ON CONFLICT(project_id, skill_name) DO UPDATE SET
+              content_text = EXCLUDED.content_text,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(project_id)
+        .bind(skill_name)
+        .bind(body)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("failed to upsert project skill {skill_name} for {project_id}"))?;
+        Ok(())
+    }
+
+    async fn delete_project_skill(&self, project_id: &str, skill_name: &str) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM project_skills
+            WHERE project_id = $1 AND skill_name = $2
+            "#,
+        )
+        .bind(project_id)
+        .bind(skill_name)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("failed to delete project skill {skill_name} for {project_id}"))?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn get_organization_memory_snapshot(
+        &self,
+        organization_id: &str,
+    ) -> Result<OrganizationMemorySnapshotView> {
+        let (memory, projects) = tokio::try_join!(
+            self.load_organization_memory_row(organization_id),
+            self.list_project_memories_for_organization(organization_id),
+        )?;
+        Ok(OrganizationMemorySnapshotView {
+            handbook: memory.0,
+            memory_summary: memory.1,
+            projects,
+        })
+    }
+
+    async fn load_organization_memory_row(
+        &self,
+        organization_id: &str,
+    ) -> Result<(String, String)> {
+        let row = sqlx::query(
+            r#"
+            SELECT handbook_text, summary_text
+            FROM organization_memory
+            WHERE organization_id = $1
+            "#,
+        )
+        .bind(organization_id)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| format!("failed to fetch organization memory for {organization_id}"))?;
+
+        Ok(match row {
+            Some(row) => (
+                row.try_get("handbook_text")
+                    .context("failed to decode organization_memory.handbook_text")?,
+                row.try_get("summary_text")
+                    .context("failed to decode organization_memory.summary_text")?,
+            ),
+            None => (String::new(), String::new()),
+        })
+    }
+
+    async fn list_project_memories_for_organization(
+        &self,
+        organization_id: &str,
+    ) -> Result<Vec<OrganizationProjectMemoryView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              p.project_id,
+              COALESCE(m.handbook_text, '') AS handbook_text,
+              COALESCE(m.summary_text, '') AS summary_text,
+              m.updated_at
+            FROM projects AS p
+            LEFT JOIN project_memory AS m ON m.project_id = p.project_id
+            WHERE p.organization_id = $1
+              AND (m.handbook_text IS NOT NULL AND m.handbook_text <> ''
+                   OR m.summary_text IS NOT NULL AND m.summary_text <> '')
+            ORDER BY p.project_id ASC
+            "#,
+        )
+        .bind(organization_id)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to list per-project memory for organization {organization_id}")
+        })?;
+
+        rows.into_iter()
+            .map(|row| {
+                let updated_at = row
+                    .try_get::<Option<OffsetDateTime>, _>("updated_at")
+                    .context("failed to decode project_memory.updated_at")?
+                    .map(format_timestamp)
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(OrganizationProjectMemoryView {
+                    project_id: row
+                        .try_get("project_id")
+                        .context("failed to decode project_id")?,
+                    handbook: row
+                        .try_get("handbook_text")
+                        .context("failed to decode project_memory.handbook_text")?,
+                    memory_summary: row
+                        .try_get("summary_text")
+                        .context("failed to decode project_memory.summary_text")?,
+                    updated_at,
+                })
+            })
+            .collect()
+    }
+
+    async fn set_organization_handbook(
+        &self,
+        organization_id: &str,
+        handbook: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO organization_memory (organization_id, handbook_text, summary_text, updated_at)
+            VALUES ($1, $2, '', NOW())
+            ON CONFLICT(organization_id) DO UPDATE SET
+              handbook_text = EXCLUDED.handbook_text,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(organization_id)
+        .bind(handbook)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to persist organization handbook for {organization_id}")
+        })?;
+        Ok(())
+    }
+
+    async fn set_organization_memory_summary(
+        &self,
+        organization_id: &str,
+        summary: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO organization_memory (organization_id, handbook_text, summary_text, updated_at)
+            VALUES ($1, '', $2, NOW())
+            ON CONFLICT(organization_id) DO UPDATE SET
+              summary_text = EXCLUDED.summary_text,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(organization_id)
+        .bind(summary)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to persist organization memory summary for {organization_id}")
+        })?;
+        Ok(())
+    }
+
+    async fn get_organization_skills_snapshot(
+        &self,
+        organization_id: &str,
+    ) -> Result<OrganizationSkillsSnapshotView> {
+        let (skills, projects) = tokio::try_join!(
+            self.list_organization_skills(organization_id),
+            self.list_project_skills_for_organization(organization_id),
+        )?;
+        Ok(OrganizationSkillsSnapshotView { skills, projects })
+    }
+
+    async fn list_organization_skills(&self, organization_id: &str) -> Result<Vec<SkillEntry>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT skill_name, content_text, updated_at
+            FROM organization_skills
+            WHERE organization_id = $1
+            ORDER BY skill_name ASC
+            "#,
+        )
+        .bind(organization_id)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| format!("failed to list organization_skills for {organization_id}"))?;
+
+        rows.into_iter().map(decode_skill_row).collect()
+    }
+
+    async fn list_project_skills_for_organization(
+        &self,
+        organization_id: &str,
+    ) -> Result<Vec<OrganizationProjectSkillsView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              s.project_id,
+              s.skill_name,
+              s.content_text,
+              s.updated_at
+            FROM project_skills AS s
+            INNER JOIN projects AS p ON p.project_id = s.project_id
+            WHERE p.organization_id = $1
+            ORDER BY s.project_id ASC, s.skill_name ASC
+            "#,
+        )
+        .bind(organization_id)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to list per-project skills for organization {organization_id}")
+        })?;
+
+        let mut grouped: Vec<OrganizationProjectSkillsView> = Vec::new();
+        for row in rows {
+            let project_id: String = row
+                .try_get("project_id")
+                .context("failed to decode project_id")?;
+            let skill = SkillEntry {
+                name: row
+                    .try_get("skill_name")
+                    .context("failed to decode project_skills.skill_name")?,
+                body: row
+                    .try_get("content_text")
+                    .context("failed to decode project_skills.content_text")?,
+                updated_at: row
+                    .try_get::<OffsetDateTime, _>("updated_at")
+                    .context("failed to decode project_skills.updated_at")
+                    .and_then(format_timestamp)?,
+            };
+            if let Some(last) = grouped.last_mut()
+                && last.project_id == project_id
+            {
+                last.skills.push(skill);
+            } else {
+                grouped.push(OrganizationProjectSkillsView {
+                    project_id,
+                    skills: vec![skill],
+                });
+            }
+        }
+        Ok(grouped)
+    }
+
+    async fn upsert_organization_skill(
+        &self,
+        organization_id: &str,
+        skill_name: &str,
+        body: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO organization_skills (organization_id, skill_name, content_text)
+            VALUES ($1, $2, $3)
+            ON CONFLICT(organization_id, skill_name) DO UPDATE SET
+              content_text = EXCLUDED.content_text,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(organization_id)
+        .bind(skill_name)
+        .bind(body)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to upsert organization skill {skill_name} for {organization_id}")
+        })?;
+        Ok(())
+    }
+
+    async fn delete_organization_skill(
+        &self,
+        organization_id: &str,
+        skill_name: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM organization_skills
+            WHERE organization_id = $1 AND skill_name = $2
+            "#,
+        )
+        .bind(organization_id)
+        .bind(skill_name)
+        .execute(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to delete organization skill {skill_name} for {organization_id}")
+        })?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1140,117 +1521,190 @@ impl SummaryDb {
             WorkflowScope::Organization => subject_id.to_owned(),
             WorkflowScope::Project => normalize_project_id(subject_id),
         };
-        match tool {
-            SummaryTool::WorkflowGetSnapshot => {
-                let documents = if workflow_kind.scope() == WorkflowScope::Organization {
-                    let (own, project) = tokio::try_join!(
-                        self.list_workflow_documents(&normalized_id, workflow_kind),
-                        self.list_project_documents_for_organization(&normalized_id, workflow_kind),
-                    )?;
-                    let mut combined = own;
-                    combined.extend(project);
-                    combined
-                } else {
-                    self.list_workflow_documents(&normalized_id, workflow_kind)
-                        .await?
-                };
+        match (workflow_kind, tool) {
+            (WorkflowKind::ProjectMemoryExtract, SummaryTool::WorkflowGetSnapshot)
+            | (WorkflowKind::ProjectMemoryConsolidate, SummaryTool::WorkflowGetSnapshot) => {
+                let snapshot = self.get_project_memory_snapshot(&normalized_id).await?;
+                serialize_snapshot(&snapshot, "project memory snapshot")
+            }
+            (
+                WorkflowKind::ProjectMemoryExtract,
+                SummaryTool::StageRawProjectMemory {
+                    session_id,
+                    markdown,
+                },
+            ) => {
+                let session_id = session_id.trim();
+                if session_id.is_empty() {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        message: "session_id must be a non-empty string".to_owned(),
+                    });
+                }
+                self.stage_raw_project_memory(&normalized_id, session_id, &markdown)
+                    .await?;
                 Ok(ToolExecutionResult {
                     success: true,
-                    message: serde_json::to_string_pretty(&serde_json::json!({
-                        "workflow_kind": workflow_kind.as_str(),
-                        "path_root": workflow_document_root_label(workflow_kind),
-                        "files": documents,
-                    }))
-                    .context("failed to serialize workflow snapshot")?,
+                    message: format!("staged raw memory for session {session_id}"),
                 })
             }
-            SummaryTool::UpsertWorkflowFile { path, content } => {
-                let normalized_path = normalize_workflow_document_path(workflow_kind, &path)?;
-                self.upsert_workflow_document(
-                    &normalized_id,
-                    workflow_kind,
-                    &normalized_path,
-                    &content,
-                )
-                .await?;
-                Ok(ToolExecutionResult {
-                    success: true,
-                    message: format!("upserted {}", normalized_path),
-                })
-            }
-            SummaryTool::DeleteWorkflowFile { path } => {
-                let normalized_path = normalize_workflow_document_path(workflow_kind, &path)?;
+            (
+                WorkflowKind::ProjectMemoryConsolidate,
+                SummaryTool::DeleteRawProjectMemory { session_id },
+            ) => {
+                let session_id = session_id.trim();
+                if session_id.is_empty() {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        message: "session_id must be a non-empty string".to_owned(),
+                    });
+                }
                 let deleted = self
-                    .delete_workflow_document(&normalized_id, workflow_kind, &normalized_path)
+                    .delete_raw_project_memory(&normalized_id, session_id)
                     .await?;
                 Ok(ToolExecutionResult {
                     success: true,
                     message: if deleted {
-                        format!("deleted {}", normalized_path)
+                        format!("deleted raw memory for session {session_id}")
                     } else {
-                        format!("already absent: {}", normalized_path)
+                        format!("raw memory already absent for session {session_id}")
                     },
                 })
             }
-            _ => Ok(ToolExecutionResult {
+            (WorkflowKind::ProjectMemoryConsolidate, SummaryTool::SetHandbook { markdown }) => {
+                self.set_project_handbook(&normalized_id, markdown.trim())
+                    .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: "updated project handbook".to_owned(),
+                })
+            }
+            (
+                WorkflowKind::ProjectMemoryConsolidate,
+                SummaryTool::SetMemorySummary { markdown },
+            ) => {
+                self.set_project_memory_summary(&normalized_id, markdown.trim())
+                    .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: "updated project memory summary".to_owned(),
+                })
+            }
+            (WorkflowKind::ProjectSkills, SummaryTool::WorkflowGetSnapshot) => {
+                let skills = self.list_project_skills(&normalized_id).await?;
+                serialize_snapshot(
+                    &serde_json::json!({ "skills": skills }),
+                    "project skills snapshot",
+                )
+            }
+            (WorkflowKind::ProjectSkills, SummaryTool::UpsertSkill { name, body }) => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        message: "skill name must be a non-empty string".to_owned(),
+                    });
+                }
+                self.upsert_project_skill(&normalized_id, name, &body)
+                    .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: format!("upserted skill {name}"),
+                })
+            }
+            (WorkflowKind::ProjectSkills, SummaryTool::DeleteSkill { name }) => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        message: "skill name must be a non-empty string".to_owned(),
+                    });
+                }
+                let deleted = self.delete_project_skill(&normalized_id, name).await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: if deleted {
+                        format!("deleted skill {name}")
+                    } else {
+                        format!("skill already absent: {name}")
+                    },
+                })
+            }
+            (
+                WorkflowKind::OrganizationMemoryConsolidate,
+                SummaryTool::WorkflowGetSnapshot,
+            ) => {
+                let snapshot = self
+                    .get_organization_memory_snapshot(&normalized_id)
+                    .await?;
+                serialize_snapshot(&snapshot, "organization memory snapshot")
+            }
+            (
+                WorkflowKind::OrganizationMemoryConsolidate,
+                SummaryTool::SetHandbook { markdown },
+            ) => {
+                self.set_organization_handbook(&normalized_id, markdown.trim())
+                    .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: "updated organization handbook".to_owned(),
+                })
+            }
+            (
+                WorkflowKind::OrganizationMemoryConsolidate,
+                SummaryTool::SetMemorySummary { markdown },
+            ) => {
+                self.set_organization_memory_summary(&normalized_id, markdown.trim())
+                    .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: "updated organization memory summary".to_owned(),
+                })
+            }
+            (WorkflowKind::OrganizationSkills, SummaryTool::WorkflowGetSnapshot) => {
+                let snapshot = self
+                    .get_organization_skills_snapshot(&normalized_id)
+                    .await?;
+                serialize_snapshot(&snapshot, "organization skills snapshot")
+            }
+            (WorkflowKind::OrganizationSkills, SummaryTool::UpsertSkill { name, body }) => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        message: "skill name must be a non-empty string".to_owned(),
+                    });
+                }
+                self.upsert_organization_skill(&normalized_id, name, &body)
+                    .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: format!("upserted skill {name}"),
+                })
+            }
+            (WorkflowKind::OrganizationSkills, SummaryTool::DeleteSkill { name }) => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Ok(ToolExecutionResult {
+                        success: false,
+                        message: "skill name must be a non-empty string".to_owned(),
+                    });
+                }
+                let deleted = self.delete_organization_skill(&normalized_id, name).await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: if deleted {
+                        format!("deleted skill {name}")
+                    } else {
+                        format!("skill already absent: {name}")
+                    },
+                })
+            }
+            (kind, _) => Ok(ToolExecutionResult {
                 success: false,
-                message: format!(
-                    "tool is not available for {} workflow",
-                    workflow_kind.as_str()
-                ),
+                message: format!("tool is not available for {} workflow", kind.as_str()),
             }),
         }
-    }
-
-    async fn list_project_documents_for_organization(
-        &self,
-        organization_id: &str,
-        workflow_kind: WorkflowKind,
-    ) -> Result<Vec<WorkflowDocumentRecord>> {
-        let mirror_kind = match workflow_kind {
-            WorkflowKind::OrganizationMemoryConsolidate => WorkflowKind::ProjectMemoryConsolidate,
-            WorkflowKind::OrganizationSkills => WorkflowKind::ProjectSkills,
-            _ => return Ok(Vec::new()),
-        };
-        let storage_kind = mirror_kind.storage_kind();
-        let exclude_raw = workflow_kind == WorkflowKind::OrganizationMemoryConsolidate;
-
-        let rows = sqlx::query(
-            r#"
-            SELECT
-              d.project_id,
-              d.document_path,
-              d.content_text,
-              d.updated_at
-            FROM project_workflow_documents AS d
-            INNER JOIN projects AS p ON p.project_id = d.project_id
-            WHERE p.organization_id = $1
-              AND d.workflow_kind = $2
-              AND (NOT $3::bool OR NOT starts_with(d.document_path, '_raw/'))
-            ORDER BY d.project_id ASC, d.document_path ASC
-            "#,
-        )
-        .bind(organization_id)
-        .bind(storage_kind)
-        .bind(exclude_raw)
-        .fetch_all(&self.pool)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to list cross-project workflow documents {storage_kind} for {organization_id}"
-            )
-        })?;
-
-        rows.into_iter()
-            .map(|row| {
-                let project_id: String = row
-                    .try_get("project_id")
-                    .context("failed to decode project_id")?;
-                let mut record = decode_workflow_document_row(row)?;
-                record.path = format!("projects/{project_id}/{}", record.path);
-                Ok(record)
-            })
-            .collect()
     }
 
     async fn get_stored_organization_summary(
@@ -1494,80 +1948,6 @@ impl MemberSnapshotContainer for OrganizationSnapshot {
     }
 }
 
-fn workflow_document_root_label(workflow_kind: WorkflowKind) -> &'static str {
-    match workflow_kind {
-        WorkflowKind::OrganizationMemoryConsolidate
-        | WorkflowKind::ProjectMemoryExtract
-        | WorkflowKind::ProjectMemoryConsolidate => "memories",
-        WorkflowKind::OrganizationSkills | WorkflowKind::ProjectSkills => ".codex/skills",
-        WorkflowKind::OrganizationSummary | WorkflowKind::ProjectSummary => {
-            panic!("workflow does not use workflow documents")
-        }
-    }
-}
-
-fn normalize_workflow_document_path(workflow_kind: WorkflowKind, path: &str) -> Result<String> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("path must be a non-empty relative path");
-    }
-    if trimmed.contains('\\') {
-        anyhow::bail!("path must use '/' separators");
-    }
-
-    let mut normalized_components = Vec::new();
-    for component in Path::new(trimmed).components() {
-        match component {
-            Component::Normal(segment) => {
-                let segment = segment.to_str().context("path must be valid UTF-8")?.trim();
-                if segment.is_empty() {
-                    anyhow::bail!("path contains an empty segment");
-                }
-                normalized_components.push(segment.to_owned());
-            }
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                anyhow::bail!("path must stay within the workflow root");
-            }
-        }
-    }
-
-    if normalized_components.is_empty() {
-        anyhow::bail!("path must contain at least one normal path segment");
-    }
-
-    match workflow_kind {
-        WorkflowKind::OrganizationSkills | WorkflowKind::ProjectSkills => {
-            if normalized_components.len() < 2 {
-                anyhow::bail!("skill files must live under <skill-name>/...");
-            }
-        }
-        WorkflowKind::ProjectMemoryExtract => {
-            if normalized_components.first().map(String::as_str) != Some("_raw") {
-                anyhow::bail!(
-                    "memory extract may only write under `_raw/<session_id>.md`"
-                );
-            }
-            if normalized_components.len() != 2 {
-                anyhow::bail!(
-                    "memory extract paths must be exactly `_raw/<session_id>.md`"
-                );
-            }
-        }
-        _ => {}
-    }
-
-    if workflow_kind.scope() == WorkflowScope::Organization
-        && normalized_components.first().map(String::as_str) == Some("projects")
-    {
-        anyhow::bail!(
-            "organization workflows must not write under `projects/<project_id>/...`; that namespace is read-only"
-        );
-    }
-
-    Ok(normalized_components.join("/"))
-}
-
 fn decode_organization_project(row: sqlx::postgres::PgRow) -> Result<OrganizationProject> {
     Ok(OrganizationProject {
         project_id: row
@@ -1588,18 +1968,26 @@ fn decode_last_processed_received_at(row: &sqlx::postgres::PgRow) -> Result<Opti
         .filter(|value| value != "1970-01-01T00:00:00Z"))
 }
 
-fn decode_workflow_document_row(row: sqlx::postgres::PgRow) -> Result<WorkflowDocumentRecord> {
-    Ok(WorkflowDocumentRecord {
-        path: row
-            .try_get("document_path")
-            .context("failed to decode workflow document path")?,
-        content: row
+fn decode_skill_row(row: sqlx::postgres::PgRow) -> Result<SkillEntry> {
+    Ok(SkillEntry {
+        name: row
+            .try_get("skill_name")
+            .context("failed to decode skill_name")?,
+        body: row
             .try_get("content_text")
-            .context("failed to decode workflow document content")?,
+            .context("failed to decode skill content_text")?,
         updated_at: row
             .try_get::<OffsetDateTime, _>("updated_at")
-            .context("failed to decode workflow document updated_at")
+            .context("failed to decode skill updated_at")
             .and_then(format_timestamp)?,
+    })
+}
+
+fn serialize_snapshot<T: Serialize>(snapshot: &T, context: &str) -> Result<ToolExecutionResult> {
+    Ok(ToolExecutionResult {
+        success: true,
+        message: serde_json::to_string_pretty(snapshot)
+            .with_context(|| format!("failed to serialize {context}"))?,
     })
 }
 
@@ -1648,90 +2036,3 @@ pub(crate) fn now_rfc3339() -> Result<String> {
     format_timestamp(OffsetDateTime::now_utc())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::normalize_workflow_document_path;
-    use crate::workflow::WorkflowKind;
-
-    #[test]
-    fn memory_document_paths_are_normalized() {
-        let path = normalize_workflow_document_path(
-            WorkflowKind::OrganizationMemoryConsolidate,
-            "./MEMORY.md",
-        )
-        .unwrap();
-
-        assert_eq!(path, "MEMORY.md");
-    }
-
-    #[test]
-    fn workflow_document_paths_reject_parent_segments() {
-        let error = normalize_workflow_document_path(
-            WorkflowKind::OrganizationMemoryConsolidate,
-            "../MEMORY.md",
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("workflow root"));
-    }
-
-    #[test]
-    fn skill_documents_require_skill_subdirectories() {
-        let error = normalize_workflow_document_path(WorkflowKind::OrganizationSkills, "SKILL.md")
-            .unwrap_err();
-
-        assert!(error.to_string().contains("<skill-name>"));
-    }
-
-    #[test]
-    fn project_skill_documents_require_skill_subdirectories() {
-        let error = normalize_workflow_document_path(WorkflowKind::ProjectSkills, "SKILL.md")
-            .unwrap_err();
-
-        assert!(error.to_string().contains("<skill-name>"));
-    }
-
-    #[test]
-    fn project_memory_extract_requires_raw_prefix() {
-        let error = normalize_workflow_document_path(
-            WorkflowKind::ProjectMemoryExtract,
-            "MEMORY.md",
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("_raw"));
-    }
-
-    #[test]
-    fn project_memory_extract_accepts_raw_session_file() {
-        let path = normalize_workflow_document_path(
-            WorkflowKind::ProjectMemoryExtract,
-            "_raw/sess_abc.md",
-        )
-        .unwrap();
-
-        assert_eq!(path, "_raw/sess_abc.md");
-    }
-
-    #[test]
-    fn organization_workflows_reject_projects_prefix() {
-        let error = normalize_workflow_document_path(
-            WorkflowKind::OrganizationMemoryConsolidate,
-            "projects/PROJECT42/MEMORY.md",
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("projects/"));
-    }
-
-    #[test]
-    fn project_consolidate_allows_memory_summary() {
-        let path = normalize_workflow_document_path(
-            WorkflowKind::ProjectMemoryConsolidate,
-            "memory_summary.md",
-        )
-        .unwrap();
-
-        assert_eq!(path, "memory_summary.md");
-    }
-}
