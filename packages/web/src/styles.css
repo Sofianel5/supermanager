@@ -23,6 +23,13 @@
 @layer base {
   :root {
     color-scheme: dark;
+    scrollbar-gutter: stable;
+  }
+
+  @supports not (scrollbar-gutter: stable) {
+    html {
+      overflow-y: scroll;
+    }
   }
 
   body {
