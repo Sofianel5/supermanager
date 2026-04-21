@@ -6,6 +6,10 @@ export function buildOrganizationMembersHref(organizationSlug: string | null) {
   return buildOrganizationSectionHref("/app/members", organizationSlug);
 }
 
+export function buildOrganizationActivityHref(organizationSlug: string | null) {
+  return buildOrganizationSectionHref("/app/activity", organizationSlug);
+}
+
 export function buildOrganizationKnowledgeHref(organizationSlug: string | null) {
   return buildOrganizationSectionHref("/app/knowledge", organizationSlug);
 }
@@ -15,6 +19,16 @@ export function buildMemberHref(
   organizationSlug: string | null,
 ) {
   return buildOrganizationSectionHref(`/m/${memberUserId}`, organizationSlug);
+}
+
+export function buildMemberActivityHref(
+  memberUserId: string,
+  organizationSlug: string | null,
+) {
+  return buildOrganizationSectionHref(
+    `/m/${memberUserId}/activity`,
+    organizationSlug,
+  );
 }
 
 export function buildProjectHref(projectId: string) {

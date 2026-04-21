@@ -4,6 +4,7 @@ import type {
   ProjectMetadataResponse,
 } from "@supermanager/common/api-protocol";
 import type {
+  ActivityUpdatesResponse,
   OrganizationSummaryResponse,
   OrganizationWorkflowDocumentsResponse,
   ProjectListResponse,
@@ -19,6 +20,8 @@ export type {
   StoredHookEvent,
 } from "@supermanager/common/api-protocol";
 export type {
+  ActivityUpdate,
+  ActivityUpdatesResponse,
   OrganizationMembership,
   OrganizationSummaryResponse,
   OrganizationWorkflowDocument,
@@ -105,9 +108,37 @@ export const api = {
       `/v1/projects/${encodeURIComponent(projectId)}/summary`,
     );
   },
+  getProjectUpdates(projectId: string, opts: { limit?: number } = {}) {
+    const params = new URLSearchParams();
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return requestJson<ActivityUpdatesResponse>(
+      `/v1/projects/${encodeURIComponent(projectId)}/updates${qs ? `?${qs}` : ""}`,
+    );
+  },
   getOrganizationSummary(organizationSlug: string) {
     return requestJson<OrganizationSummaryResponse>(
       `/v1/organizations/${encodeURIComponent(organizationSlug)}/summary`,
+    );
+  },
+  getOrganizationUpdates(organizationSlug: string, opts: { limit?: number } = {}) {
+    const params = new URLSearchParams();
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return requestJson<ActivityUpdatesResponse>(
+      `/v1/organizations/${encodeURIComponent(organizationSlug)}/updates${qs ? `?${qs}` : ""}`,
+    );
+  },
+  getMemberUpdates(
+    organizationSlug: string,
+    memberUserId: string,
+    opts: { limit?: number } = {},
+  ) {
+    const params = new URLSearchParams();
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return requestJson<ActivityUpdatesResponse>(
+      `/v1/organizations/${encodeURIComponent(organizationSlug)}/members/${encodeURIComponent(memberUserId)}/updates${qs ? `?${qs}` : ""}`,
     );
   },
   getOrganizationMemories(organizationSlug: string) {

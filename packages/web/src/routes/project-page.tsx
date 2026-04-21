@@ -15,6 +15,7 @@ import {
 } from "../lib/organization";
 import {
   api,
+  type ActivityUpdate,
   type FeedResponse,
   type MemberSnapshot,
   type ProjectSnapshot,
@@ -22,6 +23,7 @@ import {
   type StoredHookEvent,
   type SummaryStatus,
 } from "../api";
+import { ActivityUpdateList } from "../components/activity-update-list";
 import { CopyPanel } from "../components/copy-panel";
 import { DropdownButton } from "../components/dropdown-button";
 import { InnerTabNav, type InnerTabItem } from "../components/inner-tab-nav";
@@ -69,7 +71,9 @@ export function ProjectPage({ view = "activity" }: ProjectPageProps) {
   );
   const { copiedValue, copy } = useCopyHandler();
   const [clock, setClock] = useState(() => Date.now());
-  const { feedQuery, projectQuery, summaryQuery } = useProjectData(projectId);
+  const { feedQuery, projectQuery, summaryQuery, updatesQuery } = useProjectData(
+    projectId,
+  );
   const viewerQuery = useQuery(viewerQueryOptions());
 
   const project = projectQuery.data ?? null;
@@ -311,6 +315,11 @@ export function ProjectPage({ view = "activity" }: ProjectPageProps) {
           hasMore={feedQuery.hasNextPage ?? false}
           onLoadMore={() => void feedQuery.fetchNextPage()}
           totalEventCount={totalEventCount}
+          updates={updatesQuery.data?.updates}
+          updatesError={
+            updatesQuery.error instanceof Error ? updatesQuery.error.message : null
+          }
+          updatesLoading={updatesQuery.isLoading}
         />
       )}
     </main>
@@ -351,6 +360,9 @@ function ProjectActivityTab({
   hasMore,
   onLoadMore,
   totalEventCount,
+  updates,
+  updatesError,
+  updatesLoading,
 }: {
   clock: number;
   events: StoredHookEvent[];
@@ -359,41 +371,55 @@ function ProjectActivityTab({
   hasMore: boolean;
   onLoadMore(): void;
   totalEventCount: number;
+  updates: ActivityUpdate[] | undefined;
+  updatesError: string | null;
+  updatesLoading: boolean;
 }) {
   return (
     <section className="mt-7">
-      <div className={cx(surfaceClass, "p-[22px]")}>
-        <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <span className={sectionLabelClass}>Activity</span>
-          <span className={`${pillBaseClass} border-border text-ink-dim`}>
-            {totalEventCount} update{totalEventCount === 1 ? "" : "s"}
-          </span>
-        </div>
+      <div className="grid gap-6">
+        <ActivityUpdateList
+          emptyMessage="No project updates yet."
+          errorMessage={updatesError}
+          isLoading={updatesLoading}
+          loadingMessage="Loading project activity..."
+          title="Updates"
+          updates={updates}
+        />
 
-        <div className="grid gap-3.5">
-          {events.length > 0 ? (
-            events.map((event) => (
-              <RawFeedEvent clock={clock} event={event} key={event.event_id} />
-            ))
-          ) : (
-            <p className={messageClass}>No hook updates have landed yet.</p>
+        <details className={cx(surfaceClass, "p-[22px]")}>
+          <summary className="flex cursor-pointer list-none flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <span className={sectionLabelClass}>Raw hook feed</span>
+            <span className={`${pillBaseClass} border-border text-ink-dim`}>
+              {totalEventCount} event{totalEventCount === 1 ? "" : "s"}
+            </span>
+          </summary>
+
+          <div className="mt-4 grid gap-3.5">
+            {events.length > 0 ? (
+              events.map((event) => (
+                <RawFeedEvent clock={clock} event={event} key={event.event_id} />
+              ))
+            ) : (
+              <p className={messageClass}>No hook updates have landed yet.</p>
+            )}
+          </div>
+
+          {feedError && (
+            <p className="mt-4 text-[0.95rem] leading-7 text-danger">{feedError}</p>
           )}
-        </div>
 
-        {feedError && (
-          <p className="mt-4 text-[0.95rem] leading-7 text-danger">{feedError}</p>
-        )}
-
-        {hasMore && (
-          <button
-            className={cx(secondaryButtonClass, "mt-4")}
-            type="button"
-            disabled={fetchingMore}
-            onClick={onLoadMore}
-          >
-            {fetchingMore ? "Loading..." : `Show ${FEED_LIMIT} more`}
-          </button>
-        )}
+          {hasMore && (
+            <button
+              className={cx(secondaryButtonClass, "mt-4")}
+              type="button"
+              disabled={fetchingMore}
+              onClick={onLoadMore}
+            >
+              {fetchingMore ? "Loading..." : `Show ${FEED_LIMIT} more`}
+            </button>
+          )}
+        </details>
       </div>
     </section>
   );

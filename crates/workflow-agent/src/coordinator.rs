@@ -14,10 +14,11 @@ use crate::{
         ProjectSummaryQueryOptions, SummaryDb, now_rfc3339,
     },
     event::{
-        ProjectSkillsRequest, render_project_skills_request,
+        ProjectSkillsRequest, build_organization_summary_source_window_key,
         format_organization_memory_consolidate_request, format_organization_skills_request,
         format_organization_summary_request, format_project_event,
         format_project_memory_consolidate_request, format_project_memory_extract_request,
+        render_project_skills_request,
     },
     workflow::{
         WorkflowCursor, WorkflowCursorSecondary, WorkflowDispatch, WorkflowKind, WorkflowTarget,
@@ -194,12 +195,7 @@ impl WorkflowCoordinator {
                         Some(WorkflowCursorSecondary::Seq(_)) | None => None,
                     };
                     self.db
-                        .set_workflow_updated_at(
-                            &target.id,
-                            kind,
-                            &received_at,
-                            last_session_id,
-                        )
+                        .set_workflow_updated_at(&target.id, kind, &received_at, last_session_id)
                         .await?;
                 }
                 _ => {}
@@ -315,9 +311,14 @@ impl WorkflowCoordinator {
         }
 
         let projects = self.db.list_projects_for_summary(&target.id).await?;
+        let source_window_key = build_organization_summary_source_window_key(
+            previous_summary_updated_at.as_deref(),
+            previous_last_processed_seq,
+            summary_updated_at,
+        );
         self.dispatch_workflow(WorkflowDispatch {
             target: target.clone(),
-            input: format_organization_summary_request(&projects, &events)?,
+            input: format_organization_summary_request(&projects, &events, &source_window_key)?,
         })
         .await
     }
@@ -470,7 +471,12 @@ impl WorkflowCoordinator {
             WorkflowKind::ProjectMemoryExtract => {
                 self.pending_workflow_cursor.insert(
                     target.clone(),
-                    transcript_workflow_cursor(&transcripts, transcripts.len(), transcript_limit, &heartbeat_cutoff),
+                    transcript_workflow_cursor(
+                        &transcripts,
+                        transcripts.len(),
+                        transcript_limit,
+                        &heartbeat_cutoff,
+                    ),
                 );
                 for transcript in &transcripts {
                     self.dispatch_workflow(WorkflowDispatch {
@@ -750,7 +756,8 @@ fn transcript_workflow_cursor(
         .last()
         .expect("transcript cursor requires at least one transcript");
     let exhausted_queried_transcripts = included_transcript_count == transcripts.len();
-    let hit_limit = !exhausted_queried_transcripts || included_transcript_count as i64 == transcript_limit;
+    let hit_limit =
+        !exhausted_queried_transcripts || included_transcript_count as i64 == transcript_limit;
 
     if hit_limit {
         WorkflowCursor::ReceivedAt {
@@ -771,7 +778,10 @@ fn transcript_workflow_cursor(
 mod tests {
     use super::*;
 
-    fn sample_transcript(session_id: &str, received_at: &str) -> crate::event::OrganizationTranscript {
+    fn sample_transcript(
+        session_id: &str,
+        received_at: &str,
+    ) -> crate::event::OrganizationTranscript {
         crate::event::OrganizationTranscript {
             session_id: session_id.to_owned(),
             project_id: "PROJECT42".to_owned(),

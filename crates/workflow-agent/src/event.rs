@@ -52,6 +52,7 @@ pub(crate) fn format_project_event(
         "A new project hook event arrived.\n\
 project_id: {project_id}\n\
 project_name: {project_name}\n\
+event_id: {event_id}\n\
 member_user_id: {member_user_id}\n\
 member_name: {member_name}\n\
 client: {client}\n\
@@ -61,6 +62,7 @@ received_at: {received_at}\n\
 payload_json:\n{payload}",
         project_id = project_id,
         project_name = project_name,
+        event_id = event.event_id,
         member_user_id = event.member_user_id,
         member_name = event.member_name,
         client = event.client,
@@ -71,9 +73,25 @@ payload_json:\n{payload}",
     ))
 }
 
+pub(crate) fn build_organization_summary_source_window_key(
+    previous_summary_updated_at: Option<&str>,
+    previous_last_processed_seq: Option<i64>,
+    summary_updated_at: &str,
+) -> String {
+    let previous_summary_updated_at = previous_summary_updated_at.unwrap_or("none");
+    let previous_last_processed_seq = previous_last_processed_seq
+        .map(|seq| seq.to_string())
+        .unwrap_or_else(|| "none".to_owned());
+
+    format!(
+        "after_received_at={previous_summary_updated_at}|after_seq={previous_last_processed_seq}|cutoff={summary_updated_at}",
+    )
+}
+
 pub(crate) fn format_organization_summary_request(
     projects: &[OrganizationProject],
     events: &[OrganizationEvent],
+    source_window_key: &str,
 ) -> Result<String> {
     let projects_text = format_projects(projects);
     let events_text = if events.is_empty() {
@@ -92,9 +110,11 @@ pub(crate) fn format_organization_summary_request(
 
     Ok(format!(
         "Organization summary heartbeat fired.\n\
+source_window_key: {source_window_key}\n\
 current_projects:\n{projects}\n\
 org_events_since_previous_heartbeat:\n{events}\n\
 Tighten the organization BLUF and member BLUFs. Project BLUFs are maintained separately and should be treated as read-only context from get_snapshot.",
+        source_window_key = source_window_key,
         projects = projects_text,
         events = events_text,
     ))
@@ -105,11 +125,8 @@ pub(crate) fn format_project_memory_extract_request(
 ) -> Result<String> {
     let nonce = Uuid::new_v4();
     let transcript_without_body = format_transcript_with_body(transcript, nonce, "")?;
-    let prompt_without_body = format_project_memory_extract_prompt(
-        transcript,
-        nonce,
-        &transcript_without_body,
-    );
+    let prompt_without_body =
+        format_project_memory_extract_prompt(transcript, nonce, &transcript_without_body);
     let overhead_chars = prompt_without_body.chars().count();
     let transcript_budget = MAX_USER_INPUT_TEXT_CHARS.saturating_sub(overhead_chars);
     let transcript_body = clamp_transcript_body(&transcript.transcript_text, transcript_budget);
@@ -179,8 +196,7 @@ pub(crate) fn render_project_skills_request(
     request: ProjectSkillsRequest<'_>,
 ) -> Result<ProjectSkillsRender> {
     let nonce = Uuid::new_v4();
-    let prompt_without_transcripts =
-        format_project_skills_prompt(&request, nonce, "(none)");
+    let prompt_without_transcripts = format_project_skills_prompt(&request, nonce, "(none)");
     let prompt_overhead = prompt_without_transcripts.chars().count();
     let mut remaining_chars = MAX_USER_INPUT_TEXT_CHARS.saturating_sub(prompt_overhead);
     let mut rendered_transcripts = Vec::with_capacity(request.transcripts.len());
@@ -326,7 +342,8 @@ fn format_transcript_to_budget(
     let transcript_without_body = format_transcript_with_body(transcript, nonce, "")?;
     let transcript_overhead = transcript_without_body.chars().count();
     let transcript_body_budget = max_chars.saturating_sub(transcript_overhead);
-    let transcript_body = clamp_transcript_body(&transcript.transcript_text, transcript_body_budget);
+    let transcript_body =
+        clamp_transcript_body(&transcript.transcript_text, transcript_body_budget);
     format_transcript_with_body(transcript, nonce, &transcript_body)
 }
 
@@ -461,6 +478,7 @@ mod tests {
 
         assert!(rendered.contains("project_id: PROJECT42"));
         assert!(rendered.contains("project_name: Operations"));
+        assert!(rendered.contains(&format!("event_id: {}", Uuid::nil())));
         assert!(rendered.contains("member_user_id: user_123"));
         assert!(rendered.contains("member_name: Dana"));
         assert!(rendered.contains("branch: feature/agent"));
@@ -488,13 +506,32 @@ mod tests {
                 project_name: "Operations".to_owned(),
                 event,
             }],
+            "after_received_at=none|after_seq=none|cutoff=2026-04-03T12:05:00Z",
         )
         .unwrap();
 
         assert!(rendered.contains("Organization summary heartbeat fired."));
+        assert!(rendered.contains(
+            "source_window_key: after_received_at=none|after_seq=none|cutoff=2026-04-03T12:05:00Z"
+        ));
         assert!(rendered.contains("- PROJECT42: Operations"));
+        assert!(rendered.contains(&format!("event_id: {}", Uuid::nil())));
         assert!(rendered.contains("project_name: Operations"));
         assert!(rendered.contains("Project BLUFs are maintained separately"));
+    }
+
+    #[test]
+    fn organization_summary_source_window_key_is_deterministic() {
+        let key = build_organization_summary_source_window_key(
+            Some("2026-04-03T12:00:00Z"),
+            Some(42),
+            "2026-04-03T12:05:00Z",
+        );
+
+        assert_eq!(
+            key,
+            "after_received_at=2026-04-03T12:00:00Z|after_seq=42|cutoff=2026-04-03T12:05:00Z"
+        );
     }
 
     #[test]
@@ -524,7 +561,10 @@ mod tests {
 
     #[test]
     fn clamp_transcript_body_keeps_prefix_and_suffix() {
-        let transcript = format!("ab{}IJ", "x".repeat(TRANSCRIPT_OMISSION_NOTICE_MAX_CHARS + 32));
+        let transcript = format!(
+            "ab{}IJ",
+            "x".repeat(TRANSCRIPT_OMISSION_NOTICE_MAX_CHARS + 32)
+        );
         let clamped = clamp_transcript_body(&transcript, TRANSCRIPT_OMISSION_NOTICE_MAX_CHARS + 4);
 
         assert!(clamped.starts_with("ab"));
@@ -588,7 +628,11 @@ mod tests {
 
         assert_eq!(rendered.included_transcript_count, 1);
         assert!(rendered.input.chars().count() <= MAX_USER_INPUT_TEXT_CHARS);
-        assert!(rendered.input.contains("transcript truncated by Supermanager"));
+        assert!(
+            rendered
+                .input
+                .contains("transcript truncated by Supermanager")
+        );
         assert!(!rendered.input.contains("sess_big_2"));
     }
 

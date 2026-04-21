@@ -33,6 +33,35 @@ struct RemoveMemberBlufArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct GetRecentUpdatesArgs {
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetRecentMemberUpdatesArgs {
+    member_user_id: String,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetEventUpdatesArgs {
+    source_event_id: String,
+    #[serde(default)]
+    project_updates: Vec<String>,
+    #[serde(default)]
+    member_update: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetWindowUpdatesArgs {
+    source_window_key: String,
+    #[serde(default)]
+    updates: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct StageRawArgs {
     session_id: String,
     markdown: String,
@@ -54,17 +83,37 @@ struct DeleteSkillArgs {
     name: String,
 }
 
+#[derive(Debug)]
 pub(crate) enum SummaryTool {
     ProjectGetSnapshot,
+    GetRecentProjectUpdates {
+        limit: Option<i64>,
+    },
+    GetRecentMemberUpdates {
+        member_user_id: String,
+        limit: Option<i64>,
+    },
     SetProjectBluf {
         markdown: String,
     },
     SetProjectDetailedSummary {
         markdown: String,
     },
+    SetEventUpdates {
+        source_event_id: String,
+        project_updates: Vec<String>,
+        member_update: Option<String>,
+    },
     OrganizationGetSnapshot,
+    GetRecentOrgUpdates {
+        limit: Option<i64>,
+    },
     SetOrgBluf {
         markdown: String,
+    },
+    SetWindowUpdates {
+        source_window_key: String,
+        updates: Vec<String>,
     },
     SetMemberBluf {
         member_user_id: String,
@@ -108,6 +157,16 @@ impl SummaryTool {
                 empty_schema(),
             ),
             spec(
+                "get_recent_project_updates",
+                "Read recent project updates before deciding whether this event is important enough to record.",
+                limit_schema(),
+            ),
+            spec(
+                "get_recent_member_updates",
+                "Read recent member updates for the event actor before deciding whether to record another member-level update.",
+                member_limit_schema(),
+            ),
+            spec(
                 "set_bluf",
                 "Replace the project BLUF markdown.",
                 markdown_only_schema(),
@@ -144,6 +203,25 @@ impl SummaryTool {
                     }
                 }),
             ),
+            spec(
+                "set_event_updates",
+                "Replace the derived project/member updates for one source event. Use an empty payload to explicitly clear noisy prior updates for that event.",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["source_event_id", "project_updates"],
+                    "properties": {
+                        "source_event_id": { "type": "string" },
+                        "project_updates": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        },
+                        "member_update": {
+                            "type": ["string", "null"]
+                        }
+                    }
+                }),
+            ),
         ]
     }
 
@@ -155,9 +233,30 @@ impl SummaryTool {
                 empty_schema(),
             ),
             spec(
+                "get_recent_org_updates",
+                "Read recent organization updates before deciding whether the current heartbeat contains anything important enough to record.",
+                limit_schema(),
+            ),
+            spec(
                 "set_org_bluf",
                 "Replace the organization BLUF markdown.",
                 markdown_only_schema(),
+            ),
+            spec(
+                "set_window_updates",
+                "Replace the derived organization updates for one summary window. Use an empty payload to explicitly clear noisy prior updates for that window.",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["source_window_key", "updates"],
+                    "properties": {
+                        "source_window_key": { "type": "string" },
+                        "updates": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    }
+                }),
             ),
             spec(
                 "set_member_bluf",
@@ -296,6 +395,21 @@ impl SummaryTool {
     pub(crate) fn parse_project(params: &DynamicToolCallParams) -> Result<Self> {
         match params.tool.as_str() {
             "get_snapshot" => Ok(Self::ProjectGetSnapshot),
+            "get_recent_project_updates" => {
+                let args: GetRecentUpdatesArgs =
+                    serde_json::from_value(params.arguments.clone())
+                        .context("invalid get_recent_project_updates arguments")?;
+                Ok(Self::GetRecentProjectUpdates { limit: args.limit })
+            }
+            "get_recent_member_updates" => {
+                let args: GetRecentMemberUpdatesArgs =
+                    serde_json::from_value(params.arguments.clone())
+                        .context("invalid get_recent_member_updates arguments")?;
+                Ok(Self::GetRecentMemberUpdates {
+                    member_user_id: args.member_user_id,
+                    limit: args.limit,
+                })
+            }
             "set_bluf" => {
                 let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid set_bluf arguments")?;
@@ -329,6 +443,15 @@ impl SummaryTool {
                     member_name: args.member_name,
                 })
             }
+            "set_event_updates" => {
+                let args: SetEventUpdatesArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_event_updates arguments")?;
+                Ok(Self::SetEventUpdates {
+                    source_event_id: args.source_event_id,
+                    project_updates: args.project_updates,
+                    member_update: args.member_update,
+                })
+            }
             other => anyhow::bail!("unknown project summary tool: {other}"),
         }
     }
@@ -336,11 +459,25 @@ impl SummaryTool {
     pub(crate) fn parse_organization(params: &DynamicToolCallParams) -> Result<Self> {
         match params.tool.as_str() {
             "get_snapshot" => Ok(Self::OrganizationGetSnapshot),
+            "get_recent_org_updates" => {
+                let args: GetRecentUpdatesArgs =
+                    serde_json::from_value(params.arguments.clone())
+                        .context("invalid get_recent_org_updates arguments")?;
+                Ok(Self::GetRecentOrgUpdates { limit: args.limit })
+            }
             "set_org_bluf" => {
                 let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
                     .context("invalid set_org_bluf arguments")?;
                 Ok(Self::SetOrgBluf {
                     markdown: args.markdown,
+                })
+            }
+            "set_window_updates" => {
+                let args: SetWindowUpdatesArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_window_updates arguments")?;
+                Ok(Self::SetWindowUpdates {
+                    source_window_key: args.source_window_key,
+                    updates: args.updates,
                 })
             }
             "set_member_bluf" => {
@@ -474,6 +611,34 @@ fn empty_schema() -> Value {
     json!({ "type": "object", "additionalProperties": false, "properties": {} })
 }
 
+fn limit_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "limit": {
+                "type": "integer",
+                "minimum": 1
+            }
+        }
+    })
+}
+
+fn member_limit_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["member_user_id"],
+        "properties": {
+            "member_user_id": { "type": "string" },
+            "limit": {
+                "type": "integer",
+                "minimum": 1
+            }
+        }
+    })
+}
+
 fn markdown_only_schema() -> Value {
     json!({
         "type": "object",
@@ -523,4 +688,94 @@ fn delete_by_name_schema() -> Value {
         "required": ["name"],
         "properties": { "name": { "type": "string" } }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params(tool: &str, arguments: Value) -> DynamicToolCallParams {
+        DynamicToolCallParams {
+            call_id: "call_123".to_owned(),
+            arguments,
+            tool: tool.to_owned(),
+            thread_id: "thread_123".to_owned(),
+            turn_id: "turn_123".to_owned(),
+        }
+    }
+
+    #[test]
+    fn parse_project_updates_tool_accepts_empty_payload() {
+        let tool = SummaryTool::parse_project(&params(
+            "set_event_updates",
+            json!({
+                "source_event_id": "01234567-89ab-cdef-0123-456789abcdef",
+                "project_updates": [],
+                "member_update": null
+            }),
+        ))
+        .unwrap();
+
+        match tool {
+            SummaryTool::SetEventUpdates {
+                source_event_id,
+                project_updates,
+                member_update,
+            } => {
+                assert_eq!(source_event_id, "01234567-89ab-cdef-0123-456789abcdef");
+                assert!(project_updates.is_empty());
+                assert!(member_update.is_none());
+            }
+            other => panic!("unexpected tool: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_project_recent_member_updates_tool_reads_limit() {
+        let tool = SummaryTool::parse_project(&params(
+            "get_recent_member_updates",
+            json!({
+                "member_user_id": "user_123",
+                "limit": 7
+            }),
+        ))
+        .unwrap();
+
+        match tool {
+            SummaryTool::GetRecentMemberUpdates {
+                member_user_id,
+                limit,
+            } => {
+                assert_eq!(member_user_id, "user_123");
+                assert_eq!(limit, Some(7));
+            }
+            other => panic!("unexpected tool: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_org_updates_tool_accepts_multiple_updates() {
+        let tool = SummaryTool::parse_organization(&params(
+            "set_window_updates",
+            json!({
+                "source_window_key": "after_received_at=none|after_seq=none|cutoff=2026-04-03T12:05:00Z",
+                "updates": ["Frontend unblock landed", "Auth rollout paused on migration risk"]
+            }),
+        ))
+        .unwrap();
+
+        match tool {
+            SummaryTool::SetWindowUpdates {
+                source_window_key,
+                updates,
+            } => {
+                assert_eq!(
+                    source_window_key,
+                    "after_received_at=none|after_seq=none|cutoff=2026-04-03T12:05:00Z"
+                );
+                assert_eq!(updates.len(), 2);
+            }
+            other => panic!("unexpected tool: {other:?}"),
+        }
+    }
 }

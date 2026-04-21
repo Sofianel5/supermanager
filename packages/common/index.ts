@@ -9,6 +9,8 @@ export type {
   UploadedTranscript,
 } from "./api-protocol";
 export type {
+  ActivityUpdate,
+  ActivityUpdatesResponse,
   OrganizationMembership,
   OrganizationSummaryResponse,
   ProjectListEntry,

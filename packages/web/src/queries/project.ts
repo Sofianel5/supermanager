@@ -1,5 +1,6 @@
 import { type InfiniteData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api, type FeedResponse } from "../api";
+import { ACTIVITY_LIMIT, projectUpdatesQueryOptions } from "./activity";
 
 export const FEED_LIMIT = 10;
 
@@ -16,6 +17,13 @@ export function useProjectData(projectId: string) {
     enabled: Boolean(projectId),
     ...projectSummaryQueryOptions(projectId),
     staleTime: PROJECT_STALE_TIME_MS,
+  });
+
+  const updatesQuery = useQuery({
+    enabled: Boolean(projectId),
+    ...projectUpdatesQueryOptions(projectId, ACTIVITY_LIMIT),
+    refetchInterval: 15_000,
+    staleTime: 15_000,
   });
 
   const feedQuery = useInfiniteQuery<
@@ -47,6 +55,7 @@ export function useProjectData(projectId: string) {
     feedQuery,
     projectQuery,
     summaryQuery,
+    updatesQuery,
   };
 }
 

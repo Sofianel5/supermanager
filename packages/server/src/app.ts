@@ -24,12 +24,19 @@ import { formatError } from "./types";
 const DEFAULT_PUBLIC_API_URL = "https://api.supermanager.dev";
 const FEED_PAGE_DEFAULT = 10;
 const FEED_PAGE_MAX = 100;
+const ACTIVITY_PAGE_DEFAULT = 10;
+const ACTIVITY_PAGE_MAX = 50;
 
 const projectParams = t.Object({
   projectId: t.String(),
 });
 
 const organizationParams = t.Object({
+  organizationSlug: t.String(),
+});
+
+const organizationMemberParams = t.Object({
+  memberUserId: t.String(),
   organizationSlug: t.String(),
 });
 
@@ -49,6 +56,10 @@ const listProjectsQuery = t.Object({
 
 const feedQuery = t.Object({
   before: t.Optional(t.Numeric()),
+  limit: t.Optional(t.Numeric()),
+});
+
+const activityQuery = t.Object({
   limit: t.Optional(t.Numeric()),
 });
 
@@ -266,6 +277,53 @@ export function createApp(context: AppContext) {
       },
     )
     .get(
+      "/v1/organizations/:organizationSlug/updates",
+      async ({ params, query, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          params.organizationSlug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+
+        return {
+          updates: await context.db.getOrganizationUpdates(
+            membership.organization_id,
+            clampLimit(query.limit, ACTIVITY_PAGE_DEFAULT, ACTIVITY_PAGE_MAX),
+          ),
+        };
+      },
+      {
+        params: organizationParams,
+        query: activityQuery,
+      },
+    )
+    .get(
+      "/v1/organizations/:organizationSlug/members/:memberUserId/updates",
+      async ({ params, query, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          params.organizationSlug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+
+        return {
+          updates: await context.db.getMemberUpdates(
+            membership.organization_id,
+            params.memberUserId.trim(),
+            clampLimit(query.limit, ACTIVITY_PAGE_DEFAULT, ACTIVITY_PAGE_MAX),
+          ),
+        };
+      },
+      {
+        params: organizationMemberParams,
+        query: activityQuery,
+      },
+    )
+    .get(
       "/v1/organizations/:organizationSlug/memories",
       async ({ params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
@@ -357,6 +415,28 @@ export function createApp(context: AppContext) {
       {
         params: projectParams,
         query: feedQuery,
+      },
+    )
+    .get(
+      "/v1/projects/:projectId/updates",
+      async ({ params, query, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const project = await requireProjectAccess(
+          context.db,
+          viewer.user.id,
+          params.projectId,
+        );
+
+        return {
+          updates: await context.db.getProjectUpdates(
+            project.project_id,
+            clampLimit(query.limit, ACTIVITY_PAGE_DEFAULT, ACTIVITY_PAGE_MAX),
+          ),
+        };
+      },
+      {
+        params: projectParams,
+        query: activityQuery,
       },
     )
     .get(
@@ -531,9 +611,13 @@ export function createApp(context: AppContext) {
     );
 }
 
-function clampLimit(value: number | undefined): number {
-  const limit = value ?? FEED_PAGE_DEFAULT;
-  return Math.min(Math.max(limit, 1), FEED_PAGE_MAX);
+function clampLimit(
+  value: number | undefined,
+  defaultLimit: number = FEED_PAGE_DEFAULT,
+  maxLimit: number = FEED_PAGE_MAX,
+): number {
+  const limit = value ?? defaultLimit;
+  return Math.min(Math.max(limit, 1), maxLimit);
 }
 
 function dashboardUrl(appUrl: string, projectId: string): string {

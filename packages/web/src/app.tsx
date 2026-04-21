@@ -33,6 +33,14 @@ export function App() {
           }
         />
         <Route
+          path="/app/activity"
+          element={
+            <RequireSession>
+              <AppPage view="activity" />
+            </RequireSession>
+          }
+        />
+        <Route
           path="/app/knowledge"
           element={
             <RequireSession>
@@ -53,7 +61,15 @@ export function App() {
           path="/m/:memberId"
           element={
             <RequireSession>
-              <MemberPage />
+              <MemberPage view="overview" />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/m/:memberId/activity"
+          element={
+            <RequireSession>
+              <MemberPage view="activity" />
             </RequireSession>
           }
         />

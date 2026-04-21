@@ -6,6 +6,15 @@ import type {
   SummaryStatus,
 } from "../summary-protocol";
 
+export interface ActivityUpdate {
+  created_at: string;
+  statement_text: string;
+}
+
+export interface ActivityUpdatesResponse {
+  updates: ActivityUpdate[];
+}
+
 export interface ProjectSummaryResponse {
   last_processed_seq: number;
   status: SummaryStatus;
