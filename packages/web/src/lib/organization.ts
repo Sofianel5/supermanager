@@ -2,16 +2,31 @@ export function buildOrganizationHref(organizationSlug: string | null) {
   return buildOrganizationSectionHref("/app", organizationSlug);
 }
 
-export function buildOrganizationInsightsHref(organizationSlug: string | null) {
-  return buildOrganizationSectionHref("/app/insights", organizationSlug);
+export function buildOrganizationMembersHref(organizationSlug: string | null) {
+  return buildOrganizationSectionHref("/app/members", organizationSlug);
 }
 
-export function buildOrganizationMemoriesHref(organizationSlug: string | null) {
-  return buildOrganizationSectionHref("/app/memories", organizationSlug);
+export function buildOrganizationKnowledgeHref(organizationSlug: string | null) {
+  return buildOrganizationSectionHref("/app/knowledge", organizationSlug);
 }
 
-export function buildOrganizationSkillsHref(organizationSlug: string | null) {
-  return buildOrganizationSectionHref("/app/skills", organizationSlug);
+export function buildMemberHref(
+  memberUserId: string,
+  organizationSlug: string | null,
+) {
+  return buildOrganizationSectionHref(`/m/${memberUserId}`, organizationSlug);
+}
+
+export function buildProjectHref(projectId: string) {
+  return `/p/${projectId}`;
+}
+
+export function buildProjectMembersHref(projectId: string) {
+  return `/p/${projectId}/members`;
+}
+
+export function buildProjectKnowledgeHref(projectId: string) {
+  return `/p/${projectId}/knowledge`;
 }
 
 export function formatOrganizationLabel(

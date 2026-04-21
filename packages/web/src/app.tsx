@@ -5,6 +5,7 @@ import { AppPage } from "./routes/app-page";
 import { DocsPage } from "./routes/docs-page";
 import { LandingPage } from "./routes/landing-page";
 import { LoginPage } from "./routes/login-page";
+import { MemberPage } from "./routes/member-page";
 import { ProjectPage } from "./routes/project-page";
 import { centeredShellClass, sectionLabelClass, statusBlockClass } from "./ui";
 
@@ -24,26 +25,35 @@ export function App() {
           }
         />
         <Route
-          path="/app/insights"
+          path="/app/members"
           element={
             <RequireSession>
-              <AppPage view="insights" />
+              <AppPage view="members" />
             </RequireSession>
           }
         />
         <Route
-          path="/app/memories"
+          path="/app/knowledge"
           element={
             <RequireSession>
-              <AppPage view="memories" />
+              <AppPage view="knowledge" />
             </RequireSession>
           }
+        />
+        <Route path="/app/insights" element={<RedirectPreserveQuery to="/app" />} />
+        <Route
+          path="/app/memories"
+          element={<RedirectPreserveQuery to="/app/knowledge" />}
         />
         <Route
           path="/app/skills"
+          element={<RedirectPreserveQuery to="/app/knowledge" />}
+        />
+        <Route
+          path="/m/:memberId"
           element={
             <RequireSession>
-              <AppPage view="skills" />
+              <MemberPage />
             </RequireSession>
           }
         />
@@ -51,7 +61,23 @@ export function App() {
           path="/p/:projectId"
           element={
             <RequireSession>
-              <ProjectPage />
+              <ProjectPage view="activity" />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/p/:projectId/members"
+          element={
+            <RequireSession>
+              <ProjectPage view="members" />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/p/:projectId/knowledge"
+          element={
+            <RequireSession>
+              <ProjectPage view="knowledge" />
             </RequireSession>
           }
         />
@@ -91,4 +117,9 @@ function RequireSession({ children }: { children: ReactNode }) {
   }
 
   return children;
+}
+
+function RedirectPreserveQuery({ to }: { to: string }) {
+  const location = useLocation();
+  return <Navigate replace to={`${to}${location.search}`} />;
 }

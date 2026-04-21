@@ -2,15 +2,21 @@ import { type InfiniteData, useQuery, useQueryClient } from "@tanstack/react-que
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { MarkdownBlock } from "../components/markdown-block";
+import { MemberAvatar } from "../components/member-avatar";
 import { displayMemberName } from "../lib/display-member-name";
 import { formatRelativeTime } from "../lib/format-relative-time";
 import {
   buildOrganizationHref,
+  buildOrganizationKnowledgeHref,
+  buildProjectHref,
+  buildProjectKnowledgeHref,
+  buildProjectMembersHref,
   formatOrganizationLabel,
 } from "../lib/organization";
 import {
   api,
   type FeedResponse,
+  type MemberSnapshot,
   type ProjectSnapshot,
   type ProjectSummaryResponse,
   type StoredHookEvent,
@@ -18,6 +24,7 @@ import {
 } from "../api";
 import { CopyPanel } from "../components/copy-panel";
 import { DropdownButton } from "../components/dropdown-button";
+import { InnerTabNav, type InnerTabItem } from "../components/inner-tab-nav";
 import {
   FEED_LIMIT,
   projectFeedQueryKey,
@@ -46,7 +53,13 @@ type FeedMessageKind = "model" | "update" | "user";
 const FEED_MESSAGE_PREVIEW_LENGTH = 320;
 const FEED_FILE_PREVIEW_LIMIT = 4;
 
-export function ProjectPage() {
+export type ProjectPageView = "activity" | "members" | "knowledge";
+
+interface ProjectPageProps {
+  view?: ProjectPageView;
+}
+
+export function ProjectPage({ view = "activity" }: ProjectPageProps) {
   const { projectId = "" } = useParams();
   const queryClient = useQueryClient();
   const [connectionStatus, setConnectionStatus] =
@@ -261,7 +274,7 @@ export function ProjectPage() {
         </div>
       </header>
 
-      <section className="mt-7 grid gap-5">
+      <section className="mt-7">
         <div className={cx(surfaceClass, "p-[22px]")}>
           <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <span className={sectionLabelClass}>Summary</span>
@@ -270,48 +283,211 @@ export function ProjectPage() {
             </span>
           </div>
           <SummaryContent
-            clock={clock}
             errorMessage={summaryError}
             snapshot={snapshot}
             summaryStatus={summaryStatus}
           />
         </div>
+      </section>
 
-        <div className={cx(surfaceClass, "p-[22px]")}>
-          <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <span className={sectionLabelClass}>Raw feed</span>
-            <span className={`${pillBaseClass} border-border text-ink-dim`}>
-              {totalEventCount} update{totalEventCount === 1 ? "" : "s"}
-            </span>
-          </div>
+      <InnerTabNav
+        activeId={view}
+        ariaLabel="Project sections"
+        items={buildProjectTabs(projectId, snapshot, totalEventCount)}
+      />
 
-          <div className="grid gap-3.5">
-            {events.length > 0 ? (
-              events.map((event) => (
-                <RawFeedEvent clock={clock} event={event} key={event.event_id} />
-              ))
-            ) : (
-              <p className={messageClass}>No hook updates have landed yet.</p>
-            )}
-          </div>
+      {view === "members" ? (
+        <ProjectMembersTab clock={clock} members={snapshot.members} />
+      ) : view === "knowledge" ? (
+        <ProjectKnowledgeTab
+          organizationSlug={project?.organization_slug ?? null}
+        />
+      ) : (
+        <ProjectActivityTab
+          clock={clock}
+          events={events}
+          feedError={feedError}
+          fetchingMore={feedQuery.isFetchingNextPage}
+          hasMore={feedQuery.hasNextPage ?? false}
+          onLoadMore={() => void feedQuery.fetchNextPage()}
+          totalEventCount={totalEventCount}
+        />
+      )}
+    </main>
+  );
+}
 
-          {feedError && (
-            <p className="mt-4 text-[0.95rem] leading-7 text-danger">{feedError}</p>
-          )}
+function buildProjectTabs(
+  projectId: string,
+  snapshot: ProjectSnapshot,
+  totalEventCount: number,
+): Array<InnerTabItem<ProjectPageView>> {
+  return [
+    {
+      id: "activity",
+      label: "Activity",
+      to: buildProjectHref(projectId),
+      count: totalEventCount || undefined,
+    },
+    {
+      id: "members",
+      label: "Members",
+      to: buildProjectMembersHref(projectId),
+      count: snapshot.members.length || undefined,
+    },
+    {
+      id: "knowledge",
+      label: "Knowledge",
+      to: buildProjectKnowledgeHref(projectId),
+    },
+  ];
+}
 
-          {feedQuery.hasNextPage && (
-            <button
-              className={cx(secondaryButtonClass, "mt-4")}
-              type="button"
-              disabled={feedQuery.isFetchingNextPage}
-              onClick={() => void feedQuery.fetchNextPage()}
-            >
-              {feedQuery.isFetchingNextPage ? "Loading..." : `Show ${FEED_LIMIT} more`}
-            </button>
+function ProjectActivityTab({
+  clock,
+  events,
+  feedError,
+  fetchingMore,
+  hasMore,
+  onLoadMore,
+  totalEventCount,
+}: {
+  clock: number;
+  events: StoredHookEvent[];
+  feedError: string | null;
+  fetchingMore: boolean;
+  hasMore: boolean;
+  onLoadMore(): void;
+  totalEventCount: number;
+}) {
+  return (
+    <section className="mt-7">
+      <div className={cx(surfaceClass, "p-[22px]")}>
+        <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <span className={sectionLabelClass}>Activity</span>
+          <span className={`${pillBaseClass} border-border text-ink-dim`}>
+            {totalEventCount} update{totalEventCount === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        <div className="grid gap-3.5">
+          {events.length > 0 ? (
+            events.map((event) => (
+              <RawFeedEvent clock={clock} event={event} key={event.event_id} />
+            ))
+          ) : (
+            <p className={messageClass}>No hook updates have landed yet.</p>
           )}
         </div>
-      </section>
-    </main>
+
+        {feedError && (
+          <p className="mt-4 text-[0.95rem] leading-7 text-danger">{feedError}</p>
+        )}
+
+        {hasMore && (
+          <button
+            className={cx(secondaryButtonClass, "mt-4")}
+            type="button"
+            disabled={fetchingMore}
+            onClick={onLoadMore}
+          >
+            {fetchingMore ? "Loading..." : `Show ${FEED_LIMIT} more`}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ProjectMembersTab({
+  clock,
+  members,
+}: {
+  clock: number;
+  members: MemberSnapshot[];
+}) {
+  return (
+    <section className="mt-7">
+      <div className={cx(surfaceClass, "p-[22px]")}>
+        <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <span className={sectionLabelClass}>Members</span>
+          <span className={`${pillBaseClass} border-border text-ink-dim`}>
+            {members.length} card{members.length === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        {members.length > 0 ? (
+          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
+            {members.map((member) => (
+              <ProjectMemberCard
+                clock={clock}
+                key={member.member_user_id}
+                member={member}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className={messageClass}>
+            No member cards yet. Members appear here once the workflow ingests
+            activity from each teammate.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ProjectMemberCard({
+  clock,
+  member,
+}: {
+  clock: number;
+  member: MemberSnapshot;
+}) {
+  const memberName = displayMemberName(member.member_name);
+  return (
+    <article className="border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px]">
+      <div className="mb-3.5 flex items-start gap-3">
+        <MemberAvatar name={memberName} size="sm" />
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <h3 className="m-0 truncate text-[1.02rem] font-semibold text-ink">
+            {memberName}
+          </h3>
+          <time
+            className="font-mono text-[0.72rem] text-ink-muted"
+            dateTime={member.last_update_at}
+          >
+            {formatRelativeTime(member.last_update_at, clock)}
+          </time>
+        </div>
+      </div>
+      <MarkdownBlock markdown={member.bluf_markdown} />
+    </article>
+  );
+}
+
+function ProjectKnowledgeTab({
+  organizationSlug,
+}: {
+  organizationSlug: string | null;
+}) {
+  return (
+    <section className="mt-7">
+      <div className={cx(subduedSurfaceClass, "grid gap-3 p-[22px]")}>
+        <span className={sectionLabelClass}>Knowledge</span>
+        <p className={messageClass}>
+          Memories and skills are managed at the organization level so every
+          project benefits from them. Head to the organization Knowledge tab to
+          browse or edit them.
+        </p>
+        <Link
+          className={cx(secondaryButtonClass, "w-fit")}
+          to={buildOrganizationKnowledgeHref(organizationSlug)}
+        >
+          Open organization knowledge
+        </Link>
+      </div>
+    </section>
   );
 }
 
@@ -478,12 +654,10 @@ function RawFeedEvent({
 }
 
 function SummaryContent({
-  clock,
   errorMessage,
   snapshot,
   summaryStatus,
 }: {
-  clock: number;
   errorMessage: string | null;
   snapshot: ProjectSnapshot;
   summaryStatus: UiSummaryStatus;
@@ -550,43 +724,6 @@ function SummaryContent({
           )}
         </div>
       </details>
-
-      <section className={cx(subduedSurfaceClass, "p-[18px]")}>
-        <div className="mb-[18px] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <span className="inline-flex font-mono text-[11px] font-semibold uppercase text-accent">
-            Members
-          </span>
-          <span className={`${pillBaseClass} border-border text-ink-dim`}>
-            {snapshot.members.length} card{snapshot.members.length === 1 ? "" : "s"}
-          </span>
-        </div>
-
-        {snapshot.members.length > 0 ? (
-          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
-            {snapshot.members.map((member) => (
-              <article
-                className="border border-border bg-[linear-gradient(180deg,rgba(16,23,34,0.82),rgba(8,12,19,0.94))] p-[18px]"
-                key={memberSummaryKey(member)}
-              >
-                <div className="mb-3.5 flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
-                  <h3 className="m-0 text-[1.05rem] font-semibold text-ink">
-                    {displayMemberName(member.member_name)}
-                  </h3>
-                  <time
-                    className="font-mono text-[0.72rem] text-ink-muted"
-                    dateTime={member.last_update_at}
-                  >
-                    {formatRelativeTime(member.last_update_at, clock)}
-                  </time>
-                </div>
-                <MarkdownBlock markdown={member.bluf_markdown} />
-              </article>
-            ))}
-          </div>
-        ) : (
-          <p className={messageClass}>No member cards yet.</p>
-        )}
-      </section>
     </div>
   );
 }
@@ -613,13 +750,6 @@ function hasSnapshotContent(snapshot: ProjectSnapshot) {
       snapshot.detailed_summary_markdown.trim() ||
       snapshot.members.some((member) => member.bluf_markdown.trim()),
   );
-}
-
-function memberSummaryKey(member: {
-  member_name: string;
-  member_user_id: string;
-}) {
-  return member.member_user_id;
 }
 
 function getSummaryStatus(
