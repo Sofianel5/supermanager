@@ -3,7 +3,7 @@ export function cx(...values: Array<string | false | null | undefined>) {
 }
 
 export const pageShellClass =
-  "relative z-10 mx-auto w-[min(1180px,calc(100vw-40px))] pb-[72px] pt-9 max-[900px]:w-[min(1180px,calc(100vw-28px))] max-[900px]:pt-[18px] max-[640px]:w-[min(1180px,calc(100vw-20px))] max-[640px]:pb-10";
+  "relative z-10 mx-auto w-full max-w-[1180px] px-5 pb-[72px] pt-9 max-[900px]:px-[14px] max-[900px]:pt-[18px] max-[640px]:px-[10px] max-[640px]:pb-10";
 
 export const centeredShellClass = `${pageShellClass} flex min-h-screen items-center justify-center`;
 

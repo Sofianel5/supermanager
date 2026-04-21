@@ -310,7 +310,6 @@ export function AppPage({ view = "projects" }: AppPageProps) {
               isLoading={isLoading}
               members={memberSnapshots}
               organizationSlug={organizationSlug}
-              projects={projects}
             />
           ) : view === "knowledge" ? (
             <OrganizationKnowledgePanel
