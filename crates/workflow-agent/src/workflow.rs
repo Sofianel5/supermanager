@@ -94,6 +94,10 @@ impl WorkflowKind {
         SUMMARY_MODEL
     }
 
+    pub(crate) fn supports_turn_steering(self) -> bool {
+        matches!(self, Self::ProjectSummary | Self::OrganizationSummary)
+    }
+
     pub(crate) fn sandbox(self) -> SandboxMode {
         SandboxMode::ReadOnly
     }

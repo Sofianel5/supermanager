@@ -230,7 +230,9 @@ impl AgentLoop {
             .get(target)
             .and_then(|state| state.active_turn.clone());
 
-        if let Some(turn_id) = active_turn {
+        if target.kind.supports_turn_steering()
+            && let Some(turn_id) = active_turn
+        {
             let request_id = self.next_request_id();
             match self
                 .client
@@ -342,12 +344,17 @@ impl AgentLoop {
     }
 
     async fn ensure_thread(&mut self, target: &WorkflowTarget) -> Result<String> {
-        if let Some(thread_id) = self
-            .targets
-            .get(target)
-            .and_then(|state| state.thread_id.clone())
+        if let Some(state) = self.targets.get(target)
+            && let Some(thread_id) = state.thread_id.clone()
         {
-            return Ok(thread_id);
+            if state.active_turn.is_none() || target.kind.supports_turn_steering() {
+                return Ok(thread_id);
+            }
+
+            eprintln!(
+                "[workflow-agent] workflow turn still active for {}. Creating a fresh thread instead of steering.",
+                target.label(),
+            );
         }
 
         let target_dir = self.workflow_paths.thread_state_dir(target);
@@ -393,7 +400,16 @@ impl AgentLoop {
             match self.resume_thread(&thread_id, &cwd_str, target.kind).await {
                 Ok(response) => {
                     let active_turn = active_turn_id(&response.thread);
-                    (response.thread.id, active_turn)
+                    if active_turn.is_some() && !target.kind.supports_turn_steering() {
+                        eprintln!(
+                            "[workflow-agent] resumed active workflow turn for {} on thread {}. Creating a fresh thread instead of reusing it.",
+                            target.label(),
+                            response.thread.id,
+                        );
+                        (self.create_thread(target.kind, &cwd_str).await?, None)
+                    } else {
+                        (response.thread.id, active_turn)
+                    }
                 }
                 Err(error) => {
                     eprintln!(
@@ -910,5 +926,16 @@ mod tests {
                 source_window_key: "window-123".to_owned(),
             }),
         );
+    }
+
+    #[test]
+    fn only_summary_workflows_support_turn_steering() {
+        assert!(WorkflowKind::ProjectSummary.supports_turn_steering());
+        assert!(WorkflowKind::OrganizationSummary.supports_turn_steering());
+        assert!(!WorkflowKind::ProjectMemoryExtract.supports_turn_steering());
+        assert!(!WorkflowKind::ProjectMemoryConsolidate.supports_turn_steering());
+        assert!(!WorkflowKind::ProjectSkills.supports_turn_steering());
+        assert!(!WorkflowKind::OrganizationMemoryConsolidate.supports_turn_steering());
+        assert!(!WorkflowKind::OrganizationSkills.supports_turn_steering());
     }
 }
