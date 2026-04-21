@@ -9,14 +9,19 @@ use tokio::{
 
 use crate::{
     agent::{AgentCommand, AgentEvent},
-    db::{OrganizationSummaryQueryOptions, ProjectSummaryQueryOptions, SummaryDb, now_rfc3339},
+    db::{
+        OrganizationSummaryQueryOptions, OrganizationWorkflowQueryOptions,
+        ProjectSummaryQueryOptions, SummaryDb, now_rfc3339,
+    },
     event::{
         ProjectSkillsRequest, format_organization_memory_consolidate_request,
         format_organization_skills_request, format_organization_summary_request,
         format_project_event, format_project_memory_consolidate_request,
         format_project_memory_extract_request, format_project_skills_request,
     },
-    workflow::{WorkflowCursor, WorkflowDispatch, WorkflowKind, WorkflowTarget},
+    workflow::{
+        WorkflowCursor, WorkflowCursorSecondary, WorkflowDispatch, WorkflowKind, WorkflowTarget,
+    },
 };
 
 const ORGANIZATION_SUMMARY_EVENT_LIMIT: i64 = 500;
@@ -154,9 +159,19 @@ impl WorkflowCoordinator {
             && let Some(cursor) = self.pending_workflow_cursor.get(target).cloned()
         {
             match (target.kind, cursor) {
-                (WorkflowKind::OrganizationSummary, WorkflowCursor::ReceivedAt(updated_at)) => {
+                (
+                    WorkflowKind::OrganizationSummary,
+                    WorkflowCursor::ReceivedAt {
+                        received_at,
+                        secondary,
+                    },
+                ) => {
+                    let last_seq = match secondary {
+                        Some(WorkflowCursorSecondary::Seq(seq)) => Some(seq),
+                        Some(WorkflowCursorSecondary::SessionId(_)) | None => None,
+                    };
                     self.db
-                        .set_organization_summary_updated_at(&target.id, &updated_at)
+                        .set_organization_summary_updated_at(&target.id, &received_at, last_seq)
                         .await?;
                 }
                 (WorkflowKind::ProjectSummary, WorkflowCursor::Seq(last_processed_seq)) => {
@@ -164,9 +179,26 @@ impl WorkflowCoordinator {
                         .set_project_summary_last_processed_seq(&target.id, last_processed_seq)
                         .await?;
                 }
-                (kind, WorkflowCursor::ReceivedAt(updated_at)) => {
+                (
+                    kind,
+                    WorkflowCursor::ReceivedAt {
+                        received_at,
+                        secondary,
+                    },
+                ) => {
+                    let last_session_id = match &secondary {
+                        Some(WorkflowCursorSecondary::SessionId(session_id)) => {
+                            Some(session_id.as_str())
+                        }
+                        Some(WorkflowCursorSecondary::Seq(_)) | None => None,
+                    };
                     self.db
-                        .set_workflow_updated_at(&target.id, kind, &updated_at)
+                        .set_workflow_updated_at(
+                            &target.id,
+                            kind,
+                            &received_at,
+                            last_session_id,
+                        )
                         .await?;
                 }
                 _ => {}
@@ -217,7 +249,11 @@ impl WorkflowCoordinator {
             };
 
             if let Err(error) = self
-                .enqueue_organization_summary(&target, claim.previous_summary_updated_at)
+                .enqueue_organization_summary(
+                    &target,
+                    claim.previous_summary_updated_at,
+                    claim.previous_last_processed_seq,
+                )
                 .await
             {
                 self.mark_error(&target, "enqueue", &error).await;
@@ -232,6 +268,7 @@ impl WorkflowCoordinator {
         &mut self,
         target: &WorkflowTarget,
         previous_summary_updated_at: Option<String>,
+        previous_last_processed_seq: Option<i64>,
     ) -> Result<()> {
         let heartbeat_cutoff = now_rfc3339()?;
         let events = self
@@ -240,13 +277,14 @@ impl WorkflowCoordinator {
                 &target.id,
                 OrganizationSummaryQueryOptions {
                     after_received_at: previous_summary_updated_at,
+                    after_seq: previous_last_processed_seq,
                     before_received_at: Some(heartbeat_cutoff.clone()),
                     limit: Some(ORGANIZATION_SUMMARY_EVENT_LIMIT),
                 },
             )
             .await?;
 
-        let summary_updated_at = received_at_workflow_cutoff(
+        let (summary_updated_at, at_limit) = received_at_workflow_cutoff(
             &events
                 .iter()
                 .map(|event| event.event.received_at.as_str())
@@ -254,9 +292,19 @@ impl WorkflowCoordinator {
             ORGANIZATION_SUMMARY_EVENT_LIMIT,
             &heartbeat_cutoff,
         );
+        let secondary = if at_limit {
+            events
+                .last()
+                .map(|event| WorkflowCursorSecondary::Seq(event.event.seq))
+        } else {
+            None
+        };
         self.pending_workflow_cursor.insert(
             target.clone(),
-            WorkflowCursor::ReceivedAt(summary_updated_at.to_owned()),
+            WorkflowCursor::ReceivedAt {
+                received_at: summary_updated_at.to_owned(),
+                secondary,
+            },
         );
 
         if events.is_empty() {
@@ -373,6 +421,7 @@ impl WorkflowCoordinator {
                     &target,
                     &project.name,
                     claim.previous_processed_received_at,
+                    claim.previous_last_processed_session_id,
                 )
                 .await
             {
@@ -389,21 +438,23 @@ impl WorkflowCoordinator {
         target: &WorkflowTarget,
         project_name: &str,
         previous_processed_received_at: Option<String>,
+        previous_last_processed_session_id: Option<String>,
     ) -> Result<()> {
         let heartbeat_cutoff = now_rfc3339()?;
         let transcripts = self
             .db
             .query_project_transcripts_for_workflow(
                 &target.id,
-                OrganizationSummaryQueryOptions {
+                OrganizationWorkflowQueryOptions {
                     after_received_at: previous_processed_received_at.clone(),
+                    after_session_id: previous_last_processed_session_id,
                     before_received_at: Some(heartbeat_cutoff.clone()),
                     limit: Some(PROJECT_TRANSCRIPT_LIMIT),
                 },
             )
             .await?;
 
-        let updated_at = received_at_workflow_cutoff(
+        let (updated_at, at_limit) = received_at_workflow_cutoff(
             &transcripts
                 .iter()
                 .map(|transcript| transcript.received_at.as_str())
@@ -411,9 +462,19 @@ impl WorkflowCoordinator {
             PROJECT_TRANSCRIPT_LIMIT,
             &heartbeat_cutoff,
         );
+        let secondary = if at_limit {
+            transcripts
+                .last()
+                .map(|transcript| WorkflowCursorSecondary::SessionId(transcript.session_id.clone()))
+        } else {
+            None
+        };
         self.pending_workflow_cursor.insert(
             target.clone(),
-            WorkflowCursor::ReceivedAt(updated_at.to_owned()),
+            WorkflowCursor::ReceivedAt {
+                received_at: updated_at.to_owned(),
+                secondary,
+            },
         );
 
         if transcripts.is_empty() {
@@ -483,7 +544,10 @@ impl WorkflowCoordinator {
 
             self.pending_workflow_cursor.insert(
                 target.clone(),
-                WorkflowCursor::ReceivedAt(heartbeat_cutoff.clone()),
+                WorkflowCursor::ReceivedAt {
+                    received_at: heartbeat_cutoff.clone(),
+                    secondary: None,
+                },
             );
 
             let org_project = crate::event::OrganizationProject {
@@ -548,7 +612,10 @@ impl WorkflowCoordinator {
 
             self.pending_workflow_cursor.insert(
                 target.clone(),
-                WorkflowCursor::ReceivedAt(heartbeat_cutoff.clone()),
+                WorkflowCursor::ReceivedAt {
+                    received_at: heartbeat_cutoff.clone(),
+                    secondary: None,
+                },
             );
 
             let projects = match self.db.list_projects_for_summary(&target.id).await {
@@ -653,15 +720,23 @@ async fn wait_for_interval(interval: &mut Option<Interval>) {
     }
 }
 
+/// Returns the cursor `received_at` to persist for the next sweep, plus a
+/// flag indicating whether the batch hit its row limit at that timestamp. The
+/// caller uses the flag to decide whether a secondary tiebreaker (seq /
+/// session_id) is also required so that rows sharing the same `received_at`
+/// don't get dropped on the next iteration.
 fn received_at_workflow_cutoff<'a>(
     received_ats: &[&'a str],
     limit: i64,
     heartbeat_cutoff: &'a str,
-) -> &'a str {
+) -> (&'a str, bool) {
     if received_ats.len() as i64 == limit {
-        received_ats.last().copied().unwrap_or(heartbeat_cutoff)
+        (
+            received_ats.last().copied().unwrap_or(heartbeat_cutoff),
+            true,
+        )
     } else {
-        heartbeat_cutoff
+        (heartbeat_cutoff, false)
     }
 }
 
@@ -673,19 +748,19 @@ mod tests {
     fn empty_received_at_batch_uses_heartbeat_cutoff() {
         assert_eq!(
             received_at_workflow_cutoff(&[], 10, "2026-04-17T12:00:00Z"),
-            "2026-04-17T12:00:00Z"
+            ("2026-04-17T12:00:00Z", false)
         );
     }
 
     #[test]
-    fn batch_at_limit_uses_last_item_received_at() {
+    fn batch_at_limit_uses_last_item_received_at_and_flags_at_limit() {
         assert_eq!(
             received_at_workflow_cutoff(
                 &["2026-04-17T11:59:58Z", "2026-04-17T11:59:59Z"],
                 2,
                 "2026-04-17T12:00:00Z",
             ),
-            "2026-04-17T11:59:59Z"
+            ("2026-04-17T11:59:59Z", true)
         );
     }
 
@@ -693,7 +768,7 @@ mod tests {
     fn batch_below_limit_uses_heartbeat_cutoff() {
         assert_eq!(
             received_at_workflow_cutoff(&["2026-04-17T11:59:58Z"], 2, "2026-04-17T12:00:00Z",),
-            "2026-04-17T12:00:00Z"
+            ("2026-04-17T12:00:00Z", false)
         );
     }
 }

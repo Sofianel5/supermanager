@@ -126,6 +126,9 @@ pub(crate) fn prune_cached_context_after_leave(
         }
     }
 
+    let claude_outcome = rebuild_claude_imports(home_dir)?;
+    removed_paths.extend(claude_outcome.removed_paths);
+
     removed_paths.extend(rebuild_codex_memory_extension(home_dir)?.removed_paths);
     Ok(removed_paths)
 }
@@ -171,15 +174,13 @@ fn ensure_context_surfaces(
     }
 
     let mut file_updates = Vec::new();
-    let claude_path = repo_dir.join(CLAUDE_PROJECT_MEMORY);
-    let claude_status = upsert_claude_imports(
-        &claude_path,
-        &[&cache_paths.memories_path, &cache_paths.skills_path],
-    )?;
-    file_updates.push(ConfigFileUpdate {
-        path: claude_path.display().to_string(),
-        status: claude_status,
-    });
+
+    // Strip any legacy supermanager block from <repo>/CLAUDE.md left behind by
+    // earlier versions that wrote per-repo imports.
+    let _ = remove_claude_import_block(&repo_dir.join(CLAUDE_PROJECT_MEMORY))?;
+
+    let claude_outcome = rebuild_claude_imports(home_dir)?;
+    file_updates.extend(claude_outcome.file_updates);
 
     let codex_updates = rebuild_codex_memory_extension(home_dir)?;
     file_updates.extend(codex_updates.file_updates);
@@ -271,6 +272,87 @@ fn write_cached_export_files(
 struct RebuildCodexOutcome {
     file_updates: Vec<ConfigFileUpdate>,
     removed_paths: Vec<String>,
+}
+
+struct RebuildClaudeOutcome {
+    file_updates: Vec<ConfigFileUpdate>,
+    removed_paths: Vec<String>,
+}
+
+fn rebuild_claude_imports(home_dir: &Path) -> Result<RebuildClaudeOutcome> {
+    let entries = collect_cached_context_entries(home_dir)?;
+    let imports_dir = claude_imports_root(home_dir);
+    let claude_md_path = claude_global_memory_path(home_dir);
+
+    let mut file_updates = Vec::new();
+    let mut removed_paths = Vec::new();
+    let mut expected_files: Vec<PathBuf> = Vec::new();
+    let mut import_displays: Vec<String> = Vec::new();
+
+    if !entries.is_empty() {
+        fs::create_dir_all(&imports_dir)
+            .with_context(|| format!("failed to create {}", imports_dir.display()))?;
+
+        for entry in &entries {
+            for (kind, source_path) in [
+                ("memories", &entry.memories_path),
+                ("skills", &entry.skills_path),
+            ] {
+                let destination = imports_dir.join(format!("{}--{kind}.md", entry.file_prefix));
+                expected_files.push(destination.clone());
+                import_displays.push(display_with_tilde(&destination, home_dir));
+                let content = read_optional_text(source_path)?;
+                let status = write_text_if_changed(&destination, &content)?;
+                file_updates.push(ConfigFileUpdate {
+                    path: destination.display().to_string(),
+                    status,
+                });
+            }
+        }
+    }
+
+    if imports_dir.exists() {
+        for entry in fs::read_dir(&imports_dir)
+            .with_context(|| format!("failed to read {}", imports_dir.display()))?
+        {
+            let entry =
+                entry.with_context(|| format!("failed to inspect {}", imports_dir.display()))?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !(name.ends_with("--memories.md") || name.ends_with("--skills.md")) {
+                continue;
+            }
+            if expected_files.iter().any(|expected| expected == &path) {
+                continue;
+            }
+            fs::remove_file(&path)
+                .with_context(|| format!("failed to remove {}", path.display()))?;
+            removed_paths.push(path.display().to_string());
+        }
+    }
+
+    if entries.is_empty() {
+        if remove_claude_import_block(&claude_md_path)? {
+            removed_paths.push(claude_md_path.display().to_string());
+        }
+    } else {
+        let import_refs: Vec<&str> = import_displays.iter().map(String::as_str).collect();
+        let claude_status = upsert_claude_imports(&claude_md_path, &import_refs)?;
+        file_updates.push(ConfigFileUpdate {
+            path: claude_md_path.display().to_string(),
+            status: claude_status,
+        });
+    }
+
+    Ok(RebuildClaudeOutcome {
+        file_updates,
+        removed_paths,
+    })
 }
 
 fn rebuild_codex_memory_extension(home_dir: &Path) -> Result<RebuildCodexOutcome> {
@@ -396,7 +478,7 @@ fn collect_cached_context_entries(home_dir: &Path) -> Result<Vec<CachedContextEn
     Ok(entries)
 }
 
-fn upsert_claude_imports(path: &Path, imports: &[&Path]) -> Result<ConfigFileUpdateStatus> {
+fn upsert_claude_imports(path: &Path, imports: &[&str]) -> Result<ConfigFileUpdateStatus> {
     let existed = path.exists();
     let existing = read_optional_text(path)?;
     let block = render_claude_import_block(imports);
@@ -409,10 +491,10 @@ fn upsert_claude_imports(path: &Path, imports: &[&Path]) -> Result<ConfigFileUpd
     Ok(classify_file_update(existed, &existing, &next))
 }
 
-fn render_claude_import_block(imports: &[&Path]) -> String {
+fn render_claude_import_block(imports: &[&str]) -> String {
     let import_lines = imports
         .iter()
-        .map(|path| format!("- @{}", path.display()))
+        .map(|display| format!("- @{display}"))
         .collect::<Vec<_>>()
         .join("\n");
     [
@@ -422,6 +504,14 @@ fn render_claude_import_block(imports: &[&Path]) -> String {
         CLAUDE_IMPORTS_END,
     ]
     .join("\n")
+}
+
+fn display_with_tilde(path: &Path, home_dir: &Path) -> String {
+    if let Ok(rel) = path.strip_prefix(home_dir) {
+        format!("~/{}", rel.display())
+    } else {
+        path.display().to_string()
+    }
 }
 
 fn upsert_managed_markdown_block(existing: &str, block: &str) -> String {
@@ -527,6 +617,14 @@ fn codex_memory_extension_root(home_dir: &Path) -> PathBuf {
     home_dir.join(CODEX_MEMORY_EXTENSION)
 }
 
+fn claude_imports_root(home_dir: &Path) -> PathBuf {
+    home_dir.join(".claude").join("imports")
+}
+
+fn claude_global_memory_path(home_dir: &Path) -> PathBuf {
+    home_dir.join(".claude").join("CLAUDE.md")
+}
+
 fn slugify_path_component(input: &str) -> String {
     let mut output = String::new();
     let mut previous_dash = false;
@@ -574,7 +672,7 @@ fn render_codex_extension_instructions() -> String {
 mod tests {
     use std::{
         fs,
-        path::{Path, PathBuf},
+        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -588,20 +686,21 @@ mod tests {
 
         let first = upsert_claude_imports(
             &claude_path,
-            &[Path::new("/tmp/memories.md"), Path::new("/tmp/skills.md")],
+            &["~/.claude/imports/memories.md", "~/.claude/imports/skills.md"],
         )
         .unwrap();
         assert_eq!(first, ConfigFileUpdateStatus::Updated);
 
         let second = upsert_claude_imports(
             &claude_path,
-            &[Path::new("/tmp/memories.md"), Path::new("/tmp/skills.md")],
+            &["~/.claude/imports/memories.md", "~/.claude/imports/skills.md"],
         )
         .unwrap();
         assert_eq!(second, ConfigFileUpdateStatus::Unchanged);
 
         let contents = fs::read_to_string(&claude_path).unwrap();
         assert!(contents.contains("# Local rules"));
+        assert!(contents.contains("- @~/.claude/imports/memories.md"));
         assert_eq!(contents.matches(CLAUDE_IMPORTS_START).count(), 1);
 
         fs::remove_dir_all(root).unwrap();
@@ -613,7 +712,7 @@ mod tests {
         let claude_path = root.join("CLAUDE.md");
         write_text(
             &claude_path,
-            &render_claude_import_block(&[Path::new("/tmp/memories.md")]),
+            &render_claude_import_block(&["~/.claude/imports/memories.md"]),
         )
         .unwrap();
 
@@ -654,6 +753,75 @@ mod tests {
                 .join("api-supermanager-dev--acme--memories.md")
                 .exists()
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rebuild_claude_imports_writes_global_memory_with_tilde_paths() {
+        let root = test_dir("rebuild-claude-imports");
+        let home_dir = root.join("home");
+        let cache_dir = home_dir
+            .join(".supermanager")
+            .join("agent-context")
+            .join("api-supermanager-dev")
+            .join("acme");
+        fs::create_dir_all(&cache_dir).unwrap();
+        write_text(&cache_dir.join("memories.md"), "# Memories\n").unwrap();
+        write_text(&cache_dir.join("skills.md"), "# Skills\n").unwrap();
+
+        let imports_dir = home_dir.join(".claude").join("imports");
+        let stale_managed = imports_dir.join("api-supermanager-dev--gone--memories.md");
+        let foreign = imports_dir.join("user-notes.md");
+        fs::create_dir_all(&imports_dir).unwrap();
+        write_text(&stale_managed, "stale").unwrap();
+        write_text(&foreign, "user").unwrap();
+
+        let outcome = rebuild_claude_imports(&home_dir).unwrap();
+        assert!(
+            outcome
+                .removed_paths
+                .iter()
+                .any(|path| path.ends_with("api-supermanager-dev--gone--memories.md"))
+        );
+        assert!(foreign.exists());
+        assert!(
+            imports_dir
+                .join("api-supermanager-dev--acme--memories.md")
+                .exists()
+        );
+
+        let claude_md = home_dir.join(".claude").join("CLAUDE.md");
+        let contents = fs::read_to_string(&claude_md).unwrap();
+        assert!(
+            contents.contains("- @~/.claude/imports/api-supermanager-dev--acme--memories.md")
+        );
+        assert!(
+            contents.contains("- @~/.claude/imports/api-supermanager-dev--acme--skills.md")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rebuild_claude_imports_strips_block_when_no_entries() {
+        let root = test_dir("rebuild-claude-imports-empty");
+        let home_dir = root.join("home");
+        let claude_md = home_dir.join(".claude").join("CLAUDE.md");
+        write_text(
+            &claude_md,
+            &render_claude_import_block(&["~/.claude/imports/api--org--memories.md"]),
+        )
+        .unwrap();
+
+        let outcome = rebuild_claude_imports(&home_dir).unwrap();
+        assert!(
+            outcome
+                .removed_paths
+                .iter()
+                .any(|path| path.ends_with("CLAUDE.md"))
+        );
+        assert!(!claude_md.exists());
 
         fs::remove_dir_all(root).unwrap();
     }

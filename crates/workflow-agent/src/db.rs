@@ -33,10 +33,12 @@ pub(crate) struct SummaryProjectRecord {
 
 pub(crate) struct OrganizationSummaryClaim {
     pub(crate) previous_summary_updated_at: Option<String>,
+    pub(crate) previous_last_processed_seq: Option<i64>,
 }
 
 pub(crate) struct WorkflowClaim {
     pub(crate) previous_processed_received_at: Option<String>,
+    pub(crate) previous_last_processed_session_id: Option<String>,
 }
 
 pub(crate) struct ProjectSummaryClaim {
@@ -98,11 +100,17 @@ pub(crate) struct ToolExecutionResult {
 
 pub(crate) struct OrganizationSummaryQueryOptions {
     pub(crate) after_received_at: Option<String>,
+    pub(crate) after_seq: Option<i64>,
     pub(crate) before_received_at: Option<String>,
     pub(crate) limit: Option<i64>,
 }
 
-pub(crate) type OrganizationWorkflowQueryOptions = OrganizationSummaryQueryOptions;
+pub(crate) struct OrganizationWorkflowQueryOptions {
+    pub(crate) after_received_at: Option<String>,
+    pub(crate) after_session_id: Option<String>,
+    pub(crate) before_received_at: Option<String>,
+    pub(crate) limit: Option<i64>,
+}
 
 pub(crate) struct ProjectSummaryQueryOptions {
     pub(crate) after_seq: Option<i64>,
@@ -221,7 +229,7 @@ impl SummaryDb {
             ON CONFLICT(organization_id) DO UPDATE SET
               status = 'generating'
             WHERE organization_summaries.status <> 'generating'
-            RETURNING updated_at
+            RETURNING updated_at, last_processed_seq
             "#,
         )
         .bind(organization_id)
@@ -239,6 +247,9 @@ impl SummaryDb {
                     .context("failed to decode organization summary updated_at")?
                     .map(format_timestamp)
                     .transpose()?,
+                previous_last_processed_seq: row
+                    .try_get::<Option<i64>, _>("last_processed_seq")
+                    .context("failed to decode organization summary last_processed_seq")?,
             })
         })
         .transpose()
@@ -249,7 +260,7 @@ impl SummaryDb {
         subject_id: &str,
         workflow_kind: WorkflowKind,
     ) -> Result<Option<WorkflowClaim>> {
-        let (sql, normalized_id) = match workflow_kind.scope() {
+        let (sql, normalized_id, scope) = match workflow_kind.scope() {
             WorkflowScope::Organization => (
                 r#"
                 INSERT INTO organization_workflows (
@@ -266,6 +277,7 @@ impl SummaryDb {
                 RETURNING last_processed_received_at
                 "#,
                 subject_id.to_owned(),
+                WorkflowScope::Organization,
             ),
             WorkflowScope::Project => (
                 r#"
@@ -274,15 +286,17 @@ impl SummaryDb {
                   workflow_kind,
                   status,
                   updated_at,
-                  last_processed_received_at
+                  last_processed_received_at,
+                  last_processed_session_id
                 )
-                VALUES ($1, $2, 'generating', TO_TIMESTAMP(0), TO_TIMESTAMP(0))
+                VALUES ($1, $2, 'generating', TO_TIMESTAMP(0), TO_TIMESTAMP(0), NULL)
                 ON CONFLICT(project_id, workflow_kind) DO UPDATE SET
                   status = 'generating'
                 WHERE project_workflows.status <> 'generating'
-                RETURNING last_processed_received_at
+                RETURNING last_processed_received_at, last_processed_session_id
                 "#,
                 normalize_project_id(subject_id),
+                WorkflowScope::Project,
             ),
         };
 
@@ -299,8 +313,15 @@ impl SummaryDb {
             })?;
 
         row.map(|row| {
+            let previous_last_processed_session_id = match scope {
+                WorkflowScope::Project => row
+                    .try_get::<Option<String>, _>("last_processed_session_id")
+                    .context("failed to decode project workflow last_processed_session_id")?,
+                WorkflowScope::Organization => None,
+            };
             Ok(WorkflowClaim {
                 previous_processed_received_at: decode_last_processed_received_at(&row)?,
+                previous_last_processed_session_id,
             })
         })
         .transpose()
@@ -336,20 +357,27 @@ impl SummaryDb {
         &self,
         organization_id: &str,
         updated_at: &str,
+        last_processed_seq: Option<i64>,
     ) -> Result<()> {
         sqlx::query(
             r#"
             INSERT INTO organization_summaries (
               organization_id,
               content_json,
-              updated_at
+              updated_at,
+              last_processed_seq
             )
-            VALUES ($1, $2, $3::timestamptz)
+            VALUES ($1, $2, $3::timestamptz, $4)
             ON CONFLICT(organization_id) DO UPDATE SET
               updated_at = GREATEST(
                 organization_summaries.updated_at,
                 EXCLUDED.updated_at
-              )
+              ),
+              last_processed_seq = CASE
+                WHEN EXCLUDED.updated_at >= organization_summaries.updated_at
+                  THEN EXCLUDED.last_processed_seq
+                ELSE organization_summaries.last_processed_seq
+              END
             "#,
         )
         .bind(organization_id)
@@ -357,6 +385,7 @@ impl SummaryDb {
             OrganizationSnapshot::default(),
         )))
         .bind(updated_at)
+        .bind(last_processed_seq)
         .execute(&self.pool)
         .await
         .with_context(|| {
@@ -424,60 +453,81 @@ impl SummaryDb {
         subject_id: &str,
         workflow_kind: WorkflowKind,
         updated_at: &str,
+        last_processed_session_id: Option<&str>,
     ) -> Result<()> {
-        let (sql, normalized_id) = match workflow_kind.scope() {
-            WorkflowScope::Organization => (
-                r#"
-                INSERT INTO organization_workflows (
-                  organization_id,
-                  workflow_kind,
-                  status,
-                  updated_at,
-                  last_processed_received_at
+        match workflow_kind.scope() {
+            WorkflowScope::Organization => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO organization_workflows (
+                      organization_id,
+                      workflow_kind,
+                      status,
+                      updated_at,
+                      last_processed_received_at
+                    )
+                    VALUES ($1, $2, 'ready', NOW(), $3::timestamptz)
+                    ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
+                      updated_at = EXCLUDED.updated_at,
+                      last_processed_received_at = GREATEST(
+                        organization_workflows.last_processed_received_at,
+                        EXCLUDED.last_processed_received_at
+                      )
+                    "#,
                 )
-                VALUES ($1, $2, 'ready', NOW(), $3::timestamptz)
-                ON CONFLICT(organization_id, workflow_kind) DO UPDATE SET
-                  updated_at = EXCLUDED.updated_at,
-                  last_processed_received_at = GREATEST(
-                    organization_workflows.last_processed_received_at,
-                    EXCLUDED.last_processed_received_at
-                  )
-                "#,
-                subject_id.to_owned(),
-            ),
-            WorkflowScope::Project => (
-                r#"
-                INSERT INTO project_workflows (
-                  project_id,
-                  workflow_kind,
-                  status,
-                  updated_at,
-                  last_processed_received_at
+                .bind(subject_id)
+                .bind(workflow_kind.as_str())
+                .bind(updated_at)
+                .execute(&self.pool)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to persist workflow updated_at {} for {subject_id}",
+                        workflow_kind.as_str()
+                    )
+                })?;
+            }
+            WorkflowScope::Project => {
+                let normalized_id = normalize_project_id(subject_id);
+                sqlx::query(
+                    r#"
+                    INSERT INTO project_workflows (
+                      project_id,
+                      workflow_kind,
+                      status,
+                      updated_at,
+                      last_processed_received_at,
+                      last_processed_session_id
+                    )
+                    VALUES ($1, $2, 'ready', NOW(), $3::timestamptz, $4)
+                    ON CONFLICT(project_id, workflow_kind) DO UPDATE SET
+                      updated_at = EXCLUDED.updated_at,
+                      last_processed_received_at = GREATEST(
+                        project_workflows.last_processed_received_at,
+                        EXCLUDED.last_processed_received_at
+                      ),
+                      last_processed_session_id = CASE
+                        WHEN EXCLUDED.last_processed_received_at
+                             >= project_workflows.last_processed_received_at
+                          THEN EXCLUDED.last_processed_session_id
+                        ELSE project_workflows.last_processed_session_id
+                      END
+                    "#,
                 )
-                VALUES ($1, $2, 'ready', NOW(), $3::timestamptz)
-                ON CONFLICT(project_id, workflow_kind) DO UPDATE SET
-                  updated_at = EXCLUDED.updated_at,
-                  last_processed_received_at = GREATEST(
-                    project_workflows.last_processed_received_at,
-                    EXCLUDED.last_processed_received_at
-                  )
-                "#,
-                normalize_project_id(subject_id),
-            ),
-        };
-
-        sqlx::query(sql)
-            .bind(&normalized_id)
-            .bind(workflow_kind.as_str())
-            .bind(updated_at)
-            .execute(&self.pool)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to persist workflow updated_at {} for {normalized_id}",
-                    workflow_kind.as_str()
-                )
-            })?;
+                .bind(&normalized_id)
+                .bind(workflow_kind.as_str())
+                .bind(updated_at)
+                .bind(last_processed_session_id)
+                .execute(&self.pool)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to persist workflow updated_at {} for {normalized_id}",
+                        workflow_kind.as_str()
+                    )
+                })?;
+            }
+        }
         Ok(())
     }
 
@@ -995,14 +1045,23 @@ impl SummaryDb {
             FROM hook_events AS h
             INNER JOIN projects AS r ON r.project_id = h.project_id
             WHERE r.organization_id = $1
-              AND ($2::timestamptz IS NULL OR h.received_at > $2::timestamptz)
-              AND ($3::timestamptz IS NULL OR h.received_at <= $3::timestamptz)
+              AND (
+                $2::timestamptz IS NULL
+                OR h.received_at > $2::timestamptz
+                OR (
+                  h.received_at = $2::timestamptz
+                  AND $3::bigint IS NOT NULL
+                  AND h.seq > $3::bigint
+                )
+              )
+              AND ($4::timestamptz IS NULL OR h.received_at <= $4::timestamptz)
             ORDER BY h.received_at ASC, h.seq ASC
-            LIMIT COALESCE($4, 9223372036854775807)
+            LIMIT COALESCE($5, 9223372036854775807)
             "#,
         )
         .bind(organization_id)
         .bind(options.after_received_at)
+        .bind(options.after_seq)
         .bind(options.before_received_at)
         .bind(options.limit)
         .fetch_all(&self.pool)
@@ -1049,14 +1108,23 @@ impl SummaryDb {
             FROM hook_event_transcripts AS t
             INNER JOIN projects AS r ON r.project_id = t.project_id
             WHERE t.project_id = $1
-              AND ($2::timestamptz IS NULL OR t.received_at > $2::timestamptz)
-              AND ($3::timestamptz IS NULL OR t.received_at <= $3::timestamptz)
+              AND (
+                $2::timestamptz IS NULL
+                OR t.received_at > $2::timestamptz
+                OR (
+                  t.received_at = $2::timestamptz
+                  AND $3::text IS NOT NULL
+                  AND t.session_id > $3::text
+                )
+              )
+              AND ($4::timestamptz IS NULL OR t.received_at <= $4::timestamptz)
             ORDER BY t.received_at ASC, t.session_id ASC
-            LIMIT COALESCE($4, 9223372036854775807)
+            LIMIT COALESCE($5, 9223372036854775807)
             "#,
         )
         .bind(&normalized_project_id)
         .bind(options.after_received_at)
+        .bind(options.after_session_id)
         .bind(options.before_received_at)
         .bind(options.limit)
         .fetch_all(&self.pool)

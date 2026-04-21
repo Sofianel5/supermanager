@@ -137,7 +137,20 @@ pub(crate) struct WorkflowDispatch {
 #[derive(Clone, Debug)]
 pub(crate) enum WorkflowCursor {
     Seq(i64),
-    ReceivedAt(String),
+    ReceivedAt {
+        received_at: String,
+        // Secondary key resolves ties when a batch hits its row limit at a
+        // `received_at` value shared by multiple rows. `None` means the batch
+        // advanced past every row at that `received_at` (or never hit the
+        // limit), so no tiebreaker is needed for the next sweep.
+        secondary: Option<WorkflowCursorSecondary>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum WorkflowCursorSecondary {
+    Seq(i64),
+    SessionId(String),
 }
 
 pub(crate) struct WorkflowPaths {
