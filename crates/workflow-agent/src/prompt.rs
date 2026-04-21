@@ -50,6 +50,7 @@ If the event only contains any of:
 then do not create a substantive update from that event.
 
 You still must explicitly decide the update outcome for each `event_id`: call `set_event_updates` once per event, either with the real project/member updates you want to keep or with an empty payload to clear any prior noisy output for that event.
+For a true no-op decision, call `set_event_updates(source_event_id, [], null)` using the actual event id. Do not invent placeholder or filler update text such as "no significant update", "no substantive change", or similar just to satisfy the tool contract.
 
 Tool contract:
 - Always call `get_snapshot` before deciding what to edit.
@@ -72,6 +73,7 @@ Editing rules:
 - Keep member BLUFs scoped to work in this project. Do not turn them into organization-wide summaries.
 - Member updates are only for the event actor. Cross-person implications from one event belong in the project update list, not in another member's update log.
 - Always pass `member_user_id` through to the member tools so identity stays stable if the display name changes.
+- Never emit placeholder, filler, or bookkeeping-only update text when the correct outcome is a no-op; use the empty `set_event_updates(..., [], null)` form instead.
 - Do not mention tools, prompts, or your internal process.
 - Do not use shell, filesystem, network, or any tools besides the provided dynamic summary tools.
 
@@ -131,6 +133,7 @@ If the heartbeat only contains any of:
 then do not create a substantive organization update from this window.
 
 You still must explicitly decide the update outcome for this heartbeat window: call `set_window_updates` exactly once, either with the real org updates you want to keep or with an empty payload to clear any prior noisy output for this same `source_window_key`.
+For a true no-op decision, call `set_window_updates(source_window_key, [])` using the actual window key. Do not invent placeholder or filler update text such as "no significant org update", "no noteworthy change", or similar just to satisfy the tool contract.
 
 Tool contract:
 - Always call `get_snapshot` before deciding what to edit.
@@ -149,6 +152,7 @@ Editing rules:
 - Avoid repeating the same fact across the organization BLUF, project BLUFs, and member BLUFs unless it is truly important at every level.
 - Avoid repeating the same fact across organization updates and snapshot markdown unless it is truly important in both places.
 - Always pass `member_user_id` through to the member tools so identity stays stable if the display name changes.
+- Never emit placeholder, filler, or bookkeeping-only update text when the correct outcome is a no-op; use the empty `set_window_updates(..., [])` form instead.
 - Do not mention tools, prompts, or your internal process.
 - Do not use shell, filesystem, network, or any tools besides the provided dynamic summary tools.
 
@@ -278,16 +282,25 @@ mod tests {
     fn project_summary_prompt_mentions_event_derived_updates_and_noop_gate() {
         assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("NO-OP GATE FOR DERIVED UPDATES"));
         assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("set_event_updates"));
+        assert!(
+            PROJECT_SUMMARY_SYSTEM_PROMPT.contains("set_event_updates(source_event_id, [], null)")
+        );
         assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("get_recent_project_updates"));
         assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("event_id"));
+        assert!(PROJECT_SUMMARY_SYSTEM_PROMPT.contains("placeholder"));
     }
 
     #[test]
     fn organization_summary_prompt_mentions_window_updates_and_noop_gate() {
         assert!(ORGANIZATION_SUMMARY_SYSTEM_PROMPT.contains("NO-OP GATE FOR DERIVED UPDATES"));
         assert!(ORGANIZATION_SUMMARY_SYSTEM_PROMPT.contains("set_window_updates"));
+        assert!(
+            ORGANIZATION_SUMMARY_SYSTEM_PROMPT
+                .contains("set_window_updates(source_window_key, [])")
+        );
         assert!(ORGANIZATION_SUMMARY_SYSTEM_PROMPT.contains("get_recent_org_updates"));
         assert!(ORGANIZATION_SUMMARY_SYSTEM_PROMPT.contains("source_window_key"));
+        assert!(ORGANIZATION_SUMMARY_SYSTEM_PROMPT.contains("placeholder"));
     }
 }
 

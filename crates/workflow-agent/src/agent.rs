@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use codex_app_server_client::{InProcessAppServerClient, InProcessServerEvent, TypedRequestError};
@@ -16,7 +16,9 @@ use tokio::sync::mpsc;
 use crate::{
     db::SummaryDb,
     tools::{SummaryTool, tool_failure},
-    workflow::{WorkflowDispatch, WorkflowKind, WorkflowPaths, WorkflowTarget},
+    workflow::{
+        WorkflowDecisionRequirement, WorkflowDispatch, WorkflowKind, WorkflowPaths, WorkflowTarget,
+    },
 };
 
 const NO_ACTIVE_TURN_TO_STEER_ERROR: &str = "no active turn to steer";
@@ -50,6 +52,8 @@ pub(crate) enum AgentEvent {
 struct WorkflowTargetState {
     thread_id: Option<String>,
     active_turn: Option<String>,
+    required_decisions: HashSet<WorkflowDecisionRequirement>,
+    satisfied_decisions: HashSet<WorkflowDecisionRequirement>,
 }
 
 pub(crate) struct AgentLoop {
@@ -177,11 +181,23 @@ impl AgentLoop {
                     return Ok(());
                 }
 
-                state.active_turn = None;
-                let status = match payload.turn.status {
-                    TurnStatus::Completed => SummaryStatus::Ready,
-                    _ => SummaryStatus::Error,
-                };
+                let status = completion_status_for_turn(&target, state, &payload.turn.status);
+                if status == SummaryStatus::Error
+                    && payload.turn.status == TurnStatus::Completed
+                    && !missing_required_decisions(state).is_empty()
+                {
+                    let missing = missing_required_decisions(state)
+                        .into_iter()
+                        .map(|decision| decision.label())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    eprintln!(
+                        "[workflow-agent] completed {} without explicit update decisions for {missing}",
+                        target.label()
+                    );
+                }
+
+                reset_turn_tracking(state);
                 self.emit_workflow_status(&target, status).await;
             }
             _ => {}
@@ -192,6 +208,9 @@ impl AgentLoop {
 
     async fn dispatch_workflow(&mut self, dispatch: WorkflowDispatch) -> Result<()> {
         let thread_id = self.ensure_thread(&dispatch.target).await?;
+        if let Some(decision) = dispatch.required_decision {
+            self.register_required_decision(&dispatch.target, decision);
+        }
         let input = vec![UserInput::Text {
             text: dispatch.input,
             text_elements: Vec::new(),
@@ -238,7 +257,7 @@ impl AgentLoop {
                     );
                     let Some(recovery) = steer_failure_recovery(&error) else {
                         if let Some(state) = self.targets.get_mut(target) {
-                            state.active_turn = None;
+                            reset_turn_tracking(state);
                         }
                         self.emit_workflow_status(target, SummaryStatus::Error)
                             .await;
@@ -252,7 +271,7 @@ impl AgentLoop {
                             target.label()
                         );
                         if let Some(state) = self.targets.get_mut(target) {
-                            state.active_turn = None;
+                            reset_turn_tracking(state);
                         }
                         self.emit_workflow_status(target, SummaryStatus::Error)
                             .await;
@@ -290,6 +309,9 @@ impl AgentLoop {
                     "[workflow-agent] turn start failed for {}: {error}",
                     target.label()
                 );
+                if let Some(state) = self.targets.get_mut(target) {
+                    reset_turn_tracking(state);
+                }
                 self.emit_workflow_status(target, SummaryStatus::Error)
                     .await;
             }
@@ -447,6 +469,7 @@ impl AgentLoop {
             Ok(tool) => tool,
             Err(error) => return Ok(tool_failure(error.to_string())),
         };
+        let satisfied_decision = decision_satisfied_by_tool(target.kind, &tool);
 
         let result = match target.kind {
             WorkflowKind::OrganizationSummary => {
@@ -468,6 +491,10 @@ impl AgentLoop {
             Ok(result) => result,
             Err(error) => return Ok(tool_failure(error.to_string())),
         };
+
+        if let Some(decision) = satisfied_decision {
+            self.mark_decision_satisfied(&target, decision);
+        }
 
         Ok(DynamicToolCallResponse {
             content_items: vec![DynamicToolCallOutputContentItem::InputText {
@@ -498,6 +525,87 @@ impl AgentLoop {
         self.next_request_id += 1;
         RequestId::Integer(request_id)
     }
+
+    fn register_required_decision(
+        &mut self,
+        target: &WorkflowTarget,
+        decision: WorkflowDecisionRequirement,
+    ) {
+        let state = self.targets.entry(target.clone()).or_default();
+        state.required_decisions.insert(decision.clone());
+        state.satisfied_decisions.remove(&decision);
+    }
+
+    fn mark_decision_satisfied(
+        &mut self,
+        target: &WorkflowTarget,
+        decision: WorkflowDecisionRequirement,
+    ) {
+        if let Some(state) = self.targets.get_mut(target) {
+            state.satisfied_decisions.insert(decision);
+        }
+    }
+}
+
+fn decision_satisfied_by_tool(
+    workflow_kind: WorkflowKind,
+    tool: &SummaryTool,
+) -> Option<WorkflowDecisionRequirement> {
+    match (workflow_kind, tool) {
+        (
+            WorkflowKind::ProjectSummary,
+            SummaryTool::SetEventUpdates {
+                source_event_id, ..
+            },
+        ) => Some(WorkflowDecisionRequirement::ProjectEvent {
+            source_event_id: source_event_id.trim().to_owned(),
+        }),
+        (
+            WorkflowKind::OrganizationSummary,
+            SummaryTool::SetWindowUpdates {
+                source_window_key, ..
+            },
+        ) => Some(WorkflowDecisionRequirement::OrganizationWindow {
+            source_window_key: source_window_key.trim().to_owned(),
+        }),
+        _ => None,
+    }
+}
+
+fn completion_status_for_turn(
+    target: &WorkflowTarget,
+    state: &WorkflowTargetState,
+    turn_status: &TurnStatus,
+) -> SummaryStatus {
+    match turn_status {
+        TurnStatus::Completed if missing_required_decisions(state).is_empty() => {
+            SummaryStatus::Ready
+        }
+        TurnStatus::Completed
+            if matches!(
+                target.kind,
+                WorkflowKind::ProjectSummary | WorkflowKind::OrganizationSummary
+            ) =>
+        {
+            SummaryStatus::Error
+        }
+        TurnStatus::Completed => SummaryStatus::Ready,
+        _ => SummaryStatus::Error,
+    }
+}
+
+fn missing_required_decisions(state: &WorkflowTargetState) -> Vec<WorkflowDecisionRequirement> {
+    state
+        .required_decisions
+        .difference(&state.satisfied_decisions)
+        .cloned()
+        .collect()
+}
+
+fn reset_turn_tracking(state: &mut WorkflowTargetState) {
+    state.active_turn = None;
+    state.required_decisions.clear();
+    state.satisfied_decisions.clear();
 }
 
 fn steer_failure_recovery(error: &TypedRequestError) -> Option<SteerFailureRecovery> {
@@ -668,6 +776,90 @@ mod tests {
                 .get(&target)
                 .and_then(|state| state.active_turn.as_deref()),
             Some("turn_2"),
+        );
+    }
+
+    #[test]
+    fn project_summary_requires_explicit_event_decisions_before_ready() {
+        let target = WorkflowTarget::new(WorkflowKind::ProjectSummary, "PROJECT42");
+        let mut state = WorkflowTargetState::default();
+        state
+            .required_decisions
+            .insert(WorkflowDecisionRequirement::ProjectEvent {
+                source_event_id: "event-123".to_owned(),
+            });
+
+        assert_eq!(
+            completion_status_for_turn(&target, &state, &TurnStatus::Completed),
+            SummaryStatus::Error,
+        );
+
+        state
+            .satisfied_decisions
+            .insert(WorkflowDecisionRequirement::ProjectEvent {
+                source_event_id: "event-123".to_owned(),
+            });
+
+        assert_eq!(
+            completion_status_for_turn(&target, &state, &TurnStatus::Completed),
+            SummaryStatus::Ready,
+        );
+    }
+
+    #[test]
+    fn organization_summary_requires_explicit_window_decision_before_ready() {
+        let target = WorkflowTarget::new(WorkflowKind::OrganizationSummary, "ORG42");
+        let mut state = WorkflowTargetState::default();
+        state
+            .required_decisions
+            .insert(WorkflowDecisionRequirement::OrganizationWindow {
+                source_window_key: "window-123".to_owned(),
+            });
+
+        assert_eq!(
+            completion_status_for_turn(&target, &state, &TurnStatus::Completed),
+            SummaryStatus::Error,
+        );
+
+        state
+            .satisfied_decisions
+            .insert(WorkflowDecisionRequirement::OrganizationWindow {
+                source_window_key: "window-123".to_owned(),
+            });
+
+        assert_eq!(
+            completion_status_for_turn(&target, &state, &TurnStatus::Completed),
+            SummaryStatus::Ready,
+        );
+    }
+
+    #[test]
+    fn project_update_tools_satisfy_matching_requirements() {
+        assert_eq!(
+            decision_satisfied_by_tool(
+                WorkflowKind::ProjectSummary,
+                &SummaryTool::SetEventUpdates {
+                    source_event_id: " event-123 ".to_owned(),
+                    project_updates: Vec::new(),
+                    member_update: None,
+                },
+            ),
+            Some(WorkflowDecisionRequirement::ProjectEvent {
+                source_event_id: "event-123".to_owned(),
+            }),
+        );
+
+        assert_eq!(
+            decision_satisfied_by_tool(
+                WorkflowKind::OrganizationSummary,
+                &SummaryTool::SetWindowUpdates {
+                    source_window_key: " window-123 ".to_owned(),
+                    updates: Vec::new(),
+                },
+            ),
+            Some(WorkflowDecisionRequirement::OrganizationWindow {
+                source_window_key: "window-123".to_owned(),
+            }),
         );
     }
 }

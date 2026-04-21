@@ -132,6 +132,24 @@ impl WorkflowTarget {
 pub(crate) struct WorkflowDispatch {
     pub(crate) target: WorkflowTarget,
     pub(crate) input: String,
+    pub(crate) required_decision: Option<WorkflowDecisionRequirement>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum WorkflowDecisionRequirement {
+    ProjectEvent { source_event_id: String },
+    OrganizationWindow { source_window_key: String },
+}
+
+impl WorkflowDecisionRequirement {
+    pub(crate) fn label(&self) -> String {
+        match self {
+            Self::ProjectEvent { source_event_id } => format!("event {source_event_id}"),
+            Self::OrganizationWindow { source_window_key } => {
+                format!("window {source_window_key}")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
