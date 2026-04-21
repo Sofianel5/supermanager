@@ -142,7 +142,9 @@ async fn main() -> Result<()> {
     let coordinator_result = coordinator.run().await;
 
     let _ = command_tx.send(AgentCommand::Shutdown).await;
-    let agent_result = agent_task.await.context("workflow agent task join failed")?;
+    let agent_result = agent_task
+        .await
+        .context("workflow agent task join failed")?;
 
     db.close().await;
 

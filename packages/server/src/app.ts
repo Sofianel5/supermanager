@@ -16,6 +16,7 @@ import {
   resolveOrganizationMembership,
 } from "./middleware";
 import { createMcpRoutes } from "./mcp/routes";
+import { renderOrganizationAgentContextExport } from "./organization-agent-context";
 import { indexEventById } from "./search/store";
 import type { FeedStreamHub } from "./sse";
 import { formatError } from "./types";
@@ -215,6 +216,37 @@ export function createApp(context: AppContext) {
       },
     )
     .get(
+      "/v1/organizations/:organizationSlug/agent-context",
+      async ({ params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          params.organizationSlug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+        const [memories, skills] = await Promise.all([
+          context.db.getOrganizationWorkflowDocumentsResponse(
+            membership.organization_id,
+            "organization_memories",
+          ),
+          context.db.getOrganizationWorkflowDocumentsResponse(
+            membership.organization_id,
+            "organization_skills",
+          ),
+        ]);
+
+        return renderOrganizationAgentContextExport({
+          organizationSlug: membership.organization_slug,
+          memories,
+          skills,
+        });
+      },
+      {
+        params: organizationParams,
+      },
+    )
+    .get(
       "/v1/organizations/:organizationSlug/summary",
       async ({ params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);
@@ -312,7 +344,12 @@ export function createApp(context: AppContext) {
         const before = query.before;
         const limit = clampLimit(query.limit);
         const [events, totalCount] = await Promise.all([
-          context.db.getHookEvents(project.project_id, before, undefined, limit),
+          context.db.getHookEvents(
+            project.project_id,
+            before,
+            undefined,
+            limit,
+          ),
           context.db.countHookEvents(project.project_id),
         ]);
         return { events, total_count: totalCount };

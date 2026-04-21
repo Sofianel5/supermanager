@@ -559,11 +559,7 @@ impl SummaryDb {
         Ok(())
     }
 
-    async fn delete_raw_project_memory(
-        &self,
-        project_id: &str,
-        session_id: &str,
-    ) -> Result<bool> {
+    async fn delete_raw_project_memory(&self, project_id: &str, session_id: &str) -> Result<bool> {
         let result = sqlx::query(
             r#"
             DELETE FROM project_memory_raw
@@ -764,11 +760,7 @@ impl SummaryDb {
             .collect()
     }
 
-    async fn set_organization_handbook(
-        &self,
-        organization_id: &str,
-        handbook: &str,
-    ) -> Result<()> {
+    async fn set_organization_handbook(&self, organization_id: &str, handbook: &str) -> Result<()> {
         sqlx::query(
             r#"
             INSERT INTO organization_memory (organization_id, handbook_text, summary_text, updated_at)
@@ -1630,10 +1622,7 @@ impl SummaryDb {
                     },
                 })
             }
-            (
-                WorkflowKind::OrganizationMemoryConsolidate,
-                SummaryTool::WorkflowGetSnapshot,
-            ) => {
+            (WorkflowKind::OrganizationMemoryConsolidate, SummaryTool::WorkflowGetSnapshot) => {
                 let snapshot = self
                     .get_organization_memory_snapshot(&normalized_id)
                     .await?;
@@ -2035,4 +2024,3 @@ fn format_timestamp(timestamp: OffsetDateTime) -> Result<String> {
 pub(crate) fn now_rfc3339() -> Result<String> {
     format_timestamp(OffsetDateTime::now_utc())
 }
-

@@ -348,7 +348,9 @@ mod tests {
         assert!(rendered.contains("Project memory extraction fired for a single transcript."));
         assert!(rendered.contains("project_id: PROJECT42"));
         assert!(
-            rendered.contains("--- TRANSCRIPT session_id=sess_123 received_at=2026-04-03T12:00:00Z ---"),
+            rendered.contains(
+                "--- TRANSCRIPT session_id=sess_123 received_at=2026-04-03T12:00:00Z ---"
+            ),
         );
         assert!(rendered.contains("session_id=\"sess_123\""));
         assert!(rendered.contains("stage_raw"));
@@ -364,7 +366,10 @@ mod tests {
         assert!(rendered.contains("Project memory consolidation heartbeat fired."));
         assert!(rendered.contains("project_id: PROJECT42"));
         assert!(rendered.contains("heartbeat_cutoff: 2026-04-03T12:05:00Z"));
-        assert!(rendered.contains("No direct access to transcripts") || rendered.contains("no direct access to transcripts"));
+        assert!(
+            rendered.contains("No direct access to transcripts")
+                || rendered.contains("no direct access to transcripts")
+        );
         assert!(!rendered.contains("BEGIN TRANSCRIPT EVIDENCE"));
     }
 
