@@ -21,7 +21,8 @@ use crate::{
         render_project_skills_request,
     },
     workflow::{
-        WorkflowCursor, WorkflowCursorSecondary, WorkflowDispatch, WorkflowKind, WorkflowTarget,
+        WorkflowCursor, WorkflowCursorSecondary, WorkflowDecisionRequirement, WorkflowDispatch,
+        WorkflowKind, WorkflowTarget,
     },
 };
 
@@ -319,6 +320,9 @@ impl WorkflowCoordinator {
         self.dispatch_workflow(WorkflowDispatch {
             target: target.clone(),
             input: format_organization_summary_request(&projects, &events, &source_window_key)?,
+            required_decision: Some(WorkflowDecisionRequirement::OrganizationWindow {
+                source_window_key,
+            }),
         })
         .await
     }
@@ -388,6 +392,9 @@ impl WorkflowCoordinator {
             self.dispatch_workflow(WorkflowDispatch {
                 target: target.clone(),
                 input: format_project_event(&target.id, project_name, &event)?,
+                required_decision: Some(WorkflowDecisionRequirement::ProjectEvent {
+                    source_event_id: event.event_id.to_string(),
+                }),
             })
             .await?;
         }
@@ -482,6 +489,7 @@ impl WorkflowCoordinator {
                     self.dispatch_workflow(WorkflowDispatch {
                         target: target.clone(),
                         input: format_project_memory_extract_request(transcript)?,
+                        required_decision: None,
                     })
                     .await?;
                 }
@@ -511,6 +519,7 @@ impl WorkflowCoordinator {
                 self.dispatch_workflow(WorkflowDispatch {
                     target: target.clone(),
                     input: rendered.input,
+                    required_decision: None,
                 })
                 .await
             }
@@ -572,6 +581,7 @@ impl WorkflowCoordinator {
                 .dispatch_workflow(WorkflowDispatch {
                     target: target.clone(),
                     input,
+                    required_decision: None,
                 })
                 .await
             {
@@ -653,6 +663,7 @@ impl WorkflowCoordinator {
                 .dispatch_workflow(WorkflowDispatch {
                     target: target.clone(),
                     input,
+                    required_decision: None,
                 })
                 .await
             {
