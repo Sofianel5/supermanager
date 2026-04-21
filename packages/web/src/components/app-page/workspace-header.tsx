@@ -27,12 +27,6 @@ export function WorkspaceHeader({
         <h1 className="mt-4 max-w-full text-4xl font-semibold leading-none text-ink sm:text-5xl lg:text-6xl">
           {activeOrganizationName || "Workspace"}
         </h1>
-        {userEmail && (
-          <p className={projectMetaClass}>
-            <span>{userEmail}</span>
-            {activeOrganizationSlug && <span>{activeOrganizationSlug}</span>}
-          </p>
-        )}
       </div>
 
       <div className="w-full md:max-w-[19rem]">
