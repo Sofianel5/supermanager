@@ -67,9 +67,11 @@ export function ProjectPage() {
     project?.organization_slug ?? null,
   );
   const summaryStatus =
-    !summaryQuery.data && summaryQuery.isPending
-      ? "idle"
-      : getSummaryStatus(summary, latestEventSeq);
+    summaryQuery.isError && !summaryQuery.data
+      ? "error"
+      : !summaryQuery.data && summaryQuery.isPending
+        ? "idle"
+        : getSummaryStatus(summary, latestEventSeq);
   const feedError =
     feedQuery.isFetchNextPageError && feedQuery.error
       ? readMessage(feedQuery.error)
@@ -81,9 +83,7 @@ export function ProjectPage() {
         ? readMessage(projectQuery.error)
         : feedQuery.isError && events.length === 0
           ? readMessage(feedQuery.error)
-          : summaryQuery.isError && !summaryQuery.data
-            ? readMessage(summaryQuery.error)
-            : null;
+          : null;
 
   const canonicalProjectId = project?.project_id || projectId;
   const organizationLabel = formatOrganizationLabel(

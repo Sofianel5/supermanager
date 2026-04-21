@@ -396,14 +396,18 @@ export class Db {
       return new Map();
     }
 
+    const requestedUserIdsJson = JSON.stringify(normalizedUserIds);
     const rows = await this.client<
       Array<{ user_id: unknown; member_name: unknown }>
     >`
+      WITH requested_user_ids AS (
+        SELECT jsonb_array_elements_text(${requestedUserIdsJson}::jsonb) AS user_id
+      )
       SELECT
-        id AS user_id,
-        COALESCE(NULLIF(BTRIM(name), ''), email) AS member_name
-      FROM "user"
-      WHERE id = ANY(${normalizedUserIds}::text[])
+        u.id AS user_id,
+        COALESCE(NULLIF(BTRIM(u.name), ''), u.email) AS member_name
+      FROM requested_user_ids
+      INNER JOIN "user" AS u ON u.id = requested_user_ids.user_id
     `;
 
     return new Map(
