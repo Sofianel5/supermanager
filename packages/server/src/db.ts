@@ -590,13 +590,43 @@ export class Db {
     organizationId: string,
     workflowKind: OrganizationWorkflowDocumentKind,
   ): Promise<OrganizationWorkflowDocumentsResponse> {
-    const rows = await this.client<WorkflowDocumentRow[]>`
-      SELECT document_path, content_text, updated_at
-      FROM organization_workflow_documents
-      WHERE organization_id = ${organizationId}
-        AND workflow_kind = ${workflowKind}
-      ORDER BY document_path ASC
-    `;
+    const rows =
+      workflowKind === "organization_memories"
+        ? await this.client<WorkflowDocumentRow[]>`
+            SELECT document_path, content_text, updated_at
+            FROM (
+              SELECT
+                'memory_summary.md'::TEXT AS document_path,
+                summary_text AS content_text,
+                updated_at,
+                0 AS sort_order
+              FROM organization_memory
+              WHERE organization_id = ${organizationId}
+                AND NULLIF(BTRIM(summary_text), '') IS NOT NULL
+
+              UNION ALL
+
+              SELECT
+                'MEMORY.md'::TEXT AS document_path,
+                handbook_text AS content_text,
+                updated_at,
+                1 AS sort_order
+              FROM organization_memory
+              WHERE organization_id = ${organizationId}
+                AND NULLIF(BTRIM(handbook_text), '') IS NOT NULL
+            ) AS documents
+            ORDER BY sort_order ASC, document_path ASC
+          `
+        : await this.client<WorkflowDocumentRow[]>`
+            SELECT
+              CONCAT(skill_name, '/SKILL.md') AS document_path,
+              content_text,
+              updated_at
+            FROM organization_skills
+            WHERE organization_id = ${organizationId}
+              AND NULLIF(BTRIM(content_text), '') IS NOT NULL
+            ORDER BY skill_name ASC
+          `;
 
     return {
       path_root: organizationWorkflowPathRoot(workflowKind),

@@ -456,7 +456,7 @@ impl WorkflowCoordinator {
     async fn run_project_periodic_sweep(&mut self, kind: WorkflowKind) -> Result<()> {
         debug_assert!(matches!(kind, WorkflowKind::ProjectMemoryConsolidate));
 
-        let projects = self.db.list_projects_with_transcripts().await?;
+        let projects = self.db.list_projects_with_pending_memory().await?;
 
         for project in projects {
             let target = WorkflowTarget::new(kind, project.project_id.clone());
