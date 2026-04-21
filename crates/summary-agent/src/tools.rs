@@ -33,14 +33,25 @@ struct RemoveMemberBlufArgs {
 }
 
 #[derive(Debug, Deserialize)]
-struct UpsertWorkflowFileArgs {
-    path: String,
-    content: String,
+struct StageRawArgs {
+    session_id: String,
+    markdown: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct DeleteWorkflowFileArgs {
-    path: String,
+struct DeleteRawArgs {
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpsertSkillArgs {
+    name: String,
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteSkillArgs {
+    name: String,
 }
 
 pub(crate) enum SummaryTool {
@@ -66,12 +77,25 @@ pub(crate) enum SummaryTool {
         member_name: String,
     },
     WorkflowGetSnapshot,
-    UpsertWorkflowFile {
-        path: String,
-        content: String,
+    StageRawProjectMemory {
+        session_id: String,
+        markdown: String,
     },
-    DeleteWorkflowFile {
-        path: String,
+    DeleteRawProjectMemory {
+        session_id: String,
+    },
+    SetHandbook {
+        markdown: String,
+    },
+    SetMemorySummary {
+        markdown: String,
+    },
+    UpsertSkill {
+        name: String,
+        body: String,
+    },
+    DeleteSkill {
+        name: String,
     },
 }
 
@@ -169,36 +193,104 @@ impl SummaryTool {
         ]
     }
 
-    pub(crate) fn organization_memory_specs() -> Vec<DynamicToolSpec> {
-        workflow_document_specs(
-            "Read the current DB-backed organization memory files, including read-only per-project snapshots under `projects/<project_id>/...`.",
-            "Create or replace one organization memory file. Paths are relative to the organization memory root, for example `MEMORY.md`. Do not write under `projects/<project_id>/...`.",
-            "Delete one organization memory file by relative path when it is stale or no longer needed. Do not delete under `projects/<project_id>/...`.",
-        )
+    pub(crate) fn project_memory_extract_specs() -> Vec<DynamicToolSpec> {
+        vec![
+            spec(
+                "get_snapshot",
+                "Read the current project memory snapshot — the durable handbook, the summary, and every raw staging entry already present for this project.",
+                empty_schema(),
+            ),
+            spec(
+                "stage_raw",
+                "Stage the raw memory candidate for THIS transcript under its session id. Replaces any existing staged candidate for the same session.",
+                stage_raw_schema(),
+            ),
+        ]
     }
 
-    pub(crate) fn organization_skills_specs() -> Vec<DynamicToolSpec> {
-        workflow_document_specs(
-            "Read the current DB-backed organization skill files, including read-only per-project snapshots under `projects/<project_id>/...`.",
-            "Create or replace one organization skill file. Paths are relative to the organization skills root, for example `code-review/SKILL.md`. Do not write under `projects/<project_id>/...`.",
-            "Delete one organization skill file by relative path when it is stale or no longer needed. Do not delete under `projects/<project_id>/...`.",
-        )
-    }
-
-    pub(crate) fn project_memory_specs() -> Vec<DynamicToolSpec> {
-        workflow_document_specs(
-            "Read the current DB-backed project memory files, including `_raw/<session_id>.md` staging candidates.",
-            "Create or replace one project memory file. Paths are relative to the project memory root, for example `MEMORY.md`, `memory_summary.md`, or `_raw/<session_id>.md`.",
-            "Delete one project memory file by relative path when it is stale or no longer needed.",
-        )
+    pub(crate) fn project_memory_consolidate_specs() -> Vec<DynamicToolSpec> {
+        vec![
+            spec(
+                "get_snapshot",
+                "Read the current project memory snapshot — the durable handbook, the summary, and every raw staging entry for this project.",
+                empty_schema(),
+            ),
+            spec(
+                "set_handbook",
+                "Replace the project handbook (the full MEMORY payload). Send the complete new handbook, not a patch.",
+                markdown_only_schema(),
+            ),
+            spec(
+                "set_memory_summary",
+                "Replace the short navigational memory summary for this project. Send the complete new summary, not a patch.",
+                markdown_only_schema(),
+            ),
+            spec(
+                "delete_raw",
+                "Delete one raw staging entry by session id once it has been promoted or aged out.",
+                delete_by_session_id_schema(),
+            ),
+        ]
     }
 
     pub(crate) fn project_skills_specs() -> Vec<DynamicToolSpec> {
-        workflow_document_specs(
-            "Read the current DB-backed project skill files before deciding what to change.",
-            "Create or replace one project skill file. Paths are relative to the project skills root, for example `code-review/SKILL.md`.",
-            "Delete one project skill file by relative path when it is stale or no longer needed.",
-        )
+        vec![
+            spec(
+                "get_snapshot",
+                "Read the current project skills before deciding what to change. Each entry has a `name` and a `body` markdown payload.",
+                empty_schema(),
+            ),
+            spec(
+                "upsert_skill",
+                "Create or replace one project skill by name. `body` is the full SKILL.md payload including frontmatter.",
+                upsert_skill_schema(),
+            ),
+            spec(
+                "delete_skill",
+                "Delete one project skill by name when it is stale or no longer needed.",
+                delete_by_name_schema(),
+            ),
+        ]
+    }
+
+    pub(crate) fn organization_memory_consolidate_specs() -> Vec<DynamicToolSpec> {
+        vec![
+            spec(
+                "get_snapshot",
+                "Read the current organization memory snapshot — the org-level handbook and summary plus read-only per-project handbooks and summaries.",
+                empty_schema(),
+            ),
+            spec(
+                "set_handbook",
+                "Replace the organization handbook (the full org-wide MEMORY payload). Send the complete new handbook, not a patch.",
+                markdown_only_schema(),
+            ),
+            spec(
+                "set_memory_summary",
+                "Replace the short navigational memory summary for the organization. Send the complete new summary, not a patch.",
+                markdown_only_schema(),
+            ),
+        ]
+    }
+
+    pub(crate) fn organization_skills_specs() -> Vec<DynamicToolSpec> {
+        vec![
+            spec(
+                "get_snapshot",
+                "Read the current organization skills snapshot — org-level skills plus read-only per-project skills.",
+                empty_schema(),
+            ),
+            spec(
+                "upsert_skill",
+                "Create or replace one organization-level skill by name. `body` is the full SKILL.md payload including frontmatter.",
+                upsert_skill_schema(),
+            ),
+            spec(
+                "delete_skill",
+                "Delete one organization-level skill by name when it is stale or no longer needed.",
+                delete_by_name_schema(),
+            ),
+        ]
     }
 
     pub(crate) fn parse_project(params: &DynamicToolCallParams) -> Result<Self> {
@@ -273,23 +365,91 @@ impl SummaryTool {
         }
     }
 
-    pub(crate) fn parse_workflow_documents(params: &DynamicToolCallParams) -> Result<Self> {
+    pub(crate) fn parse_project_memory_extract(params: &DynamicToolCallParams) -> Result<Self> {
         match params.tool.as_str() {
             "get_snapshot" => Ok(Self::WorkflowGetSnapshot),
-            "upsert_file" => {
-                let args: UpsertWorkflowFileArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid upsert_file arguments")?;
-                Ok(Self::UpsertWorkflowFile {
-                    path: args.path,
-                    content: args.content,
+            "stage_raw" => {
+                let args: StageRawArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid stage_raw arguments")?;
+                Ok(Self::StageRawProjectMemory {
+                    session_id: args.session_id,
+                    markdown: args.markdown,
                 })
             }
-            "delete_file" => {
-                let args: DeleteWorkflowFileArgs = serde_json::from_value(params.arguments.clone())
-                    .context("invalid delete_file arguments")?;
-                Ok(Self::DeleteWorkflowFile { path: args.path })
+            other => anyhow::bail!("unknown project memory extract tool: {other}"),
+        }
+    }
+
+    pub(crate) fn parse_project_memory_consolidate(
+        params: &DynamicToolCallParams,
+    ) -> Result<Self> {
+        match params.tool.as_str() {
+            "get_snapshot" => Ok(Self::WorkflowGetSnapshot),
+            "set_handbook" => {
+                let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_handbook arguments")?;
+                Ok(Self::SetHandbook {
+                    markdown: args.markdown,
+                })
             }
-            other => anyhow::bail!("unknown workflow document tool: {other}"),
+            "set_memory_summary" => {
+                let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_memory_summary arguments")?;
+                Ok(Self::SetMemorySummary {
+                    markdown: args.markdown,
+                })
+            }
+            "delete_raw" => {
+                let args: DeleteRawArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid delete_raw arguments")?;
+                Ok(Self::DeleteRawProjectMemory {
+                    session_id: args.session_id,
+                })
+            }
+            other => anyhow::bail!("unknown project memory consolidate tool: {other}"),
+        }
+    }
+
+    pub(crate) fn parse_skills(params: &DynamicToolCallParams) -> Result<Self> {
+        match params.tool.as_str() {
+            "get_snapshot" => Ok(Self::WorkflowGetSnapshot),
+            "upsert_skill" => {
+                let args: UpsertSkillArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid upsert_skill arguments")?;
+                Ok(Self::UpsertSkill {
+                    name: args.name,
+                    body: args.body,
+                })
+            }
+            "delete_skill" => {
+                let args: DeleteSkillArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid delete_skill arguments")?;
+                Ok(Self::DeleteSkill { name: args.name })
+            }
+            other => anyhow::bail!("unknown skills tool: {other}"),
+        }
+    }
+
+    pub(crate) fn parse_organization_memory_consolidate(
+        params: &DynamicToolCallParams,
+    ) -> Result<Self> {
+        match params.tool.as_str() {
+            "get_snapshot" => Ok(Self::WorkflowGetSnapshot),
+            "set_handbook" => {
+                let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_handbook arguments")?;
+                Ok(Self::SetHandbook {
+                    markdown: args.markdown,
+                })
+            }
+            "set_memory_summary" => {
+                let args: SetMarkdownArgs = serde_json::from_value(params.arguments.clone())
+                    .context("invalid set_memory_summary arguments")?;
+                Ok(Self::SetMemorySummary {
+                    markdown: args.markdown,
+                })
+            }
+            other => anyhow::bail!("unknown organization memory consolidate tool: {other}"),
         }
     }
 }
@@ -325,37 +485,44 @@ fn markdown_only_schema() -> Value {
     })
 }
 
-fn workflow_document_specs(
-    get_snapshot_description: &str,
-    upsert_file_description: &str,
-    delete_file_description: &str,
-) -> Vec<DynamicToolSpec> {
-    vec![
-        spec("get_snapshot", get_snapshot_description, empty_schema()),
-        spec(
-            "upsert_file",
-            upsert_file_description,
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["path", "content"],
-                "properties": {
-                    "path": { "type": "string" },
-                    "content": { "type": "string" }
-                }
-            }),
-        ),
-        spec(
-            "delete_file",
-            delete_file_description,
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["path"],
-                "properties": {
-                    "path": { "type": "string" }
-                }
-            }),
-        ),
-    ]
+fn stage_raw_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session_id", "markdown"],
+        "properties": {
+            "session_id": { "type": "string" },
+            "markdown": { "type": "string" }
+        }
+    })
+}
+
+fn delete_by_session_id_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session_id"],
+        "properties": { "session_id": { "type": "string" } }
+    })
+}
+
+fn upsert_skill_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "body"],
+        "properties": {
+            "name": { "type": "string" },
+            "body": { "type": "string" }
+        }
+    })
+}
+
+fn delete_by_name_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": { "name": { "type": "string" } }
+    })
 }

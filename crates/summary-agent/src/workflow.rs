@@ -58,21 +58,6 @@ impl WorkflowKind {
         }
     }
 
-    /// Namespace used for shared document storage in {project,organization}_workflow_documents.
-    /// Memory extract + consolidate share one namespace so the consolidator can read
-    /// raw files written by the extractor.
-    pub(crate) fn storage_kind(self) -> &'static str {
-        match self {
-            Self::ProjectMemoryExtract | Self::ProjectMemoryConsolidate => "project_memories",
-            Self::ProjectSkills => "project_skills",
-            Self::OrganizationMemoryConsolidate => "organization_memories",
-            Self::OrganizationSkills => "organization_skills",
-            Self::ProjectSummary | Self::OrganizationSummary => {
-                panic!("workflow does not use workflow document storage")
-            }
-        }
-    }
-
     pub(crate) fn directory_name(self) -> &'static str {
         match self {
             Self::ProjectSummary => "project-summary",
@@ -113,12 +98,13 @@ impl WorkflowKind {
         match self {
             Self::ProjectSummary => Some(SummaryTool::project_specs()),
             Self::OrganizationSummary => Some(SummaryTool::organization_specs()),
-            Self::ProjectMemoryExtract | Self::ProjectMemoryConsolidate => {
-                Some(SummaryTool::project_memory_specs())
+            Self::ProjectMemoryExtract => Some(SummaryTool::project_memory_extract_specs()),
+            Self::ProjectMemoryConsolidate => {
+                Some(SummaryTool::project_memory_consolidate_specs())
             }
             Self::ProjectSkills => Some(SummaryTool::project_skills_specs()),
             Self::OrganizationMemoryConsolidate => {
-                Some(SummaryTool::organization_memory_specs())
+                Some(SummaryTool::organization_memory_consolidate_specs())
             }
             Self::OrganizationSkills => Some(SummaryTool::organization_skills_specs()),
         }
