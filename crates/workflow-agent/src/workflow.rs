@@ -132,7 +132,7 @@ impl WorkflowTarget {
 pub(crate) struct WorkflowDispatch {
     pub(crate) target: WorkflowTarget,
     pub(crate) input: String,
-    pub(crate) required_decision: Option<WorkflowDecisionRequirement>,
+    pub(crate) required_decisions: Vec<WorkflowDecisionRequirement>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

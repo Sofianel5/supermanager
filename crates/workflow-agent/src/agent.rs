@@ -208,7 +208,7 @@ impl AgentLoop {
 
     async fn dispatch_workflow(&mut self, dispatch: WorkflowDispatch) -> Result<()> {
         let thread_id = self.ensure_thread(&dispatch.target).await?;
-        if let Some(decision) = dispatch.required_decision {
+        for decision in dispatch.required_decisions {
             self.register_required_decision(&dispatch.target, decision);
         }
         let input = vec![UserInput::Text {

@@ -16,9 +16,9 @@ use crate::{
     event::{
         ProjectSkillsRequest, build_organization_summary_source_window_key,
         format_organization_memory_consolidate_request, format_organization_skills_request,
-        format_organization_summary_request, format_project_event,
-        format_project_memory_consolidate_request, format_project_memory_extract_request,
-        render_project_skills_request,
+        format_organization_summary_request, format_project_memory_consolidate_request,
+        format_project_memory_extract_request, render_project_skills_request,
+        render_project_summary_requests,
     },
     workflow::{
         WorkflowCursor, WorkflowCursorSecondary, WorkflowDecisionRequirement, WorkflowDispatch,
@@ -320,9 +320,9 @@ impl WorkflowCoordinator {
         self.dispatch_workflow(WorkflowDispatch {
             target: target.clone(),
             input: format_organization_summary_request(&projects, &events, &source_window_key)?,
-            required_decision: Some(WorkflowDecisionRequirement::OrganizationWindow {
+            required_decisions: vec![WorkflowDecisionRequirement::OrganizationWindow {
                 source_window_key,
-            }),
+            }],
         })
         .await
     }
@@ -388,13 +388,19 @@ impl WorkflowCoordinator {
         self.pending_workflow_cursor
             .insert(target.clone(), WorkflowCursor::Seq(last_seq));
 
-        for event in events {
+        for batch in render_project_summary_requests(&target.id, project_name, &events)? {
             self.dispatch_workflow(WorkflowDispatch {
                 target: target.clone(),
-                input: format_project_event(&target.id, project_name, &event)?,
-                required_decision: Some(WorkflowDecisionRequirement::ProjectEvent {
-                    source_event_id: event.event_id.to_string(),
-                }),
+                input: batch.input,
+                required_decisions: batch
+                    .event_ids
+                    .into_iter()
+                    .map(
+                        |source_event_id| WorkflowDecisionRequirement::ProjectEvent {
+                            source_event_id,
+                        },
+                    )
+                    .collect(),
             })
             .await?;
         }
@@ -489,7 +495,7 @@ impl WorkflowCoordinator {
                     self.dispatch_workflow(WorkflowDispatch {
                         target: target.clone(),
                         input: format_project_memory_extract_request(transcript)?,
-                        required_decision: None,
+                        required_decisions: Vec::new(),
                     })
                     .await?;
                 }
@@ -519,7 +525,7 @@ impl WorkflowCoordinator {
                 self.dispatch_workflow(WorkflowDispatch {
                     target: target.clone(),
                     input: rendered.input,
-                    required_decision: None,
+                    required_decisions: Vec::new(),
                 })
                 .await
             }
@@ -581,7 +587,7 @@ impl WorkflowCoordinator {
                 .dispatch_workflow(WorkflowDispatch {
                     target: target.clone(),
                     input,
-                    required_decision: None,
+                    required_decisions: Vec::new(),
                 })
                 .await
             {
@@ -663,7 +669,7 @@ impl WorkflowCoordinator {
                 .dispatch_workflow(WorkflowDispatch {
                     target: target.clone(),
                     input,
-                    required_decision: None,
+                    required_decisions: Vec::new(),
                 })
                 .await
             {
