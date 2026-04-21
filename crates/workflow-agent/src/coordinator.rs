@@ -1,6 +1,6 @@
 use std::{collections::HashMap, future::pending, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use reporter_protocol::SummaryStatus;
 use tokio::{
     sync::mpsc,
@@ -16,8 +16,8 @@ use crate::{
     event::{
         ProjectSkillsRequest, build_organization_summary_source_window_key,
         format_organization_memory_consolidate_request, format_organization_skills_request,
-        format_organization_summary_request, format_project_event,
-        format_project_memory_consolidate_request, format_project_memory_extract_request,
+        format_project_event, format_project_memory_consolidate_request,
+        format_project_memory_extract_request, render_organization_summary_request,
         render_project_skills_request,
     },
     workflow::{
@@ -293,29 +293,6 @@ impl WorkflowCoordinator {
             )
             .await?;
 
-        let (summary_updated_at, at_limit) = received_at_workflow_cutoff(
-            &events
-                .iter()
-                .map(|event| event.event.received_at.as_str())
-                .collect::<Vec<_>>(),
-            ORGANIZATION_SUMMARY_EVENT_LIMIT,
-            &heartbeat_cutoff,
-        );
-        let secondary = if at_limit {
-            events
-                .last()
-                .map(|event| WorkflowCursorSecondary::Seq(event.event.seq))
-        } else {
-            None
-        };
-        self.record_pending_workflow(
-            target.clone(),
-            WorkflowCursor::ReceivedAt {
-                received_at: summary_updated_at.to_owned(),
-                secondary,
-            },
-        );
-
         if events.is_empty() {
             self.persist_workflow_status(target, SummaryStatus::Ready)
                 .await?;
@@ -323,14 +300,61 @@ impl WorkflowCoordinator {
         }
 
         let projects = self.db.list_projects_for_summary(&target.id).await?;
+        let provisional_source_window_key = build_organization_summary_source_window_key(
+            previous_summary_updated_at.as_deref(),
+            previous_last_processed_seq,
+            &heartbeat_cutoff,
+        );
+        let render = render_organization_summary_request(
+            &projects,
+            &events,
+            &provisional_source_window_key,
+        )?;
+        ensure!(
+            render.included_event_count > 0,
+            "organization summary render omitted every event"
+        );
+
+        let cursor = organization_event_workflow_cursor(
+            &events,
+            render.included_event_count,
+            ORGANIZATION_SUMMARY_EVENT_LIMIT,
+            &heartbeat_cutoff,
+        );
+        let (summary_updated_at, last_processed_seq) = match &cursor {
+            WorkflowCursor::ReceivedAt {
+                received_at,
+                secondary,
+            } => (
+                received_at.clone(),
+                match secondary {
+                    Some(WorkflowCursorSecondary::Seq(seq)) => Some(*seq),
+                    Some(WorkflowCursorSecondary::SessionId(_)) | None => None,
+                },
+            ),
+            WorkflowCursor::Seq(_) => unreachable!("organization summary uses received_at cursor"),
+        };
+        self.record_pending_workflow(target.clone(), cursor);
+
         let source_window_key = build_organization_summary_source_window_key(
             previous_summary_updated_at.as_deref(),
             previous_last_processed_seq,
-            summary_updated_at,
+            &summary_updated_at,
         );
+        let final_render = render_organization_summary_request(
+            &projects,
+            &events[..render.included_event_count],
+            &source_window_key,
+        )?;
+        debug_assert_eq!(
+            last_processed_seq.is_some(),
+            render.included_event_count < events.len()
+                || events.len() as i64 == ORGANIZATION_SUMMARY_EVENT_LIMIT,
+        );
+
         self.dispatch_workflow(WorkflowDispatch {
             target: target.clone(),
-            input: format_organization_summary_request(&projects, &events, &source_window_key)?,
+            input: final_render.input,
             required_decision: Some(WorkflowDecisionRequirement::OrganizationWindow {
                 source_window_key,
             }),
@@ -814,23 +838,30 @@ async fn wait_for_interval(interval: &mut Option<Interval>) {
     }
 }
 
-/// Returns the cursor `received_at` to persist for the next sweep, plus a
-/// flag indicating whether the batch hit its row limit at that timestamp. The
-/// caller uses the flag to decide whether a secondary tiebreaker (seq /
-/// session_id) is also required so that rows sharing the same `received_at`
-/// don't get dropped on the next iteration.
-fn received_at_workflow_cutoff<'a>(
-    received_ats: &[&'a str],
-    limit: i64,
-    heartbeat_cutoff: &'a str,
-) -> (&'a str, bool) {
-    if received_ats.len() as i64 == limit {
-        (
-            received_ats.last().copied().unwrap_or(heartbeat_cutoff),
-            true,
-        )
+fn organization_event_workflow_cursor(
+    events: &[crate::event::OrganizationEvent],
+    included_event_count: usize,
+    event_limit: i64,
+    heartbeat_cutoff: &str,
+) -> WorkflowCursor {
+    let included_event_count = included_event_count.min(events.len());
+    let included_events = &events[..included_event_count];
+    let last_included = included_events
+        .last()
+        .expect("organization event cursor requires at least one event");
+    let exhausted_queried_events = included_event_count == events.len();
+    let hit_limit = !exhausted_queried_events || included_event_count as i64 == event_limit;
+
+    if hit_limit {
+        WorkflowCursor::ReceivedAt {
+            received_at: last_included.event.received_at.clone(),
+            secondary: Some(WorkflowCursorSecondary::Seq(last_included.event.seq)),
+        }
     } else {
-        (heartbeat_cutoff, false)
+        WorkflowCursor::ReceivedAt {
+            received_at: heartbeat_cutoff.to_owned(),
+            secondary: None,
+        }
     }
 }
 
@@ -887,32 +918,81 @@ mod tests {
         }
     }
 
-    #[test]
-    fn empty_received_at_batch_uses_heartbeat_cutoff() {
-        assert_eq!(
-            received_at_workflow_cutoff(&[], 10, "2026-04-17T12:00:00Z"),
-            ("2026-04-17T12:00:00Z", false)
-        );
+    fn sample_org_event(
+        event_id: &str,
+        seq: i64,
+        received_at: &str,
+    ) -> crate::event::OrganizationEvent {
+        crate::event::OrganizationEvent {
+            project_id: "PROJECT42".to_owned(),
+            project_name: "Operations".to_owned(),
+            event: reporter_protocol::StoredHookEvent {
+                seq,
+                event_id: uuid::Uuid::parse_str(event_id).unwrap(),
+                received_at: received_at.to_owned(),
+                member_user_id: "user_123".to_owned(),
+                member_name: "Dana".to_owned(),
+                client: "codex".to_owned(),
+                repo_root: "/tmp/repo".to_owned(),
+                branch: None,
+                payload: serde_json::json!({ "hook_event_name": "Stop" }),
+            },
+        }
     }
 
     #[test]
-    fn batch_at_limit_uses_last_item_received_at_and_flags_at_limit() {
-        assert_eq!(
-            received_at_workflow_cutoff(
-                &["2026-04-17T11:59:58Z", "2026-04-17T11:59:59Z"],
-                2,
-                "2026-04-17T12:00:00Z",
+    fn organization_event_workflow_cursor_uses_last_included_seq_when_batch_is_trimmed() {
+        let events = vec![
+            sample_org_event(
+                "00000000-0000-0000-0000-000000000001",
+                11,
+                "2026-04-17T11:59:58Z",
             ),
-            ("2026-04-17T11:59:59Z", true)
+            sample_org_event(
+                "00000000-0000-0000-0000-000000000002",
+                12,
+                "2026-04-17T11:59:59Z",
+            ),
+        ];
+
+        let cursor = organization_event_workflow_cursor(
+            &events,
+            1,
+            ORGANIZATION_SUMMARY_EVENT_LIMIT,
+            "2026-04-17T12:00:00Z",
         );
+
+        assert!(matches!(
+            cursor,
+            WorkflowCursor::ReceivedAt {
+                received_at,
+                secondary: Some(WorkflowCursorSecondary::Seq(seq)),
+            } if received_at == "2026-04-17T11:59:58Z" && seq == 11
+        ));
     }
 
     #[test]
-    fn batch_below_limit_uses_heartbeat_cutoff() {
-        assert_eq!(
-            received_at_workflow_cutoff(&["2026-04-17T11:59:58Z"], 2, "2026-04-17T12:00:00Z",),
-            ("2026-04-17T12:00:00Z", false)
+    fn organization_event_workflow_cursor_uses_heartbeat_cutoff_when_everything_fits() {
+        let events = vec![sample_org_event(
+            "00000000-0000-0000-0000-000000000001",
+            11,
+            "2026-04-17T11:59:58Z",
+        )];
+
+        let cursor = organization_event_workflow_cursor(
+            &events,
+            events.len(),
+            ORGANIZATION_SUMMARY_EVENT_LIMIT,
+            "2026-04-17T12:00:00Z",
         );
+
+        assert!(matches!(
+            cursor,
+            WorkflowCursor::ReceivedAt {
+                received_at,
+                secondary: None,
+            } if received_at == "2026-04-17T12:00:00Z"
+        ));
     }
 
     #[test]
