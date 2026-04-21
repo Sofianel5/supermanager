@@ -1,4 +1,5 @@
 import {
+  type ActivityUpdate,
   type MemberSnapshot,
   type OrganizationMembership,
   type OrganizationSummaryResponse,
@@ -90,6 +91,11 @@ interface WorkflowDocumentRow {
   document_path: unknown;
   content_text: unknown;
   updated_at: unknown;
+}
+
+interface ActivityUpdateRow {
+  created_at: unknown;
+  statement_text: unknown;
 }
 
 interface HookEventInsert {
@@ -566,6 +572,53 @@ export class Db {
     return row == null ? 0 : toNumber(row.count);
   }
 
+  async getProjectUpdates(
+    projectId: string,
+    limit: number,
+  ): Promise<ActivityUpdate[]> {
+    const rows = await this.client<ActivityUpdateRow[]>`
+      SELECT statement_text, created_at
+      FROM project_updates
+      WHERE project_id = ${normalizeProjectId(projectId)}
+      ORDER BY created_at DESC, source_event_id DESC, ordinal DESC
+      LIMIT ${limit}
+    `;
+
+    return rows.map(mapActivityUpdate);
+  }
+
+  async getOrganizationUpdates(
+    organizationId: string,
+    limit: number,
+  ): Promise<ActivityUpdate[]> {
+    const rows = await this.client<ActivityUpdateRow[]>`
+      SELECT statement_text, created_at
+      FROM organization_updates
+      WHERE organization_id = ${organizationId}
+      ORDER BY created_at DESC, source_window_key DESC, ordinal DESC
+      LIMIT ${limit}
+    `;
+
+    return rows.map(mapActivityUpdate);
+  }
+
+  async getMemberUpdates(
+    organizationId: string,
+    memberUserId: string,
+    limit: number,
+  ): Promise<ActivityUpdate[]> {
+    const rows = await this.client<ActivityUpdateRow[]>`
+      SELECT statement_text, created_at
+      FROM member_updates
+      WHERE organization_id = ${organizationId}
+        AND member_user_id = ${memberUserId}
+      ORDER BY created_at DESC, source_event_id DESC, ordinal DESC
+      LIMIT ${limit}
+    `;
+
+    return rows.map(mapActivityUpdate);
+  }
+
   async getOrganizationSummaryResponse(
     organizationId: string,
   ): Promise<OrganizationSummaryResponse> {
@@ -808,6 +861,13 @@ function mapStoredHookEvent(row: HookEventRow): StoredHookEvent {
     repo_root: readString(row.repo_root, "repo_root"),
     branch: row.branch == null ? null : String(row.branch),
     payload: row.payload_json,
+  };
+}
+
+function mapActivityUpdate(row: ActivityUpdateRow): ActivityUpdate {
+  return {
+    created_at: toRfc3339(row.created_at),
+    statement_text: readString(row.statement_text, "statement_text"),
   };
 }
 

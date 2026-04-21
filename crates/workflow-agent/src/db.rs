@@ -60,6 +60,24 @@ struct SkillEntry {
 }
 
 #[derive(Serialize)]
+struct UpdateEntry {
+    statement_text: String,
+    created_at: String,
+}
+
+struct ProjectEventUpdateContext {
+    organization_id: String,
+    member_user_id: String,
+    received_at: OffsetDateTime,
+}
+
+struct ParsedOrganizationUpdateWindowKey {
+    source_window_key: String,
+    retry_prefix: String,
+    created_at: OffsetDateTime,
+}
+
+#[derive(Serialize)]
 struct ProjectMemorySnapshotView {
     handbook: String,
     memory_summary: String,
@@ -116,6 +134,18 @@ pub(crate) struct ProjectSummaryQueryOptions {
     pub(crate) after_seq: Option<i64>,
     pub(crate) limit: Option<i64>,
 }
+
+struct ReplaceEventUpdatesResult {
+    project_update_count: usize,
+    member_update_written: bool,
+}
+
+struct ReplaceOrganizationUpdatesResult {
+    update_count: usize,
+}
+
+const DEFAULT_UPDATE_CONTEXT_LIMIT: i64 = 10;
+const MAX_UPDATE_CONTEXT_LIMIT: i64 = 25;
 
 impl SummaryDb {
     pub(crate) async fn connect(database_url: &str) -> Result<Self> {
@@ -1300,6 +1330,334 @@ impl SummaryDb {
             .collect()
     }
 
+    async fn get_project_event_update_context(
+        &self,
+        project_id: &str,
+        source_event_id: &Uuid,
+    ) -> Result<ProjectEventUpdateContext> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+              projects.organization_id,
+              hook_events.member_user_id,
+              hook_events.received_at
+            FROM hook_events
+            INNER JOIN projects ON projects.project_id = hook_events.project_id
+            WHERE hook_events.project_id = $1
+              AND hook_events.event_id = $2
+            "#,
+        )
+        .bind(project_id)
+        .bind(source_event_id)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to load source event {source_event_id} for project {project_id}")
+        })?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "source event {source_event_id} is not available for project {project_id}"
+            )
+        })?;
+
+        Ok(ProjectEventUpdateContext {
+            organization_id: row
+                .try_get("organization_id")
+                .context("failed to decode organization_id")?,
+            member_user_id: row
+                .try_get("member_user_id")
+                .context("failed to decode member_user_id")?,
+            received_at: row
+                .try_get("received_at")
+                .context("failed to decode received_at")?,
+        })
+    }
+
+    async fn list_recent_project_updates(
+        &self,
+        project_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<UpdateEntry>> {
+        let normalized_project_id = normalize_project_id(project_id);
+        let rows = sqlx::query(
+            r#"
+            SELECT statement_text, created_at
+            FROM project_updates
+            WHERE project_id = $1
+            ORDER BY created_at DESC, source_event_id DESC, ordinal DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(&normalized_project_id)
+        .bind(clamp_update_context_limit(limit))
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to load recent project updates for {normalized_project_id}")
+        })?;
+
+        rows.into_iter().map(decode_update_entry).collect()
+    }
+
+    async fn list_recent_member_updates(
+        &self,
+        project_id: &str,
+        member_user_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<UpdateEntry>> {
+        let normalized_project_id = normalize_project_id(project_id);
+        let rows = sqlx::query(
+            r#"
+            SELECT statement_text, created_at
+            FROM member_updates
+            WHERE organization_id = (
+              SELECT organization_id
+              FROM projects
+              WHERE project_id = $1
+            )
+              AND member_user_id = $2
+            ORDER BY created_at DESC, source_event_id DESC, ordinal DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(&normalized_project_id)
+        .bind(member_user_id.trim())
+        .bind(clamp_update_context_limit(limit))
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to load recent member updates for {} in project {normalized_project_id}",
+                member_user_id.trim()
+            )
+        })?;
+
+        rows.into_iter().map(decode_update_entry).collect()
+    }
+
+    async fn replace_event_updates(
+        &self,
+        project_id: &str,
+        source_event_id: &str,
+        project_updates: Vec<String>,
+        member_update: Option<String>,
+    ) -> Result<ReplaceEventUpdatesResult> {
+        let normalized_project_id = normalize_project_id(project_id);
+        let parsed_source_event_id =
+            Uuid::parse_str(source_event_id.trim()).context("invalid source_event_id")?;
+        let context = self
+            .get_project_event_update_context(&normalized_project_id, &parsed_source_event_id)
+            .await?;
+        let normalized_project_updates = normalize_update_statements(project_updates);
+        let normalized_member_update =
+            member_update.and_then(|statement| normalize_update_statement(&statement));
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("failed to begin project update transaction")?;
+
+        sqlx::query(
+            r#"
+            DELETE FROM project_updates
+            WHERE project_id = $1
+              AND source_event_id = $2
+            "#,
+        )
+        .bind(&normalized_project_id)
+        .bind(parsed_source_event_id)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to delete existing project updates for event {} in {}",
+                parsed_source_event_id, normalized_project_id
+            )
+        })?;
+
+        sqlx::query(
+            r#"
+            DELETE FROM member_updates
+            WHERE organization_id = $1
+              AND member_user_id = $2
+              AND source_event_id = $3
+            "#,
+        )
+        .bind(&context.organization_id)
+        .bind(&context.member_user_id)
+        .bind(parsed_source_event_id)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to delete existing member updates for event {} and member {}",
+                parsed_source_event_id, context.member_user_id
+            )
+        })?;
+
+        for (ordinal, statement_text) in normalized_project_updates.iter().enumerate() {
+            sqlx::query(
+                r#"
+                INSERT INTO project_updates (
+                  project_id,
+                  source_event_id,
+                  ordinal,
+                  statement_text,
+                  created_at
+                )
+                VALUES ($1, $2, $3, $4, $5)
+                "#,
+            )
+            .bind(&normalized_project_id)
+            .bind(parsed_source_event_id)
+            .bind(ordinal as i32)
+            .bind(statement_text)
+            .bind(&context.received_at)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to insert project update {ordinal} for event {} in {}",
+                    parsed_source_event_id, normalized_project_id
+                )
+            })?;
+        }
+
+        if let Some(statement_text) = &normalized_member_update {
+            sqlx::query(
+                r#"
+                INSERT INTO member_updates (
+                  organization_id,
+                  member_user_id,
+                  source_event_id,
+                  ordinal,
+                  statement_text,
+                  created_at
+                )
+                VALUES ($1, $2, $3, 0, $4, $5)
+                "#,
+            )
+            .bind(&context.organization_id)
+            .bind(&context.member_user_id)
+            .bind(parsed_source_event_id)
+            .bind(statement_text)
+            .bind(&context.received_at)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to insert member update for event {} and member {}",
+                    parsed_source_event_id, context.member_user_id
+                )
+            })?;
+        }
+
+        tx.commit()
+            .await
+            .context("failed to commit project update transaction")?;
+
+        Ok(ReplaceEventUpdatesResult {
+            project_update_count: normalized_project_updates.len(),
+            member_update_written: normalized_member_update.is_some(),
+        })
+    }
+
+    async fn list_recent_organization_updates(
+        &self,
+        organization_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<UpdateEntry>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT statement_text, created_at
+            FROM organization_updates
+            WHERE organization_id = $1
+            ORDER BY created_at DESC, source_window_key DESC, ordinal DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(organization_id)
+        .bind(clamp_update_context_limit(limit))
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| {
+            format!("failed to load recent organization updates for {organization_id}")
+        })?;
+
+        rows.into_iter().map(decode_update_entry).collect()
+    }
+
+    async fn replace_organization_updates(
+        &self,
+        organization_id: &str,
+        source_window_key: &str,
+        updates: Vec<String>,
+    ) -> Result<ReplaceOrganizationUpdatesResult> {
+        let parsed_key = parse_organization_update_window_key(source_window_key)?;
+        let normalized_updates = normalize_update_statements(updates);
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("failed to begin organization update transaction")?;
+
+        sqlx::query(
+            r#"
+            DELETE FROM organization_updates
+            WHERE organization_id = $1
+              AND LEFT(source_window_key, LENGTH($2)) = $2
+            "#,
+        )
+        .bind(organization_id)
+        .bind(&parsed_key.retry_prefix)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to delete existing organization updates for window {}",
+                parsed_key.source_window_key
+            )
+        })?;
+
+        for (ordinal, statement_text) in normalized_updates.iter().enumerate() {
+            sqlx::query(
+                r#"
+                INSERT INTO organization_updates (
+                  organization_id,
+                  source_window_key,
+                  ordinal,
+                  statement_text,
+                  created_at
+                )
+                VALUES ($1, $2, $3, $4, $5)
+                "#,
+            )
+            .bind(organization_id)
+            .bind(&parsed_key.source_window_key)
+            .bind(ordinal as i32)
+            .bind(statement_text)
+            .bind(&parsed_key.created_at)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to insert organization update {ordinal} for window {}",
+                    parsed_key.source_window_key
+                )
+            })?;
+        }
+
+        tx.commit()
+            .await
+            .context("failed to commit organization update transaction")?;
+
+        Ok(ReplaceOrganizationUpdatesResult {
+            update_count: normalized_updates.len(),
+        })
+    }
+
     pub(crate) async fn set_project_summary_status(
         &self,
         project_id: &str,
@@ -1428,6 +1786,19 @@ impl SummaryDb {
                 message: serde_json::to_string_pretty(&self.get_project_summary(project_id).await?)
                     .context("failed to serialize project snapshot")?,
             }),
+            SummaryTool::GetRecentProjectUpdates { limit } => serialize_snapshot(
+                &self.list_recent_project_updates(project_id, limit).await?,
+                "recent project updates",
+            ),
+            SummaryTool::GetRecentMemberUpdates {
+                member_user_id,
+                limit,
+            } => serialize_snapshot(
+                &self
+                    .list_recent_member_updates(project_id, &member_user_id, limit)
+                    .await?,
+                "recent member updates",
+            ),
             SummaryTool::SetProjectBluf { markdown } => {
                 let normalized_project_id = normalize_project_id(project_id);
                 let mut snapshot = self.get_project_summary(&normalized_project_id).await?;
@@ -1495,6 +1866,41 @@ impl SummaryDb {
                     message: result.message,
                 })
             }
+            SummaryTool::SetEventUpdates {
+                source_event_id,
+                project_updates,
+                member_update,
+            } => {
+                let result = self
+                    .replace_event_updates(
+                        project_id,
+                        &source_event_id,
+                        project_updates,
+                        member_update,
+                    )
+                    .await?;
+
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: if result.project_update_count == 0 && !result.member_update_written {
+                        format!(
+                            "cleared derived updates for source event {}",
+                            source_event_id
+                        )
+                    } else {
+                        format!(
+                            "replaced {} project update(s) and {} member update for source event {}",
+                            result.project_update_count,
+                            if result.member_update_written {
+                                "1"
+                            } else {
+                                "0"
+                            },
+                            source_event_id,
+                        )
+                    },
+                })
+            }
             _ => Ok(ToolExecutionResult {
                 success: false,
                 message: "tool is not available for project summaries".to_owned(),
@@ -1515,6 +1921,12 @@ impl SummaryDb {
                 )
                 .context("failed to serialize organization snapshot")?,
             }),
+            SummaryTool::GetRecentOrgUpdates { limit } => serialize_snapshot(
+                &self
+                    .list_recent_organization_updates(organization_id, limit)
+                    .await?,
+                "recent organization updates",
+            ),
             SummaryTool::SetOrgBluf { markdown } => {
                 let mut snapshot = self.get_organization_summary(organization_id).await?;
                 snapshot.bluf_markdown = markdown.trim().to_owned();
@@ -1523,6 +1935,28 @@ impl SummaryDb {
                 Ok(ToolExecutionResult {
                     success: true,
                     message: "updated organization BLUF".to_owned(),
+                })
+            }
+            SummaryTool::SetWindowUpdates {
+                source_window_key,
+                updates,
+            } => {
+                let result = self
+                    .replace_organization_updates(organization_id, &source_window_key, updates)
+                    .await?;
+                Ok(ToolExecutionResult {
+                    success: true,
+                    message: if result.update_count == 0 {
+                        format!(
+                            "cleared derived organization updates for window {}",
+                            source_window_key
+                        )
+                    } else {
+                        format!(
+                            "replaced {} organization update(s) for window {}",
+                            result.update_count, source_window_key
+                        )
+                    },
                 })
             }
             SummaryTool::SetMemberBluf {
@@ -1905,6 +2339,74 @@ fn normalize_project_ids(project_ids: Vec<String>) -> Vec<String> {
     normalized
 }
 
+fn clamp_update_context_limit(limit: Option<i64>) -> i64 {
+    limit
+        .unwrap_or(DEFAULT_UPDATE_CONTEXT_LIMIT)
+        .clamp(1, MAX_UPDATE_CONTEXT_LIMIT)
+}
+
+fn normalize_update_statement(statement: &str) -> Option<String> {
+    let normalized = statement.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn normalize_update_statements(statements: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+
+    for statement in statements {
+        let Some(statement) = normalize_update_statement(&statement) else {
+            continue;
+        };
+        if seen.insert(statement.clone()) {
+            normalized.push(statement);
+        }
+    }
+
+    normalized
+}
+
+fn parse_organization_update_window_key(
+    source_window_key: &str,
+) -> Result<ParsedOrganizationUpdateWindowKey> {
+    let source_window_key = source_window_key.trim();
+    let parts = source_window_key.split('|').collect::<Vec<_>>();
+    if parts.len() != 3 {
+        anyhow::bail!(
+            "source_window_key must follow after_received_at=...|after_seq=...|cutoff=..."
+        );
+    }
+
+    let after_received_at = parts[0]
+        .strip_prefix("after_received_at=")
+        .context("source_window_key is missing after_received_at=")?;
+    let after_seq = parts[1]
+        .strip_prefix("after_seq=")
+        .context("source_window_key is missing after_seq=")?;
+    let cutoff = parts[2]
+        .strip_prefix("cutoff=")
+        .context("source_window_key is missing cutoff=")?;
+
+    if after_received_at.is_empty() || after_seq.is_empty() || cutoff.is_empty() {
+        anyhow::bail!("source_window_key segments must not be empty");
+    }
+
+    let created_at = OffsetDateTime::parse(cutoff, &Rfc3339)
+        .context("source_window_key cutoff must be RFC-3339")?;
+
+    Ok(ParsedOrganizationUpdateWindowKey {
+        source_window_key: source_window_key.to_owned(),
+        retry_prefix: format!(
+            "after_received_at={after_received_at}|after_seq={after_seq}|cutoff="
+        ),
+        created_at,
+    })
+}
+
 fn normalize_member_snapshot(snapshot: MemberSnapshot) -> MemberSnapshot {
     MemberSnapshot {
         member_user_id: snapshot.member_user_id.trim().to_owned(),
@@ -2059,6 +2561,18 @@ fn decode_skill_row(row: sqlx::postgres::PgRow) -> Result<SkillEntry> {
     })
 }
 
+fn decode_update_entry(row: sqlx::postgres::PgRow) -> Result<UpdateEntry> {
+    Ok(UpdateEntry {
+        statement_text: row
+            .try_get("statement_text")
+            .context("failed to decode update statement_text")?,
+        created_at: row
+            .try_get::<OffsetDateTime, _>("created_at")
+            .context("failed to decode update created_at")
+            .and_then(format_timestamp)?,
+    })
+}
+
 fn serialize_snapshot<T: Serialize>(snapshot: &T, context: &str) -> Result<ToolExecutionResult> {
     Ok(ToolExecutionResult {
         success: true,
@@ -2110,4 +2624,62 @@ fn format_timestamp(timestamp: OffsetDateTime) -> Result<String> {
 
 pub(crate) fn now_rfc3339() -> Result<String> {
     format_timestamp(OffsetDateTime::now_utc())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MAX_UPDATE_CONTEXT_LIMIT, clamp_update_context_limit, normalize_update_statement,
+        normalize_update_statements, parse_organization_update_window_key,
+    };
+
+    #[test]
+    fn normalize_update_statement_collapses_whitespace() {
+        assert_eq!(
+            normalize_update_statement("  blocked   on\nschema migration  "),
+            Some("blocked on schema migration".to_owned())
+        );
+        assert_eq!(normalize_update_statement(" \n\t "), None);
+    }
+
+    #[test]
+    fn normalize_update_statements_deduplicates_after_normalization() {
+        let normalized = normalize_update_statements(vec![
+            "blocked on migration".to_owned(),
+            "blocked   on   migration".to_owned(),
+            "shipped rollout".to_owned(),
+        ]);
+
+        assert_eq!(
+            normalized,
+            vec![
+                "blocked on migration".to_owned(),
+                "shipped rollout".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn clamp_update_context_limit_uses_bounds() {
+        assert_eq!(clamp_update_context_limit(None), 10);
+        assert_eq!(clamp_update_context_limit(Some(0)), 1);
+        assert_eq!(
+            clamp_update_context_limit(Some(MAX_UPDATE_CONTEXT_LIMIT + 10)),
+            MAX_UPDATE_CONTEXT_LIMIT
+        );
+    }
+
+    #[test]
+    fn parse_organization_update_window_key_extracts_retry_prefix_and_cutoff() {
+        let parsed = parse_organization_update_window_key(
+            "after_received_at=2026-04-03T12:00:00Z|after_seq=42|cutoff=2026-04-03T12:05:00Z",
+        )
+        .unwrap();
+
+        assert_eq!(
+            parsed.retry_prefix,
+            "after_received_at=2026-04-03T12:00:00Z|after_seq=42|cutoff="
+        );
+        assert_eq!(parsed.created_at.unix_timestamp(), 1_775_217_900);
+    }
 }

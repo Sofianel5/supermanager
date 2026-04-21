@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -15,12 +15,15 @@ import { OrganizationOnboarding } from "../components/app-page/organization-onbo
 import { OrgWideBlufCard } from "../components/app-page/org-wide-bluf-card";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
+import { ActivityUpdateList } from "../components/activity-update-list";
 import { InnerTabNav, type InnerTabItem } from "../components/inner-tab-nav";
 import {
+  buildOrganizationActivityHref,
   buildOrganizationHref,
   buildOrganizationKnowledgeHref,
   buildOrganizationMembersHref,
 } from "../lib/organization";
+import { ACTIVITY_LIMIT, organizationUpdatesQueryOptions } from "../queries/activity";
 import {
   deviceStatusQueryKey,
   normalizeUserCode,
@@ -36,7 +39,7 @@ import {
 import { pageShellClass } from "../ui";
 import { readAuthError, readMessage } from "../utils";
 
-export type AppPageView = "projects" | "members" | "knowledge";
+export type AppPageView = "projects" | "members" | "activity" | "knowledge";
 
 interface AppPageProps {
   view?: AppPageView;
@@ -76,6 +79,7 @@ export function AppPage({ view = "projects" }: AppPageProps) {
     useWorkspaceData(preferredOrganizationSlug);
   const deviceStatusQuery = useDeviceStatus(userCode);
   const organizationSlug = activeOrganization?.organization_slug ?? null;
+  const isActivityView = view === "activity";
   const isKnowledgeView = view === "knowledge";
   const memoriesQuery = useOrganizationDocuments(
     "memories",
@@ -87,6 +91,12 @@ export function AppPage({ view = "projects" }: AppPageProps) {
     organizationSlug,
     isKnowledgeView,
   );
+  const activityQuery = useQuery({
+    enabled: Boolean(organizationSlug) && isActivityView,
+    ...organizationUpdatesQueryOptions(organizationSlug ?? "", ACTIVITY_LIMIT),
+    refetchInterval: 15_000,
+    staleTime: 15_000,
+  });
 
   const viewer = viewerQuery.data ?? null;
   const isFirstRun = viewer !== null && viewer.organizations.length === 0;
@@ -108,6 +118,9 @@ export function AppPage({ view = "projects" }: AppPageProps) {
     workspaceActionError ||
     readQueryError(viewerQuery.error, viewerQuery.data != null) ||
     readQueryError(projectsQuery.error, projectsQuery.data != null) ||
+    (isActivityView
+      ? readQueryError(activityQuery.error, activityQuery.data != null)
+      : null) ||
     (isKnowledgeView
       ? readQueryError(memoriesQuery.error, memoriesQuery.data != null) ??
         readQueryError(skillsQuery.error, skillsQuery.data != null)
@@ -245,6 +258,11 @@ export function AppPage({ view = "projects" }: AppPageProps) {
       count: memberSnapshots.length || undefined,
     },
     {
+      id: "activity",
+      label: "Activity",
+      to: buildOrganizationActivityHref(organizationSlug),
+    },
+    {
       id: "knowledge",
       label: "Knowledge",
       to: buildOrganizationKnowledgeHref(organizationSlug),
@@ -319,6 +337,16 @@ export function AppPage({ view = "projects" }: AppPageProps) {
               memoriesResponse={memoriesQuery.data ?? null}
               skillsResponse={skillsQuery.data ?? null}
             />
+          ) : view === "activity" ? (
+            <section className="mt-7">
+              <ActivityUpdateList
+                emptyMessage="No organization updates yet."
+                errorMessage={workspaceError}
+                isLoading={isLoading || activityQuery.isLoading}
+                loadingMessage="Loading organization activity..."
+                updates={activityQuery.data?.updates}
+              />
+            </section>
           ) : (
             <div className="mt-7">
               <WorkspacePanel

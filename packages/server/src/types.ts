@@ -13,6 +13,8 @@ export type {
   StoredHookEvent,
 } from "@supermanager/common/api-protocol";
 export type {
+  ActivityUpdate,
+  ActivityUpdatesResponse,
   OrganizationAgentContextExportFile,
   OrganizationAgentContextExportResponse,
   OrganizationMembership,

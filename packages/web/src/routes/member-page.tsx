@@ -1,14 +1,20 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import type { MemberSnapshot, ProjectListEntry } from "../api";
+import { ActivityUpdateList } from "../components/activity-update-list";
+import { InnerTabNav, type InnerTabItem } from "../components/inner-tab-nav";
 import { MemberAvatar } from "../components/member-avatar";
 import { MarkdownBlock } from "../components/markdown-block";
 import { displayMemberName } from "../lib/display-member-name";
 import { formatRelativeTime } from "../lib/format-relative-time";
 import {
+  buildMemberActivityHref,
+  buildMemberHref,
   buildOrganizationHref,
   formatOrganizationLabel,
 } from "../lib/organization";
+import { ACTIVITY_LIMIT, memberUpdatesQueryOptions } from "../queries/activity";
 import { useWorkspaceData } from "../queries/workspace";
 import {
   accentSurfaceClass,
@@ -21,7 +27,13 @@ import {
   subduedSurfaceClass,
 } from "../ui";
 
-export function MemberPage() {
+export type MemberPageView = "overview" | "activity";
+
+interface MemberPageProps {
+  view?: MemberPageView;
+}
+
+export function MemberPage({ view = "overview" }: MemberPageProps) {
   const { memberId = "" } = useParams();
   const location = useLocation();
   const [clock, setClock] = useState(() => Date.now());
@@ -43,6 +55,17 @@ export function MemberPage() {
   }, []);
 
   const organizationSlug = activeOrganization?.organization_slug ?? null;
+  const isActivityView = view === "activity";
+  const activityQuery = useQuery({
+    enabled: Boolean(organizationSlug) && Boolean(memberId) && isActivityView,
+    ...memberUpdatesQueryOptions(
+      organizationSlug ?? "",
+      memberId,
+      ACTIVITY_LIMIT,
+    ),
+    refetchInterval: 15_000,
+    staleTime: 15_000,
+  });
   const organizationHref = buildOrganizationHref(organizationSlug);
   const organizationLabel = formatOrganizationLabel(
     activeOrganization?.organization_name ?? null,
@@ -83,6 +106,21 @@ export function MemberPage() {
 
   const memberName = displayMemberName(member.member_name);
   const hasBluf = Boolean(member.bluf_markdown.trim());
+  const tabItems: Array<InnerTabItem<MemberPageView>> = [
+    {
+      id: "overview",
+      label: "Overview",
+      to: buildMemberHref(member.member_user_id, organizationSlug),
+      count: memberProjects.length || undefined,
+    },
+    {
+      id: "activity",
+      label: "Activity",
+      to: buildMemberActivityHref(member.member_user_id, organizationSlug),
+    },
+  ];
+  const activityError =
+    activityQuery.error instanceof Error ? activityQuery.error.message : null;
 
   return (
     <main className={pageShellClass}>
@@ -113,49 +151,67 @@ export function MemberPage() {
         </div>
       </header>
 
-      <section className="mt-7 grid gap-6">
-        <section className={cx(accentSurfaceClass, "grid gap-4 p-[18px]")}>
-          <div className="flex items-center justify-between gap-3">
-            <span className={sectionLabelClass}>Member summary</span>
-            <time
-              className="font-mono text-[0.72rem] text-ink-muted"
-              dateTime={member.last_update_at}
-            >
-              {formatRelativeTime(member.last_update_at, clock)}
-            </time>
-          </div>
-          {hasBluf ? (
-            <MarkdownBlock markdown={member.bluf_markdown} />
-          ) : (
-            <p className={messageClass}>No summary has been generated yet.</p>
-          )}
+      <InnerTabNav
+        activeId={view}
+        ariaLabel="Member sections"
+        items={tabItems}
+      />
+
+      {isActivityView ? (
+        <section className="mt-7">
+          <ActivityUpdateList
+            emptyMessage="No member updates yet."
+            errorMessage={activityError}
+            isLoading={activityQuery.isLoading}
+            loadingMessage="Loading member activity..."
+            updates={activityQuery.data?.updates}
+          />
         </section>
-
-        <section className={cx(subduedSurfaceClass, "grid gap-4 p-[18px]")}>
-          <div className="flex items-center justify-between gap-3">
-            <span className={sectionLabelClass}>Projects</span>
-            <span className="font-mono text-[11px] uppercase text-ink-muted">
-              {memberProjects.length} active
-            </span>
-          </div>
-
-          {memberProjects.length > 0 ? (
-            <div className="grid gap-3">
-              {memberProjects.map((project) => (
-                <MemberProjectRow
-                  key={project.project_id}
-                  member={member}
-                  project={project}
-                />
-              ))}
+      ) : (
+        <section className="mt-7 grid gap-6">
+          <section className={cx(accentSurfaceClass, "grid gap-4 p-[18px]")}>
+            <div className="flex items-center justify-between gap-3">
+              <span className={sectionLabelClass}>Member summary</span>
+              <time
+                className="font-mono text-[0.72rem] text-ink-muted"
+                dateTime={member.last_update_at}
+              >
+                {formatRelativeTime(member.last_update_at, clock)}
+              </time>
             </div>
-          ) : (
-            <p className={messageClass}>
-              This teammate isn't attached to any active projects right now.
-            </p>
-          )}
+            {hasBluf ? (
+              <MarkdownBlock markdown={member.bluf_markdown} />
+            ) : (
+              <p className={messageClass}>No summary has been generated yet.</p>
+            )}
+          </section>
+
+          <section className={cx(subduedSurfaceClass, "grid gap-4 p-[18px]")}>
+            <div className="flex items-center justify-between gap-3">
+              <span className={sectionLabelClass}>Projects</span>
+              <span className="font-mono text-[11px] uppercase text-ink-muted">
+                {memberProjects.length} active
+              </span>
+            </div>
+
+            {memberProjects.length > 0 ? (
+              <div className="grid gap-3">
+                {memberProjects.map((project) => (
+                  <MemberProjectRow
+                    key={project.project_id}
+                    member={member}
+                    project={project}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className={messageClass}>
+                This teammate isn't attached to any active projects right now.
+              </p>
+            )}
+          </section>
         </section>
-      </section>
+      )}
     </main>
   );
 }
