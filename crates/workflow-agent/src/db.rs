@@ -191,6 +191,25 @@ impl SummaryDb {
         rows.into_iter().map(decode_organization_project).collect()
     }
 
+    pub(crate) async fn list_projects_with_pending_memory(
+        &self,
+    ) -> Result<Vec<OrganizationProject>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT projects.project_id, projects.name
+            FROM projects
+            INNER JOIN project_memory_raw
+              ON project_memory_raw.project_id = projects.project_id
+            ORDER BY projects.project_id ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list projects with pending raw memory")?;
+
+        rows.into_iter().map(decode_organization_project).collect()
+    }
+
     pub(crate) async fn try_start_organization_summary(
         &self,
         organization_id: &str,
