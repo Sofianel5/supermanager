@@ -99,9 +99,7 @@ impl WorkflowKind {
             Self::ProjectSummary => Some(SummaryTool::project_specs()),
             Self::OrganizationSummary => Some(SummaryTool::organization_specs()),
             Self::ProjectMemoryExtract => Some(SummaryTool::project_memory_extract_specs()),
-            Self::ProjectMemoryConsolidate => {
-                Some(SummaryTool::project_memory_consolidate_specs())
-            }
+            Self::ProjectMemoryConsolidate => Some(SummaryTool::project_memory_consolidate_specs()),
             Self::ProjectSkills => Some(SummaryTool::project_skills_specs()),
             Self::OrganizationMemoryConsolidate => {
                 Some(SummaryTool::organization_memory_consolidate_specs())

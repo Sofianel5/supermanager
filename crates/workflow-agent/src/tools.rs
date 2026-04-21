@@ -380,9 +380,7 @@ impl SummaryTool {
         }
     }
 
-    pub(crate) fn parse_project_memory_consolidate(
-        params: &DynamicToolCallParams,
-    ) -> Result<Self> {
+    pub(crate) fn parse_project_memory_consolidate(params: &DynamicToolCallParams) -> Result<Self> {
         match params.tool.as_str() {
             "get_snapshot" => Ok(Self::WorkflowGetSnapshot),
             "set_handbook" => {

@@ -18,6 +18,8 @@ pub(crate) const CLAUDE_HOOK_COMMAND: &str = "supermanager hook-report --client 
 pub(crate) const CODEX_CONFIG: &str = ".codex/config.toml";
 pub(crate) const CODEX_HOOKS_JSON: &str = ".codex/hooks.json";
 pub(crate) const CODEX_HOOK_COMMAND: &str = "supermanager hook-report --client codex";
+pub(crate) const CODEX_MEMORY_EXTENSION: &str = ".codex/memories_extensions/supermanager";
+pub(crate) const CONTEXT_SYNC_HOOK_COMMAND: &str = "supermanager hook-sync-context";
 
 pub(crate) const HOME_AUTH_STATE: &str = ".supermanager/auth.json";
 pub(crate) const HOME_REPO_CONFIG: &str = ".supermanager/repos.json";
@@ -27,6 +29,7 @@ pub(crate) const DEVICE_SCOPE: &str = "openid profile email";
 pub(crate) const HOOK_TIMEOUT_SECONDS: u64 = 10;
 pub(crate) const REPORT_TIMEOUT_SECONDS: u64 = 5;
 pub(crate) const API_TIMEOUT_SECONDS: u64 = 10;
+pub(crate) const CONTEXT_SYNC_STALE_AFTER_SECONDS: u64 = 6 * 60 * 60;
 
 pub const DEFAULT_SERVER_URL: &str = "https://api.supermanager.dev";
 

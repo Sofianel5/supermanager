@@ -379,9 +379,7 @@ impl AgentLoop {
         let tool = match target.kind {
             WorkflowKind::OrganizationSummary => SummaryTool::parse_organization(params),
             WorkflowKind::ProjectSummary => SummaryTool::parse_project(params),
-            WorkflowKind::ProjectMemoryExtract => {
-                SummaryTool::parse_project_memory_extract(params)
-            }
+            WorkflowKind::ProjectMemoryExtract => SummaryTool::parse_project_memory_extract(params),
             WorkflowKind::ProjectMemoryConsolidate => {
                 SummaryTool::parse_project_memory_consolidate(params)
             }

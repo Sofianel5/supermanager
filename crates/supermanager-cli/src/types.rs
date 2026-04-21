@@ -17,6 +17,17 @@ pub struct JoinOutcome {
     pub repo_dir: PathBuf,
 }
 
+pub struct SyncContextConfig {
+    pub home_dir: PathBuf,
+    pub cwd: PathBuf,
+}
+
+pub struct SyncContextOutcome {
+    pub organization_slug: String,
+    pub repo_dir: PathBuf,
+    pub file_updates: Vec<ConfigFileUpdate>,
+}
+
 pub struct CreateProjectConfig {
     pub home_dir: PathBuf,
     pub organization_slug: Option<String>,

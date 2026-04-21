@@ -29,6 +29,16 @@ export interface OrganizationWorkflowDocumentsResponse {
   documents: OrganizationWorkflowDocument[];
 }
 
+export interface OrganizationAgentContextExportFile {
+  path: string;
+  content: string;
+  updated_at: string | null;
+}
+
+export interface OrganizationAgentContextExportResponse {
+  files: OrganizationAgentContextExportFile[];
+}
+
 export interface ProjectListEntry {
   project_id: string;
   name: string;

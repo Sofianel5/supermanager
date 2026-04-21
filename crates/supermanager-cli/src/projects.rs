@@ -5,12 +5,14 @@ use serde_json::json;
 
 use crate::{
     auth::{authed, fetch_project, get_viewer, require_auth_state, resolve_active_org_interactive},
+    context::sync_repo_context,
     local::{
         default_project_name, install_repo_hooks, resolve_repo_root, upsert_repo_project_config,
     },
     support::{API_TIMEOUT_SECONDS, build_http_client, ensure_success, normalize_url},
     types::{
         CreateProjectConfig, CreateProjectOutcome, JoinConfig, JoinOutcome, RepoProjectConfig,
+        SyncContextConfig,
     },
 };
 
@@ -126,6 +128,10 @@ pub fn join_repo(config: JoinConfig) -> Result<JoinOutcome> {
 
     upsert_repo_project_config(&config.home_dir, &repo_dir, project_config)?;
     install_repo_hooks(&repo_dir)?;
+    sync_repo_context(SyncContextConfig {
+        home_dir: config.home_dir.clone(),
+        cwd: repo_dir.clone(),
+    })?;
 
     Ok(JoinOutcome {
         project_id: connection.project_id,

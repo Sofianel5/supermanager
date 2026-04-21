@@ -185,7 +185,9 @@ impl WorkflowCoordinator {
                     .await?;
             }
             kind => {
-                self.db.set_workflow_status(&target.id, kind, status).await?;
+                self.db
+                    .set_workflow_status(&target.id, kind, status)
+                    .await?;
             }
         }
 
@@ -488,17 +490,15 @@ impl WorkflowCoordinator {
                 project_id: target.id.clone(),
                 name: project.name.clone(),
             };
-            let input = match format_project_memory_consolidate_request(
-                &org_project,
-                &heartbeat_cutoff,
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    self.mark_error(&target, "format", &error).await;
-                    self.pending_workflow_cursor.remove(&target);
-                    continue;
-                }
-            };
+            let input =
+                match format_project_memory_consolidate_request(&org_project, &heartbeat_cutoff) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.mark_error(&target, "format", &error).await;
+                        self.pending_workflow_cursor.remove(&target);
+                        continue;
+                    }
+                };
 
             if let Err(error) = self
                 .dispatch_workflow(WorkflowDispatch {

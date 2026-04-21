@@ -48,6 +48,11 @@ enum Commands {
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
+    /// Refresh the local Claude/Codex context files for the current repo.
+    Context {
+        #[command(subcommand)]
+        command: ContextCommands,
+    },
     /// List the projects currently joined on this machine.
     List,
     /// Install the authenticated Supermanager MCP into global Claude and Codex config.
@@ -65,6 +70,8 @@ enum Commands {
         #[arg(long, value_parser = ["claude", "codex"])]
         client: String,
     },
+    #[command(hide = true)]
+    HookSyncContext,
 }
 
 #[derive(Subcommand, Debug)]
@@ -106,6 +113,15 @@ enum McpCommands {
     Install {
         #[arg(long, env = "SUPERMANAGER_SERVER_URL")]
         server: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ContextCommands {
+    /// Refresh exported memories and skills for the current repo's organization.
+    Sync {
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
     },
 }
 
@@ -346,6 +362,39 @@ fn main() -> Result<()> {
                 );
             }
         }
+        Commands::Context { command } => match command {
+            ContextCommands::Sync { cwd } => {
+                let outcome = supermanager::sync_repo_context(supermanager::SyncContextConfig {
+                    home_dir,
+                    cwd,
+                })?;
+
+                println!();
+                if outcome
+                    .file_updates
+                    .iter()
+                    .all(|update| update.status == supermanager::ConfigFileUpdateStatus::Unchanged)
+                {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[1mContext already up to date\x1b[0m");
+                } else {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[1mContext synced\x1b[0m");
+                }
+                println!();
+                println!("    \x1b[2mOrg\x1b[0m        {}", outcome.organization_slug);
+                println!(
+                    "    \x1b[2mRepo\x1b[0m       {}",
+                    outcome.repo_dir.display()
+                );
+                for update in outcome.file_updates {
+                    println!(
+                        "    \x1b[2mFile\x1b[0m       {} ({})",
+                        update.path,
+                        format_config_file_update_status(update.status)
+                    );
+                }
+                println!();
+            }
+        },
         Commands::List => {
             let outcome = supermanager::list_projects(&home_dir)?;
 
@@ -408,6 +457,9 @@ fn main() -> Result<()> {
         Commands::HookReport { client } => {
             let _ = supermanager::report_hook_turn(&client, &home_dir);
         }
+        Commands::HookSyncContext => {
+            let _ = supermanager::sync_repo_context_from_hook(&home_dir);
+        }
     }
     Ok(())
 }
@@ -416,6 +468,7 @@ fn should_auto_update(command: &Commands) -> bool {
     matches!(
         command,
         Commands::Create { .. }
+            | Commands::Context { .. }
             | Commands::Join { .. }
             | Commands::Leave { .. }
             | Commands::List

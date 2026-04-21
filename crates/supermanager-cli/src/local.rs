@@ -12,12 +12,14 @@ use serde_json::{Value, json};
 use toml_edit::{DocumentMut, Item, Table, value};
 
 use crate::{
+    context::{prune_cached_context_after_leave, remove_repo_context},
     support::{
         CLAUDE_HOOK_COMMAND, CLAUDE_SETTINGS_LOCAL, CODEX_CONFIG, CODEX_HOOK_COMMAND,
-        CODEX_HOOKS_JSON, HOME_REPO_CONFIG, HOOK_TIMEOUT_SECONDS, MANAGED_TOML_END,
-        MANAGED_TOML_START, REPORT_TIMEOUT_SECONDS, build_http_client, canonicalize_best_effort,
-        ensure_object_field, path_basename, read_json_object, read_optional_text,
-        run_clipboard_command, write_json_object, write_private_text, write_text,
+        CODEX_HOOKS_JSON, CONTEXT_SYNC_HOOK_COMMAND, HOME_REPO_CONFIG, HOOK_TIMEOUT_SECONDS,
+        MANAGED_TOML_END, MANAGED_TOML_START, REPORT_TIMEOUT_SECONDS, build_http_client,
+        canonicalize_best_effort, ensure_object_field, path_basename, read_json_object,
+        read_optional_text, run_clipboard_command, write_json_object, write_private_text,
+        write_text,
     },
     types::{
         HomeRepoConfig, LeaveOutcome, ListProjectEntry, ListProjectsOutcome, RepoProjectConfig,
@@ -55,16 +57,36 @@ pub fn leave_repo(repo_dir: &Path, home_dir: &Path) -> Result<LeaveOutcome> {
     }
 
     let mut removed_paths = Vec::new();
+    let removed_project_config = get_repo_project_config(home_dir, &repo_dir)?;
 
     if remove_command_hook(&repo_dir.join(CLAUDE_SETTINGS_LOCAL), CLAUDE_HOOK_COMMAND)? {
-        removed_paths.push(CLAUDE_SETTINGS_LOCAL.to_owned());
+        push_unique_path(&mut removed_paths, CLAUDE_SETTINGS_LOCAL);
+    }
+    if remove_command_hook(
+        &repo_dir.join(CLAUDE_SETTINGS_LOCAL),
+        CONTEXT_SYNC_HOOK_COMMAND,
+    )? {
+        push_unique_path(&mut removed_paths, CLAUDE_SETTINGS_LOCAL);
     }
     if remove_command_hook(&repo_dir.join(CODEX_HOOKS_JSON), CODEX_HOOK_COMMAND)? {
-        removed_paths.push(CODEX_HOOKS_JSON.to_owned());
+        push_unique_path(&mut removed_paths, CODEX_HOOKS_JSON);
     }
+    if remove_command_hook(&repo_dir.join(CODEX_HOOKS_JSON), CONTEXT_SYNC_HOOK_COMMAND)? {
+        push_unique_path(&mut removed_paths, CODEX_HOOKS_JSON);
+    }
+    removed_paths.extend(remove_repo_context(&repo_dir)?);
     if remove_repo_project_config(home_dir, &repo_dir)? {
         removed_paths.push("$HOME/.supermanager/repos.json".to_owned());
     }
+    let remaining_configs = read_home_repo_config(&home_repo_config_path(home_dir))?
+        .repos
+        .into_values()
+        .collect::<Vec<_>>();
+    removed_paths.extend(prune_cached_context_after_leave(
+        home_dir,
+        removed_project_config.as_ref(),
+        &remaining_configs,
+    )?);
 
     Ok(LeaveOutcome {
         repo_dir,
@@ -145,6 +167,7 @@ pub(crate) fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
     upsert_command_hooks(
         &repo_dir.join(CLAUDE_SETTINGS_LOCAL),
         &[
+            ("UserPromptSubmit", CONTEXT_SYNC_HOOK_COMMAND),
             ("UserPromptSubmit", CLAUDE_HOOK_COMMAND),
             ("Stop", CLAUDE_HOOK_COMMAND),
         ],
@@ -154,6 +177,7 @@ pub(crate) fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
     upsert_command_hooks(
         &repo_dir.join(CODEX_HOOKS_JSON),
         &[
+            ("UserPromptSubmit", CONTEXT_SYNC_HOOK_COMMAND),
             ("UserPromptSubmit", CODEX_HOOK_COMMAND),
             ("Stop", CODEX_HOOK_COMMAND),
         ],
@@ -216,7 +240,7 @@ fn load_transcript_attachment(payload: &Value) -> Option<UploadedTranscript> {
     })
 }
 
-fn read_hook_payload() -> Result<Value> {
+pub(crate) fn read_hook_payload() -> Result<Value> {
     let mut raw = String::new();
     io::stdin()
         .read_to_string(&mut raw)
@@ -229,6 +253,20 @@ fn read_hook_payload() -> Result<Value> {
     let value =
         serde_json::from_str(&raw).context("failed to parse hook payload JSON from stdin")?;
     Ok(value)
+}
+
+pub(crate) fn resolve_hook_repo_root(payload: &Value) -> Result<Option<PathBuf>> {
+    if !payload.is_object() {
+        return Ok(None);
+    }
+
+    let cwd = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(env::current_dir().context("failed to resolve current directory")?);
+    Ok(Some(resolve_repo_root(&cwd)?))
 }
 
 pub(crate) fn resolve_repo_root(cwd: &Path) -> Result<PathBuf> {
@@ -276,7 +314,10 @@ pub(crate) fn upsert_repo_project_config(
     write_home_repo_config(&path, &config)
 }
 
-fn get_repo_project_config(home_dir: &Path, repo_dir: &Path) -> Result<Option<RepoProjectConfig>> {
+pub(crate) fn get_repo_project_config(
+    home_dir: &Path,
+    repo_dir: &Path,
+) -> Result<Option<RepoProjectConfig>> {
     let path = home_repo_config_path(home_dir);
     let config = read_home_repo_config(&path)?;
     Ok(config.repos.get(&repo_key(repo_dir)).cloned())
@@ -302,11 +343,17 @@ fn repo_key(repo_dir: &Path) -> String {
     canonicalize_best_effort(repo_dir).display().to_string()
 }
 
+fn push_unique_path(paths: &mut Vec<String>, path: &str) {
+    if !paths.iter().any(|existing| existing == path) {
+        paths.push(path.to_owned());
+    }
+}
+
 fn home_repo_config_path(home_dir: &Path) -> PathBuf {
     home_dir.join(HOME_REPO_CONFIG)
 }
 
-fn read_home_repo_config(path: &Path) -> Result<HomeRepoConfig> {
+pub(crate) fn read_home_repo_config(path: &Path) -> Result<HomeRepoConfig> {
     if !path.exists() {
         return Ok(HomeRepoConfig::default());
     }
@@ -555,6 +602,7 @@ mod tests {
         assert!(!codex_config.contains("codex_hooks = false"));
 
         let hooks = fs::read_to_string(repo_dir.join(CODEX_HOOKS_JSON)).unwrap();
+        assert!(hooks.contains(CONTEXT_SYNC_HOOK_COMMAND));
         assert!(hooks.contains(CODEX_HOOK_COMMAND));
 
         fs::remove_dir_all(root).unwrap();
