@@ -9,17 +9,17 @@ import { DeviceApprovalDialog } from "../components/app-page/device-approval-dia
 import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
 import { InviteJoinGate } from "../components/app-page/invite-join-gate";
 import { InviteTeammatesBanner } from "../components/app-page/invite-teammates-banner";
-import { OrganizationDocumentsPanel } from "../components/app-page/organization-documents-panel";
-import { OrgWideBlufCard } from "../components/app-page/org-wide-bluf-card";
-import { OrganizationInsightsHeader } from "../components/app-page/organization-insights-header";
-import { OrganizationInsightsPanel } from "../components/app-page/organization-insights-panel";
+import { OrganizationKnowledgePanel } from "../components/app-page/organization-knowledge-panel";
+import { OrganizationMembersPanel } from "../components/app-page/organization-members-panel";
 import { OrganizationOnboarding } from "../components/app-page/organization-onboarding";
-import { OrganizationPageNav } from "../components/app-page/organization-page-nav";
-import { SecondaryActionLink } from "../components/app-page/secondary-action-link";
+import { OrgWideBlufCard } from "../components/app-page/org-wide-bluf-card";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
+import { InnerTabNav, type InnerTabItem } from "../components/inner-tab-nav";
 import {
-  buildOrganizationInsightsHref,
+  buildOrganizationHref,
+  buildOrganizationKnowledgeHref,
+  buildOrganizationMembersHref,
 } from "../lib/organization";
 import {
   deviceStatusQueryKey,
@@ -36,8 +36,10 @@ import {
 import { pageShellClass } from "../ui";
 import { readAuthError, readMessage } from "../utils";
 
+export type AppPageView = "projects" | "members" | "knowledge";
+
 interface AppPageProps {
-  view?: "projects" | "insights" | "memories" | "skills";
+  view?: AppPageView;
 }
 
 export function AppPage({ view = "projects" }: AppPageProps) {
@@ -73,10 +75,17 @@ export function AppPage({ view = "projects" }: AppPageProps) {
   } =
     useWorkspaceData(preferredOrganizationSlug);
   const deviceStatusQuery = useDeviceStatus(userCode);
-  const documentsQuery = useOrganizationDocuments(
-    view === "skills" ? "skills" : "memories",
-    activeOrganization?.organization_slug ?? null,
-    view === "memories" || view === "skills",
+  const organizationSlug = activeOrganization?.organization_slug ?? null;
+  const isKnowledgeView = view === "knowledge";
+  const memoriesQuery = useOrganizationDocuments(
+    "memories",
+    organizationSlug,
+    isKnowledgeView,
+  );
+  const skillsQuery = useOrganizationDocuments(
+    "skills",
+    organizationSlug,
+    isKnowledgeView,
   );
 
   const viewer = viewerQuery.data ?? null;
@@ -87,17 +96,25 @@ export function AppPage({ view = "projects" }: AppPageProps) {
     (Boolean(activeOrganization) &&
       !hasWorkspaceData &&
       projectsQuery.isLoading);
+  const isKnowledgeLoading =
+    isKnowledgeView &&
+    (memoriesQuery.isLoading || skillsQuery.isLoading) &&
+    !memoriesQuery.data &&
+    !skillsQuery.data;
+  const organizationSummary = summaryQuery.data?.summary ?? null;
+  const summaryStatus = readSummaryStatus(summaryQuery.error, summaryQuery.data);
+  const memberSnapshots = organizationSummary?.members ?? [];
   const workspaceError =
     workspaceActionError ||
     readQueryError(viewerQuery.error, viewerQuery.data != null) ||
     readQueryError(projectsQuery.error, projectsQuery.data != null) ||
-    (view === "memories" || view === "skills"
-      ? readQueryError(documentsQuery.error, documentsQuery.data != null)
+    (isKnowledgeView
+      ? readQueryError(memoriesQuery.error, memoriesQuery.data != null) ??
+        readQueryError(skillsQuery.error, skillsQuery.data != null)
       : null);
   const deviceError =
     deviceActionError || readQueryError(deviceStatusQuery.error);
   const isCreatingProject = pendingAction === "create-project";
-  const summaryStatus = readSummaryStatus(summaryQuery.error, summaryQuery.data);
 
   function openDocs() {
     navigate("/docs");
@@ -211,6 +228,30 @@ export function AppPage({ view = "projects" }: AppPageProps) {
     setPendingAction(null);
   }, [queryClient]);
 
+  const knowledgeCount =
+    (memoriesQuery.data?.documents.length ?? 0) +
+    (skillsQuery.data?.documents.length ?? 0);
+  const tabItems: Array<InnerTabItem<AppPageView>> = [
+    {
+      id: "projects",
+      label: "Projects",
+      to: buildOrganizationHref(organizationSlug),
+      count: projects.length || undefined,
+    },
+    {
+      id: "members",
+      label: "Members",
+      to: buildOrganizationMembersHref(organizationSlug),
+      count: memberSnapshots.length || undefined,
+    },
+    {
+      id: "knowledge",
+      label: "Knowledge",
+      to: buildOrganizationKnowledgeHref(organizationSlug),
+      count: knowledgeCount || undefined,
+    },
+  ];
+
   return (
     <>
       <InviteJoinGate onRefreshWorkspace={refreshWorkspace} />
@@ -224,37 +265,32 @@ export function AppPage({ view = "projects" }: AppPageProps) {
         />
       ) : (
         <main className={pageShellClass}>
-          {view === "insights" ? (
-            <OrganizationInsightsHeader
-              isSigningOut={pendingAction === "sign-out"}
-              organizationName={activeOrganization?.organization_name ?? null}
-              organizationSlug={activeOrganization?.organization_slug ?? null}
-              organizationSummary={summaryQuery.data?.summary ?? null}
-              organizationSummaryUpdatedAt={summaryQuery.data?.updated_at ?? null}
-              onInviteTeammate={() => setIsInviteDialogOpen(true)}
-              onOpenDocs={openDocs}
-              onSignOut={() => void handleSignOut()}
-              summaryStatus={summaryStatus}
-            />
-          ) : (
-            <WorkspaceHeader
-              activeOrganizationName={
-                activeOrganization?.organization_name ?? null
-              }
-              activeOrganizationSlug={
-                activeOrganization?.organization_slug ?? null
-              }
-              isSigningOut={pendingAction === "sign-out"}
-              userEmail={viewer?.user.email ?? null}
-              onInviteTeammate={() => setIsInviteDialogOpen(true)}
-              onOpenDocs={openDocs}
-              onSignOut={() => void handleSignOut()}
-            />
-          )}
+          <WorkspaceHeader
+            activeOrganizationName={
+              activeOrganization?.organization_name ?? null
+            }
+            activeOrganizationSlug={organizationSlug}
+            isSigningOut={pendingAction === "sign-out"}
+            userEmail={viewer?.user.email ?? null}
+            onInviteTeammate={() => setIsInviteDialogOpen(true)}
+            onOpenDocs={openDocs}
+            onSignOut={() => void handleSignOut()}
+          />
 
-          <OrganizationPageNav
-            activeView={view}
-            organizationSlug={activeOrganization?.organization_slug ?? null}
+          {activeOrganization && !isLoading ? (
+            <div className="mt-7">
+              <OrgWideBlufCard
+                organizationSummary={organizationSummary}
+                showStatusMeta
+                summaryStatus={summaryStatus}
+              />
+            </div>
+          ) : null}
+
+          <InnerTabNav
+            activeId={view}
+            ariaLabel="Organization sections"
+            items={tabItems}
           />
 
           {activeOrganization && activeOrganization.member_count <= 1 && (
@@ -267,39 +303,25 @@ export function AppPage({ view = "projects" }: AppPageProps) {
             <CliSetupBanner />
           )}
 
-          {view === "insights" ? (
-            <OrganizationInsightsPanel
+          {view === "members" ? (
+            <OrganizationMembersPanel
               activeOrganization={activeOrganization}
               error={workspaceError}
               isLoading={isLoading}
-              organizationSummary={summaryQuery.data?.summary ?? null}
+              members={memberSnapshots}
+              organizationSlug={organizationSlug}
               projects={projects}
-              summaryStatus={summaryStatus}
             />
-          ) : view === "memories" || view === "skills" ? (
-            <OrganizationDocumentsPanel
+          ) : view === "knowledge" ? (
+            <OrganizationKnowledgePanel
               activeOrganization={activeOrganization}
-              documentsResponse={documentsQuery.data ?? null}
               error={workspaceError}
-              isLoading={isLoading || documentsQuery.isLoading}
-              view={view}
+              isLoading={isLoading || isKnowledgeLoading}
+              memoriesResponse={memoriesQuery.data ?? null}
+              skillsResponse={skillsQuery.data ?? null}
             />
           ) : (
-            <div className="mt-7 grid gap-6">
-              {activeOrganization && !isLoading ? (
-                <OrgWideBlufCard
-                  action={
-                    <SecondaryActionLink
-                      to={buildOrganizationInsightsHref(activeOrganization.organization_slug)}
-                    >
-                      View org insights
-                    </SecondaryActionLink>
-                  }
-                  organizationSummary={summaryQuery.data?.summary ?? null}
-                  summaryStatus={summaryStatus}
-                />
-              ) : null}
-
+            <div className="mt-7">
               <WorkspacePanel
                 activeOrganization={activeOrganization}
                 error={workspaceError}
