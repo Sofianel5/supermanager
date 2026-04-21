@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "crates/reporter-protocol",
-  "crates/summary-agent",
+  "crates/workflow-agent",
   "crates/supermanager-cli",
 ]
 exclude = ["vendor/codex/codex-rs"]

@@ -102,7 +102,7 @@ impl AgentLoop {
     async fn handle_event(&mut self, event: InProcessServerEvent) -> Result<()> {
         match event {
             InProcessServerEvent::Lagged { skipped } => {
-                eprintln!("[summary-agent] lagged by {skipped} events");
+                eprintln!("[workflow-agent] lagged by {skipped} events");
             }
             InProcessServerEvent::ServerRequest(request) => {
                 self.handle_server_request(request).await?;
@@ -217,7 +217,7 @@ impl AgentLoop {
                 }
                 Err(error) => {
                     eprintln!(
-                        "[summary-agent] steer failed for {}: {error}",
+                        "[workflow-agent] steer failed for {}: {error}",
                         target.label()
                     );
                     if !is_stale_active_turn_error(&error) {
@@ -252,7 +252,7 @@ impl AgentLoop {
             }
             Err(error) => {
                 eprintln!(
-                    "[summary-agent] turn start failed for {}: {error}",
+                    "[workflow-agent] turn start failed for {}: {error}",
                     target.label()
                 );
                 self.emit_workflow_status(target, SummaryStatus::Error)
@@ -286,7 +286,7 @@ impl AgentLoop {
                 Ok(thread_id) => thread_id,
                 Err(error) => {
                     eprintln!(
-                        "[summary-agent] failed to resume workflow thread {} for {}: {error}. Creating new thread.",
+                        "[workflow-agent] failed to resume workflow thread {} for {}: {error}. Creating new thread.",
                         thread_id,
                         target.label(),
                     );
@@ -436,7 +436,7 @@ impl AgentLoop {
             .await
         {
             eprintln!(
-                "[summary-agent] failed to deliver status {status:?} for {}: {error}",
+                "[workflow-agent] failed to deliver status {status:?} for {}: {error}",
                 target.label(),
             );
         }

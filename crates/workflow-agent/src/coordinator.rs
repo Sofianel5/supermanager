@@ -603,7 +603,7 @@ impl WorkflowCoordinator {
 
     async fn mark_error(&self, target: &WorkflowTarget, action: &str, error: &anyhow::Error) {
         eprintln!(
-            "[summary-agent] failed to {action} workflow {}: {error:#}",
+            "[workflow-agent] failed to {action} workflow {}: {error:#}",
             target.label()
         );
 
@@ -627,7 +627,7 @@ impl WorkflowCoordinator {
 
         if let Err(persist_error) = result {
             eprintln!(
-                "[summary-agent] failed to persist error status for {}: {persist_error:#}",
+                "[workflow-agent] failed to persist error status for {}: {persist_error:#}",
                 target.label()
             );
         }

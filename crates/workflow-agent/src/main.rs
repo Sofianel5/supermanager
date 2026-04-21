@@ -29,10 +29,10 @@ use crate::{
     workflow::WorkflowPaths,
 };
 
-const CLIENT_NAME: &str = "supermanager_summary_agent";
+const CLIENT_NAME: &str = "supermanager_workflow_agent";
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Run the Supermanager summary worker")]
+#[command(author, version, about = "Run the Supermanager workflow worker")]
 struct Cli {
     #[arg(long, env = "DATABASE_URL")]
     database_url: String,
@@ -40,7 +40,7 @@ struct Cli {
     data_dir: PathBuf,
     #[arg(
         long,
-        env = "SUPERMANAGER_SUMMARY_REFRESH_INTERVAL_SECONDS",
+        env = "SUPERMANAGER_ORGANIZATION_SUMMARY_REFRESH_INTERVAL_SECONDS",
         default_value_t = 300
     )]
     organization_summary_refresh_interval_seconds: u64,
@@ -142,7 +142,7 @@ async fn main() -> Result<()> {
     let coordinator_result = coordinator.run().await;
 
     let _ = command_tx.send(AgentCommand::Shutdown).await;
-    let agent_result = agent_task.await.context("summary agent task join failed")?;
+    let agent_result = agent_task.await.context("workflow agent task join failed")?;
 
     db.close().await;
 
