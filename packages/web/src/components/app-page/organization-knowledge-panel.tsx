@@ -110,12 +110,12 @@ export function OrganizationKnowledgePanel({
           />
 
           <div className="grid gap-6 xl:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
-            <section className={cx(subduedSurfaceClass, "grid gap-3 p-[18px]")}>
+            <section className={cx(subduedSurfaceClass, "min-w-0 grid gap-3 p-[18px]")}>
               {filteredEntries.length > 0 ? (
                 filteredEntries.map((entry) => (
                   <button
                     className={cx(
-                      "grid gap-2 border px-3 py-3 text-left transition duration-150",
+                      "min-w-0 grid gap-2 border px-3 py-3 text-left transition duration-150",
                       selectedEntry && entryKey(entry) === entryKey(selectedEntry)
                         ? "border-accent/40 bg-white/6"
                         : "border-border bg-panel hover:border-border-strong hover:bg-white/[0.03]",
@@ -124,13 +124,13 @@ export function OrganizationKnowledgePanel({
                     onClick={() => setSelectedKey(entryKey(entry))}
                     type="button"
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex items-center gap-2">
                       <KindChip kind={entry.kind} />
-                      <span className="truncate text-sm font-semibold text-ink">
+                      <span className="min-w-0 truncate text-sm font-semibold text-ink">
                         {documentLabel(entry)}
                       </span>
                     </div>
-                    <span className="font-mono text-[0.72rem] text-ink-muted">
+                    <span className="font-mono text-[0.72rem] text-ink-muted [overflow-wrap:anywhere]">
                       {entry.pathRoot}/{entry.document.path}
                     </span>
                     <time
@@ -146,7 +146,7 @@ export function OrganizationKnowledgePanel({
               )}
             </section>
 
-            <section className={cx(subduedSurfaceClass, "grid gap-5 p-[18px]")}>
+            <section className={cx(subduedSurfaceClass, "min-w-0 grid gap-5 p-[18px]")}>
               {selectedEntry ? (
                 <>
                   <div className="grid gap-3 border-b border-border pb-5">
@@ -154,11 +154,11 @@ export function OrganizationKnowledgePanel({
                       <KindChip kind={selectedEntry.kind} />
                       <span className={sectionLabelClass}>Selected</span>
                     </div>
-                    <h2 className="m-0 break-words text-3xl font-semibold leading-tight text-ink sm:text-4xl">
+                    <h2 className="m-0 text-3xl font-semibold leading-tight text-ink [overflow-wrap:anywhere] sm:text-4xl">
                       {documentLabel(selectedEntry)}
                     </h2>
-                    <p className={projectMetaClass}>
-                      <span>
+                    <p className={cx(projectMetaClass, "min-w-0")}>
+                      <span className="[overflow-wrap:anywhere]">
                         {selectedEntry.pathRoot}/{selectedEntry.document.path}
                       </span>
                       <span>{`updated ${formatRelativeTime(
@@ -231,9 +231,9 @@ function KindChip({ kind }: { kind: DocumentKind }) {
       ? "border-accent/30 text-accent"
       : "border-[rgba(127,183,255,0.35)] text-[#7FB7FF]";
   return (
-    <span
-      className={cx(
-        "inline-flex min-h-[22px] items-center border px-2 font-mono text-[10px] uppercase tracking-[0.08em]",
+      <span
+        className={cx(
+        "inline-flex min-h-[22px] shrink-0 items-center border px-2 font-mono text-[10px] uppercase tracking-[0.08em]",
         tone,
       )}
     >
