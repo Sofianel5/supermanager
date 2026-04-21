@@ -32,6 +32,22 @@ export function App() {
           }
         />
         <Route
+          path="/app/memories"
+          element={
+            <RequireSession>
+              <AppPage view="memories" />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/app/skills"
+          element={
+            <RequireSession>
+              <AppPage view="skills" />
+            </RequireSession>
+          }
+        />
+        <Route
           path="/p/:projectId"
           element={
             <RequireSession>

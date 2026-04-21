@@ -234,6 +234,46 @@ export function createApp(context: AppContext) {
       },
     )
     .get(
+      "/v1/organizations/:organizationSlug/memories",
+      async ({ params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          params.organizationSlug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+
+        return context.db.getOrganizationWorkflowDocumentsResponse(
+          membership.organization_id,
+          "organization_memories",
+        );
+      },
+      {
+        params: organizationParams,
+      },
+    )
+    .get(
+      "/v1/organizations/:organizationSlug/skills",
+      async ({ params, request }) => {
+        const viewer = await requireViewer(context.auth, request.headers);
+        const membership = await resolveOrganizationMembership(
+          context.db,
+          viewer.user.id,
+          params.organizationSlug,
+          viewer.session.activeOrganizationId ?? null,
+        );
+
+        return context.db.getOrganizationWorkflowDocumentsResponse(
+          membership.organization_id,
+          "organization_skills",
+        );
+      },
+      {
+        params: organizationParams,
+      },
+    )
+    .get(
       "/v1/projects/:projectId",
       async ({ params, request }) => {
         const viewer = await requireViewer(context.auth, request.headers);

@@ -18,6 +18,17 @@ export interface OrganizationSummaryResponse {
   summary: OrganizationSnapshot;
 }
 
+export interface OrganizationWorkflowDocument {
+  path: string;
+  content: string;
+  updated_at: string;
+}
+
+export interface OrganizationWorkflowDocumentsResponse {
+  path_root: string;
+  documents: OrganizationWorkflowDocument[];
+}
+
 export interface ProjectListEntry {
   project_id: string;
   name: string;

@@ -9,18 +9,24 @@ import { DeviceApprovalDialog } from "../components/app-page/device-approval-dia
 import { InviteTeammateDialog } from "../components/app-page/invite-teammate-dialog";
 import { InviteJoinGate } from "../components/app-page/invite-join-gate";
 import { InviteTeammatesBanner } from "../components/app-page/invite-teammates-banner";
+import { OrganizationDocumentsPanel } from "../components/app-page/organization-documents-panel";
 import { OrgWideBlufCard } from "../components/app-page/org-wide-bluf-card";
 import { OrganizationInsightsHeader } from "../components/app-page/organization-insights-header";
 import { OrganizationInsightsPanel } from "../components/app-page/organization-insights-panel";
 import { OrganizationOnboarding } from "../components/app-page/organization-onboarding";
+import { OrganizationPageNav } from "../components/app-page/organization-page-nav";
 import { SecondaryActionLink } from "../components/app-page/secondary-action-link";
 import { WorkspaceHeader } from "../components/app-page/workspace-header";
 import { WorkspacePanel } from "../components/app-page/workspace-panel";
+import {
+  buildOrganizationInsightsHref,
+} from "../lib/organization";
 import {
   deviceStatusQueryKey,
   normalizeUserCode,
   useDeviceStatus,
 } from "../queries/device-status";
+import { useOrganizationDocuments } from "../queries/organization-documents";
 import {
   organizationSummaryQueryRootKey,
   projectListQueryRootKey,
@@ -31,7 +37,7 @@ import { pageShellClass } from "../ui";
 import { readAuthError, readMessage } from "../utils";
 
 interface AppPageProps {
-  view?: "projects" | "insights";
+  view?: "projects" | "insights" | "memories" | "skills";
 }
 
 export function AppPage({ view = "projects" }: AppPageProps) {
@@ -67,6 +73,11 @@ export function AppPage({ view = "projects" }: AppPageProps) {
   } =
     useWorkspaceData(preferredOrganizationSlug);
   const deviceStatusQuery = useDeviceStatus(userCode);
+  const documentsQuery = useOrganizationDocuments(
+    view === "skills" ? "skills" : "memories",
+    activeOrganization?.organization_slug ?? null,
+    view === "memories" || view === "skills",
+  );
 
   const viewer = viewerQuery.data ?? null;
   const isFirstRun = viewer !== null && viewer.organizations.length === 0;
@@ -79,7 +90,10 @@ export function AppPage({ view = "projects" }: AppPageProps) {
   const workspaceError =
     workspaceActionError ||
     readQueryError(viewerQuery.error, viewerQuery.data != null) ||
-    readQueryError(projectsQuery.error, projectsQuery.data != null);
+    readQueryError(projectsQuery.error, projectsQuery.data != null) ||
+    (view === "memories" || view === "skills"
+      ? readQueryError(documentsQuery.error, documentsQuery.data != null)
+      : null);
   const deviceError =
     deviceActionError || readQueryError(deviceStatusQuery.error);
   const isCreatingProject = pendingAction === "create-project";
@@ -238,6 +252,11 @@ export function AppPage({ view = "projects" }: AppPageProps) {
             />
           )}
 
+          <OrganizationPageNav
+            activeView={view}
+            organizationSlug={activeOrganization?.organization_slug ?? null}
+          />
+
           {activeOrganization && activeOrganization.member_count <= 1 && (
             <InviteTeammatesBanner
               onInviteTeammate={() => setIsInviteDialogOpen(true)}
@@ -256,6 +275,14 @@ export function AppPage({ view = "projects" }: AppPageProps) {
               organizationSummary={summaryQuery.data?.summary ?? null}
               projects={projects}
               summaryStatus={summaryStatus}
+            />
+          ) : view === "memories" || view === "skills" ? (
+            <OrganizationDocumentsPanel
+              activeOrganization={activeOrganization}
+              documentsResponse={documentsQuery.data ?? null}
+              error={workspaceError}
+              isLoading={isLoading || documentsQuery.isLoading}
+              view={view}
             />
           ) : (
             <div className="mt-7 grid gap-6">
@@ -341,12 +368,4 @@ function readSummaryStatus(
   }
 
   return "ready" as const;
-}
-
-function buildOrganizationInsightsHref(organizationSlug: string | null) {
-  if (!organizationSlug) {
-    return "/app/insights";
-  }
-
-  return `/app/insights?organization=${encodeURIComponent(organizationSlug)}`;
 }

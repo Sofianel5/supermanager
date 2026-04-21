@@ -15,6 +15,7 @@ export type {
 export type {
   OrganizationMembership,
   OrganizationSummaryResponse,
+  OrganizationWorkflowDocumentsResponse,
   ProjectListEntry,
   ProjectListResponse,
   ProjectSummaryResponse,

@@ -5,6 +5,7 @@ import type {
 } from "@supermanager/common/api-protocol";
 import type {
   OrganizationSummaryResponse,
+  OrganizationWorkflowDocumentsResponse,
   ProjectListResponse,
   ProjectSummaryResponse,
   ViewerResponse,
@@ -20,6 +21,8 @@ export type {
 export type {
   OrganizationMembership,
   OrganizationSummaryResponse,
+  OrganizationWorkflowDocument,
+  OrganizationWorkflowDocumentsResponse,
   ProjectListEntry,
   ProjectListResponse,
   ProjectSummaryResponse,
@@ -105,6 +108,16 @@ export const api = {
   getOrganizationSummary(organizationSlug: string) {
     return requestJson<OrganizationSummaryResponse>(
       `/v1/organizations/${encodeURIComponent(organizationSlug)}/summary`,
+    );
+  },
+  getOrganizationMemories(organizationSlug: string) {
+    return requestJson<OrganizationWorkflowDocumentsResponse>(
+      `/v1/organizations/${encodeURIComponent(organizationSlug)}/memories`,
+    );
+  },
+  getOrganizationSkills(organizationSlug: string) {
+    return requestJson<OrganizationWorkflowDocumentsResponse>(
+      `/v1/organizations/${encodeURIComponent(organizationSlug)}/skills`,
     );
   },
   listProjects(organizationSlug?: string) {

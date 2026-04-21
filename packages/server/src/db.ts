@@ -2,6 +2,7 @@ import {
   type MemberSnapshot,
   type OrganizationMembership,
   type OrganizationSummaryResponse,
+  type OrganizationWorkflowDocumentsResponse,
   type OrganizationSnapshot,
   type ProjectListEntry,
   type ProjectBlufSnapshot,
@@ -85,6 +86,12 @@ interface SummaryStatusRow {
   status: unknown;
 }
 
+interface WorkflowDocumentRow {
+  document_path: unknown;
+  content_text: unknown;
+  updated_at: unknown;
+}
+
 interface HookEventInsert {
   member_user_id: string;
   member_name: string;
@@ -104,6 +111,11 @@ interface HookEventWriteContextRow extends ProjectRow {
   user_exists: unknown;
   member_name: unknown;
 }
+
+type OrganizationWorkflowDocumentKind =
+  | "organization_memories"
+  | "organization_skills";
+
 export interface ProjectRecord extends ProjectListEntry {
   created_by_user_id: string;
   organization_id: string;
@@ -566,6 +578,24 @@ export class Db {
     };
   }
 
+  async getOrganizationWorkflowDocumentsResponse(
+    organizationId: string,
+    workflowKind: OrganizationWorkflowDocumentKind,
+  ): Promise<OrganizationWorkflowDocumentsResponse> {
+    const rows = await this.client<WorkflowDocumentRow[]>`
+      SELECT document_path, content_text, updated_at
+      FROM organization_workflow_documents
+      WHERE organization_id = ${organizationId}
+        AND workflow_kind = ${workflowKind}
+      ORDER BY document_path ASC
+    `;
+
+    return {
+      path_root: organizationWorkflowPathRoot(workflowKind),
+      documents: rows.map(mapOrganizationWorkflowDocument),
+    };
+  }
+
   async getProjectSummary(projectId: string): Promise<ProjectSnapshot> {
     return this.resolveSnapshotMemberNames(
       await this.getStoredProjectSummary(normalizeProjectId(projectId)),
@@ -742,6 +772,25 @@ function mapStoredHookEvent(row: HookEventRow): StoredHookEvent {
     branch: row.branch == null ? null : String(row.branch),
     payload: row.payload_json,
   };
+}
+
+function mapOrganizationWorkflowDocument(row: WorkflowDocumentRow) {
+  return {
+    path: readString(row.document_path, "document_path"),
+    content: readString(row.content_text, "content_text"),
+    updated_at: toRfc3339(row.updated_at),
+  };
+}
+
+function organizationWorkflowPathRoot(
+  workflowKind: OrganizationWorkflowDocumentKind,
+) {
+  switch (workflowKind) {
+    case "organization_memories":
+      return "memories";
+    case "organization_skills":
+      return ".codex/skills";
+  }
 }
 
 function normalizeOrganizationSnapshot(
