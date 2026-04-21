@@ -24,6 +24,10 @@ interface CreateProjectRow {
   created_at: unknown;
 }
 
+interface DeleteProjectRow {
+  project_id: unknown;
+}
+
 interface ProjectRow {
   project_id: unknown;
   name: unknown;
@@ -368,6 +372,16 @@ export class Db {
     `;
 
     return row ? mapProject(row) : null;
+  }
+
+  async deleteProject(projectId: string): Promise<boolean> {
+    const [row] = await this.client<DeleteProjectRow[]>`
+      DELETE FROM projects
+      WHERE project_id = ${normalizeProjectId(projectId)}
+      RETURNING project_id
+    `;
+
+    return row != null;
   }
 
   async getHookEventWriteContext(

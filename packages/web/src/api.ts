@@ -57,7 +57,7 @@ async function readError(response: Response) {
   return body || `Request failed with ${response.status}`;
 }
 
-async function requestJson<T>(path: string, init: RequestInit = {}) {
+async function request(path: string, init: RequestInit = {}) {
   const response = await fetch(apiUrl(path), {
     credentials: "include",
     ...init,
@@ -65,6 +65,11 @@ async function requestJson<T>(path: string, init: RequestInit = {}) {
   if (!response.ok) {
     throw new Error(await readError(response));
   }
+  return response;
+}
+
+async function requestJson<T>(path: string, init: RequestInit = {}) {
+  const response = await request(path, init);
   return (await response.json()) as T;
 }
 
@@ -84,6 +89,11 @@ export const api = {
         organization_slug: input.organizationSlug ?? undefined,
       }),
     });
+  },
+  deleteProject(projectId: string) {
+    return request(`/v1/projects/${encodeURIComponent(projectId)}`, {
+      method: "DELETE",
+    }).then(() => undefined);
   },
   getFeed(projectId: string, opts: { limit?: number; before?: number } = {}) {
     const params = new URLSearchParams();
