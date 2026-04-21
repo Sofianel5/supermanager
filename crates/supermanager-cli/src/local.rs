@@ -100,14 +100,18 @@ pub fn list_projects(home_dir: &Path) -> Result<ListProjectsOutcome> {
     let mut grouped = BTreeMap::<(String, String, String), Vec<PathBuf>>::new();
 
     for (repo_key, project_config) in config.repos {
+        let repo_root = configured_repo_root(&repo_key, &project_config);
+        let RepoProjectConfig {
+            project_id,
+            server_url,
+            organization_slug,
+            ..
+        } = project_config;
+
         grouped
-            .entry((
-                project_config.project_id,
-                project_config.server_url,
-                project_config.organization_slug,
-            ))
+            .entry((project_id, server_url, organization_slug))
             .or_default()
-            .push(configured_repo_root(&repo_key, &project_config));
+            .push(repo_root);
     }
 
     let projects = grouped
