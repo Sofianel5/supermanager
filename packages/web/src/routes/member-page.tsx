@@ -238,13 +238,13 @@ function MemberProjectRow({
         <span>
           {project.member_count} member{project.member_count === 1 ? "" : "s"}
         </span>
-        <span>{readBlufPreview(project.bluf_markdown, member.member_name)}</span>
+        <span>{readBlufPreview(project.bluf_markdown)}</span>
       </p>
     </Link>
   );
 }
 
-function readBlufPreview(markdown: string, _memberName: string) {
+function readBlufPreview(markdown: string) {
   const preview = markdown
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/[`*_>#-]/g, " ")
