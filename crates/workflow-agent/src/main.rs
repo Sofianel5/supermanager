@@ -47,13 +47,13 @@ struct Cli {
     #[arg(
         long,
         env = "SUPERMANAGER_PROJECT_SUMMARY_POLL_INTERVAL_SECONDS",
-        default_value_t = 5
+        default_value_t = 300
     )]
     project_summary_poll_interval_seconds: u64,
     #[arg(
         long,
         env = "SUPERMANAGER_PROJECT_MEMORY_EXTRACT_INTERVAL_SECONDS",
-        default_value_t = 60
+        default_value_t = 600
     )]
     project_memory_extract_interval_seconds: u64,
     #[arg(
