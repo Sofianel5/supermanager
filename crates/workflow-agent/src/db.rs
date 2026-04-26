@@ -212,6 +212,46 @@ impl SummaryDb {
         .context("failed to list organizations with projects")
     }
 
+    pub(crate) async fn list_organizations_needing_memory_consolidate(
+        &self,
+    ) -> Result<Vec<String>> {
+        sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT DISTINCT p.organization_id
+            FROM projects AS p
+            INNER JOIN project_memory AS m ON m.project_id = p.project_id
+            LEFT JOIN organization_workflows AS w
+              ON w.organization_id = p.organization_id
+             AND w.workflow_kind = 'organization_memory_consolidate'
+            WHERE w.last_processed_received_at IS NULL
+               OR m.updated_at > w.last_processed_received_at
+            ORDER BY p.organization_id ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list organizations needing memory consolidate")
+    }
+
+    pub(crate) async fn list_organizations_needing_skills(&self) -> Result<Vec<String>> {
+        sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT DISTINCT p.organization_id
+            FROM projects AS p
+            INNER JOIN project_skills AS s ON s.project_id = p.project_id
+            LEFT JOIN organization_workflows AS w
+              ON w.organization_id = p.organization_id
+             AND w.workflow_kind = 'organization_skills'
+            WHERE w.last_processed_received_at IS NULL
+               OR s.updated_at > w.last_processed_received_at
+            ORDER BY p.organization_id ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list organizations needing skills")
+    }
+
     pub(crate) async fn list_projects_with_transcripts(&self) -> Result<Vec<OrganizationProject>> {
         let rows = sqlx::query(
             r#"
