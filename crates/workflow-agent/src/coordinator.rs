@@ -605,7 +605,17 @@ impl WorkflowCoordinator {
             WorkflowKind::OrganizationMemoryConsolidate | WorkflowKind::OrganizationSkills
         ));
 
-        let organization_ids = self.db.list_organizations_with_projects().await?;
+        let organization_ids = match kind {
+            WorkflowKind::OrganizationMemoryConsolidate => {
+                self.db
+                    .list_organizations_needing_memory_consolidate()
+                    .await?
+            }
+            WorkflowKind::OrganizationSkills => {
+                self.db.list_organizations_needing_skills().await?
+            }
+            _ => unreachable!(),
+        };
 
         for organization_id in organization_ids {
             let target = WorkflowTarget::new(kind, organization_id);
